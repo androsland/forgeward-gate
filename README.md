@@ -57,13 +57,14 @@ gate flips the hash and forces a re-gate — a dependency added between gate and
 
 ## Install
 
-Two ways in. **Local install works today** with nothing published; the **marketplace
-install** is the one-liner for everyone else once this repo is public.
+Two ways in. **Marketplace install** is the one-liner; **local install** (clone +
+`--plugin-dir`) is the no-marketplace path, handy for development or pinning to a working tree.
+This repo is public, so both work today.
 
 `<PLUGIN_DIR>` below = the absolute path to your clone of this repo (the directory containing
 `.claude-plugin/`). From the repo root you can grab it with `export PLUGIN_DIR="$(pwd)"`.
 
-### Local install (works today — no marketplace required)
+### Local install (no marketplace required)
 
 ```bash
 git clone https://github.com/androsland/forgeward-gate.git
@@ -82,10 +83,10 @@ claude --plugin-dir <PLUGIN_DIR>
 cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
 ```
 
-### Marketplace install (once this repo is published)
+### Marketplace install (recommended)
 
-This repo ships a marketplace manifest (`.claude-plugin/marketplace.json`), so once it's
-public on GitHub anyone can add it as a marketplace and install in two commands. Replace
+This repo ships a marketplace manifest (`.claude-plugin/marketplace.json`) and is public on
+GitHub, so anyone can add it as a marketplace and install in two commands. Replace
 `androsland/forgeward-gate` with your `owner/repo` if you forked it:
 
 ```bash
@@ -100,8 +101,8 @@ required, not optional.** Bare `claude plugin install forgeward` does *not* reso
 
 > **Note:** `claude plugin install forgeward` (no `@marketplace`) fails with *"Plugin forgeward
 > not found in any configured marketplace"* — both because it omits the required marketplace
-> suffix **and** because the marketplace must be added first (`claude plugin marketplace add`)
-> against a published repo. Until this repo is public and added, use the local install above.
+> suffix **and** because you must run `claude plugin marketplace add androsland/forgeward-gate`
+> first. Run the two commands above in order and it resolves.
 
 ### After install
 
