@@ -1,5 +1,9 @@
 # forgeward gate
 
+> gstack ships fast. forgeward-gate makes sure it ships clean — an enforced, read-only review
+> gate that blocks the push until privacy, accessibility, AI-output, SEO, and supply-chain
+> checks pass.
+
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
 gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
@@ -53,9 +57,52 @@ gate flips the hash and forces a re-gate — a dependency added between gate and
 
 ## Install
 
+Two ways in. **Local install works today** with nothing published; the **marketplace
+install** is the one-liner for everyone else once this repo is public.
+
+`<PLUGIN_DIR>` below = the absolute path to your clone of this repo (the directory containing
+`.claude-plugin/`). From the repo root you can grab it with `export PLUGIN_DIR="$(pwd)"`.
+
+### Local install (works today — no marketplace required)
+
 ```bash
-claude plugin install forgeward            # or add the marketplace, then enable
+git clone https://github.com/androsland/forgeward-gate.git
+cd forgeward-gate
 ```
+
+Then either load it for one session:
+
+```bash
+claude --plugin-dir <PLUGIN_DIR>
+```
+
+…or install it persistently under your skills dir (loads automatically next session):
+
+```bash
+cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
+```
+
+### Marketplace install (once this repo is published)
+
+This repo ships a marketplace manifest (`.claude-plugin/marketplace.json`), so once it's
+public on GitHub anyone can add it as a marketplace and install in two commands. Replace
+`androsland/forgeward-gate` with your `owner/repo` if you forked it:
+
+```bash
+claude plugin marketplace add androsland/forgeward-gate
+claude plugin install forgeward@forgeward-gate
+```
+
+`forgeward` is the plugin name; `forgeward-gate` after the `@` is the marketplace name (the
+`name` field in `marketplace.json`). The `@forgeward-gate` suffix disambiguates when you have
+multiple marketplaces added.
+
+> **Note:** `claude plugin install forgeward` on its own fails with *"Plugin forgeward not
+> found in any configured marketplace"* until you've run `claude plugin marketplace add` first
+> (or until this repo is published and added). If you haven't published yet, use the local
+> install above.
+
+### After install
 
 The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and both hooks
 activate on install with no `settings.json` edit. The enforcement hook reads JSON with

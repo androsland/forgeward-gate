@@ -1,0 +1,22 @@
+{
+  "name": "forgeward-gate",
+  "description": "Single-plugin marketplace for forgeward gate — an enforced, read-only review gate that blocks the push until gstack's missing conformance reviewers pass.",
+  "owner": {
+    "name": "Andreas Demetriou"
+  },
+  "plugins": [
+    {
+      "name": "forgeward",
+      "source": "./",
+      "description": "Enforced, read-only conformance gate for gstack. Adds the reviewers gstack lacks (privacy, accessibility, ai-output, seo, supply-chain) and blocks /ship until every fired reviewer returns VERDICT: PASS.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Andreas Demetriou"
+      },
+      "homepage": "https://github.com/androsland/forgeward-gate",
+      "repository": "https://github.com/androsland/forgeward-gate",
+      "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain"],
+      "category": "workflow"
+    }
+  ]
+}
