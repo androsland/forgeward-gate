@@ -94,13 +94,14 @@ claude plugin install forgeward@forgeward-gate
 ```
 
 `forgeward` is the plugin name; `forgeward-gate` after the `@` is the marketplace name (the
-`name` field in `marketplace.json`). The `@forgeward-gate` suffix disambiguates when you have
-multiple marketplaces added.
+`name` field in `marketplace.json`). Per the [Claude Code plugin docs](https://code.claude.com/docs/en/discover-plugins),
+the install syntax is `plugin-name@marketplace-name` — **the `@forgeward-gate` suffix is
+required, not optional.** Bare `claude plugin install forgeward` does *not* resolve.
 
-> **Note:** `claude plugin install forgeward` on its own fails with *"Plugin forgeward not
-> found in any configured marketplace"* until you've run `claude plugin marketplace add` first
-> (or until this repo is published and added). If you haven't published yet, use the local
-> install above.
+> **Note:** `claude plugin install forgeward` (no `@marketplace`) fails with *"Plugin forgeward
+> not found in any configured marketplace"* — both because it omits the required marketplace
+> suffix **and** because the marketplace must be added first (`claude plugin marketplace add`)
+> against a published repo. Until this repo is public and added, use the local install above.
 
 ### After install
 
@@ -108,6 +109,40 @@ The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and b
 activate on install with no `settings.json` edit. The enforcement hook reads JSON with
 `jq` if present, else `python3` (one of which is on virtually every dev machine); if
 *neither* exists it fails open — see limits.
+
+## Validation / what's tested
+
+**Automated suite — 21 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
+exercises the **real plugin scripts** in `scripts/` (not mocks or copies) against throwaway
+git repos. It covers the full enforcement contract:
+
+- **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
+  `glab mr create` are all blocked; a typed `/ship` is halted at expansion (exit 2).
+- **Allow on a fresh PASS marker** — `git push` proceeds and `/ship` expansion passes (exit 0).
+- **Version-bump invariance** — a package.json **version-field-only** bump (gstack's post-gate
+  Step 12) leaves the diff hash unchanged, so the marker survives and the push stays allowed.
+- **Dependency change forces a re-gate** — adding a dependency flips the hash and re-denies the
+  push (the supply-chain bypass this is designed to stop).
+- **Stale-code re-gate** — any new source committed after the marker invalidates it.
+- **Non-publish commands are never touched**, and **outside a git repo the hook fails open**
+  (allows) rather than wedging your shell.
+- **Ship matcher** (read from the real `hooks.json`, evaluated with JS-regex semantics) fires
+  on `ship`, `gstack-ship`, and any `<prefix>-ship`, and **not** on lookalikes `shipment` /
+  `airship`.
+- **Base-detection fallback** — resolves `main`/`master` correctly when `origin/HEAD` is unset,
+  and honors `origin/HEAD` when it is set (the regression that previously yielded an empty base).
+
+**Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
+session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
+→ **succeeded** (after a PASS marker) → **denied again** once a typosquatted dependency flipped
+the hash — proving the actual plugin **hook dispatched**, not just that the scripts work in
+isolation. The `supply-chain-reviewer` caught the typosquat with registry evidence.
+
+**What "validated" means here (honest boundary).** Tested means *tested-as-designed* — the
+deny/allow logic and live hook dispatch behave as specified. It does **not** mean tamper-proof:
+the gate is **enforced-by-default**, and (as in [limit 1](#three-honest-limits)) anyone who
+disables the plugin or pushes outside Claude Code is past it. This raises the floor; it is not
+a sandbox.
 
 ## Three honest limits
 
