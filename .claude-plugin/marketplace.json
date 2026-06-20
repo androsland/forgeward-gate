@@ -15,6 +15,7 @@
       },
       "homepage": "https://github.com/androsland/forgeward-gate",
       "repository": "https://github.com/androsland/forgeward-gate",
+      "license": "MIT",
       "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain"],
       "category": "workflow"
     }

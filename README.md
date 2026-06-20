@@ -173,3 +173,7 @@ a sandbox.
 - **If neither `jq` nor `python3` is available, the enforcement hook fails open.** It allows
   the push rather than wedging your Bash. Virtually every dev machine has one; install `jq`
   or `python3` for the gate to enforce.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
