@@ -1,0 +1,9 @@
+{
+  "name": "forgeward-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tooling/test metadata for the forgeward gate plugin (the plugin manifest is .claude-plugin/plugin.json).",
+  "scripts": {
+    "test": "bash test/gate-test.sh"
+  }
+}

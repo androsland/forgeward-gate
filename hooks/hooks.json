@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptExpansion": [
+      {
+        "matcher": "^([A-Za-z0-9_]+-)?ship$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh expansion"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh pretooluse"
+          }
+        ]
+      }
+    ]
+  }
+}
