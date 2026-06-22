@@ -143,6 +143,28 @@ b="$(detect "$RH")"
 [ "$b" = "develop" ] && ok "base detect: origin/HEAD set -> honored (unchanged when set)" \
   || nok "base detect set->develop" "got: '$b'"
 
+# B4 (direct-to-base fix): HEAD committed DIRECTLY on the base branch with
+# origin/<base> behind by the unpushed commit. Old logic resolved to bare 'main'
+# -> "main...HEAD" is EMPTY -> the gate mis-reads "nothing to gate" and deadlocks
+# (push stays hook-blocked, yet no reviewable surface). New step 4 re-scopes to
+# origin/main so the real unpushed change is reviewed. Mirrors the live repro: a
+# docs commit made straight to master.
+RD="$TMP/repo-direct"
+git init -q "$RD"
+( cd "$RD"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  echo base > f; git add -A; git commit -qm base; git branch -M main
+  git update-ref refs/remotes/origin/main HEAD                    # origin/main == C0
+  echo changed > doc.md; git add -A; git commit -qm "docs: direct-to-base commit" ) >/dev/null  # HEAD == C1, on main
+b="$(detect "$RD")"
+[ "$b" = "origin/main" ] && ok "base detect: HEAD on base branch + unpushed commit -> origin/main (publish boundary)" \
+  || nok "base detect direct-to-base -> origin/main" "got: '$b'"
+# Meaningfulness: new base scopes the REAL change; the old bare base would be empty.
+new_diff="$(cd "$RD" && git diff "$b...HEAD" --name-only)"
+old_diff="$(cd "$RD" && git diff "main...HEAD" --name-only)"
+{ [ "$new_diff" = "doc.md" ] && [ -z "$old_diff" ]; } \
+  && ok "base detect: origin/main scopes real change (doc.md); bare 'main' diff is empty (proves the fix matters)" \
+  || nok "direct-to-base diff meaningfulness" "new='$new_diff' old='$old_diff'"
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -6,6 +6,9 @@
 #   1. GitHub default branch (gh, when a GitHub remote is reachable)
 #   2. origin/HEAD's symbolic-ref target — ONLY when set and non-empty
 #   3. origin/main, else local main, else master
+#   4. Direct-to-base re-scope: when HEAD is ON the resolved base branch and
+#      origin/<base> exists and differs from HEAD, return origin/<base> instead
+#      (the publish boundary) — see the step-4 note below.
 #
 # GUARANTEE: always prints a NON-EMPTY ref. The earlier inline form
 #   ... || git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed ... || ...
@@ -33,6 +36,22 @@ if [ -z "$base" ]; then
   if   git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then base=main
   elif git rev-parse --verify --quiet main        >/dev/null 2>&1; then base=main
   else base=master
+  fi
+fi
+
+# 4. Direct-to-base re-scope. When HEAD is ON the resolved base branch, a
+#    feature-branch diff "base...HEAD" is EMPTY -> the gate reads "nothing to gate"
+#    even though unpushed commits are about to publish (the classic repro: a commit
+#    made straight to master). Re-scope to the publish boundary origin/<base> so the
+#    real unpushed change is the review surface. Guarded two ways: only when
+#    origin/<base> EXISTS and DIFFERS from HEAD — a base branch in sync with its
+#    remote genuinely has nothing to gate, so we leave base untouched there. On a
+#    feature branch (HEAD != base) this is skipped entirely, so that resolution is
+#    byte-for-byte unchanged.
+current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [ "$current" = "$base" ] && git rev-parse --verify --quiet "origin/$base" >/dev/null 2>&1; then
+  if [ "$(git rev-parse HEAD 2>/dev/null || true)" != "$(git rev-parse "origin/$base" 2>/dev/null || true)" ]; then
+    base="origin/$base"
   fi
 fi
 
