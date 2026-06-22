@@ -34,3 +34,25 @@ is byte-for-byte unchanged.
 (the new base scopes the real changed file; the old bare-`main` diff is empty). The three
 prior base-detection tests (origin/HEAD unset, origin/HEAD set, master-only fallback)
 still pass unchanged.
+
+## RESOLVED — duplicate hooks load (manifest re-referenced the auto-loaded hooks.json)
+
+**Date:** 2026-06-22
+
+**Symptom.** Plugin load failed on reload/reinstall: *"Hook load failed: Duplicate hooks
+file detected: ./hooks/hooks.json resolves to already-loaded file …/hooks/hooks.json. The
+standard hooks/hooks.json is loaded automatically, so manifest.hooks should only reference
+additional hook files."* With hooks failing to load, the enforcement gate is effectively
+DOWN — pushes/PRs are no longer intercepted.
+
+**Cause.** `.claude-plugin/plugin.json` set `"hooks": "./hooks/hooks.json"`. Claude Code
+auto-loads the standard `hooks/hooks.json` by convention; the explicit manifest reference
+then loads the same file a second time. (Not introduced by a code change — it surfaced when
+the plugin reload began enforcing the auto-load convention.)
+
+**Fix.** Remove the `"hooks"` key from `plugin.json`. The standard `hooks/hooks.json` still
+loads automatically; `manifest.hooks` is reserved for ADDITIONAL hook files, of which this
+plugin has none.
+
+**Coverage.** `test/gate-test.sh` M1 (assertion 24): static guard that `plugin.json`'s
+`hooks` value does not point at the auto-loaded `hooks.json` — a re-add fails the suite.

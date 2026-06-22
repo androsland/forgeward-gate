@@ -165,6 +165,21 @@ old_diff="$(cd "$RD" && git diff "main...HEAD" --name-only)"
   && ok "base detect: origin/main scopes real change (doc.md); bare 'main' diff is empty (proves the fix matters)" \
   || nok "direct-to-base diff meaningfulness" "new='$new_diff' old='$old_diff'"
 
+# M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
+# Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —
+# doing so fails plugin load with "Duplicate hooks file detected". The manifest.hooks
+# key is only for ADDITIONAL hook files. Guard it statically so a re-add is caught here.
+MANIFEST="$PLUGIN/.claude-plugin/plugin.json"
+hooks_ref="$(
+  if command -v jq >/dev/null 2>&1; then jq -r '.hooks // ""' "$MANIFEST"
+  else python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("hooks",""))' "$MANIFEST"
+  fi
+)"
+case "$hooks_ref" in
+  */hooks.json) nok "manifest does not re-reference the auto-loaded hooks/hooks.json" "plugin.json hooks='$hooks_ref' (remove it; the standard file auto-loads)" ;;
+  *)            ok "manifest does not re-reference the auto-loaded hooks/hooks.json (no duplicate-load)" ;;
+esac
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]
