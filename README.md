@@ -163,6 +163,16 @@ a sandbox.
    OpenAI key is present, so the stack underneath this plugin runs fully on Claude alone. The
    only paid dependency is the Claude access you already need to run Claude Code.
 
+## Security scope
+
+**Static review, not dynamic scanning.** forgeward-gate (and gstack's `/cso`, which covers the
+general security axis this plugin delegates to it) provide *static* security review — code,
+dependencies, secrets, and OWASP/STRIDE reasoning. They do **not** perform dynamic/runtime
+scanning (DAST, e.g. OWASP ZAP), run SAST engines, scan container images, or CI-enforce
+merge-gating on a security scan. Those require a deployed app and a CI pipeline — handle them in
+your project's CI, not here. A gate PASS means the reviewed change is clean, not that the running
+application is secure.
+
 ## Accepted design gaps (documented, not bugs)
 
 - **Pre-push local mutations aren't gated.** gstack's version bump, CHANGELOG, and commit
