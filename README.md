@@ -6,6 +6,13 @@
 
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
+This plugin has **two deliberately distinct parts**:
+- **The gate (enforced)** — read-only reviewers plus a blocking hook that stops the push until
+  they pass. Everything below describes it.
+- **`/forgeward:readiness` (advisory)** — an on-demand helper that drafts a correct CI workflow
+  from your repo's real stack. It **never blocks**. See
+  [its section](#forgewardreadiness--advisory-ci-helper-does-not-gate).
+
 gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
 *blocking* gate: its `/ship` is fully automated and never refuses to publish. This plugin
 adds the reviewers gstack has no equivalent for and makes them **block `/ship` until every
@@ -54,6 +61,53 @@ only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) an
 package.json **version-field-only** bump. Any change to source **or dependencies** after the
 gate flips the hash and forces a re-gate — a dependency added between gate and push does
 **not** sail through.
+
+## `/forgeward:readiness` — advisory CI helper (does not gate)
+
+The gate above *enforces*. `/forgeward:readiness` *prepares* — a separate, advisory skill in
+the same plugin that helps a repo reach the baseline, starting with the most automatable slice:
+CI. **It drafts; it never blocks.** No hook, no reviewers, no `/ship` interception — running it
+changes nothing you don't commit yourself. (That's why it's a distinct skill, not a gate axis:
+folding "drafts a file for you" into "blocks your push" would blur what the gate guarantees.)
+
+**What it does.** Run `/forgeward:readiness` in a repo and it:
+
+1. **Detects the real stack** — package manager from the **lockfile** (pnpm/npm/yarn/bun), the
+   real `test`/`lint`/`typecheck` commands from `package.json` `scripts` (and `CLAUDE.md` if it
+   names them), Node version from `engines`/`.nvmrc`, e2e framework from `playwright.config`/
+   `cypress.config`, and a secrets manager (Doppler) **only if the repo actually uses one**.
+2. **Drafts `.github/workflows/ci.yml`** using those **real** commands and the repo's **real
+   default branch** — typecheck + lint + test, the correct setup action for the detected
+   package manager, a separate browser-install job for Playwright, and Doppler wiring (plus the
+   `dopplerhq/cli-action` install step) when detected. It writes the file for you to review and
+   commit.
+3. **Prints a covered / missing / deferred / [Owner] report** inline (a file only if you ask).
+
+**The core guarantee — evidence, never assumption.** Every emitted step traces to a script that
+actually exists. No `typecheck` script → no typecheck step. The **lockfile** decides the package
+manager, so a pnpm repo never gets a guessed `npm ci`. If there's nothing real to run, it drafts
+nothing and says so. A CI file full of template defaults that don't match the repo is worse than
+none — this skill exists to never produce one.
+
+**Validation.** Exercised against **7 real repositories** — of which **4 were drafted a new
+`ci.yml`** (the repos that had no test CI), **1 was correctly *not* drafted** (no `scripts` block
+— the guard fired, a report instead of a fabricated `npm test`), and **2 were left byte-for-byte
+untouched** (they already had hand-tuned CI, marked Covered). A synthetic fixture covered the one
+Doppler path no real repo exercised. "7 repositories" means *exercised across 7*, not *7 workflows
+generated*. Together they cover:
+
+| Dimension | Covered |
+|-----------|---------|
+| Package manager | **pnpm** and **npm** (lockfile-driven: `pnpm install --frozen-lockfile` vs `npm ci`) |
+| Default branch | **main** and **master** (detected — a `master` repo gets `branches: [master]`, not a workflow that silently never fires on push) |
+| `typecheck` | **present** (step emitted) and **absent** (no step invented) |
+| Doppler | **self-wrapping** scripts (token only, no double-wrap) and **bare** scripts (prefixed `doppler run --`), both with the `dopplerhq/cli-action` install step |
+| No scripts | **guard** — a repo with no `scripts` block gets a report, not a fabricated `npm test` |
+| Existing CI | **don't-clobber** — two real hand-tuned workflows left byte-for-byte untouched and marked Covered |
+
+This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
+advisory and has no bearing on the enforcement contract. The gate's 24-assertion suite, security
+scope, and honest limits are unchanged.
 
 ## Install
 
@@ -113,7 +167,7 @@ activate on install with no `settings.json` edit. The enforcement hook reads JSO
 
 ## Validation / what's tested
 
-**Automated suite — 21 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
+**Automated suite — 24 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
 exercises the **real plugin scripts** in `scripts/` (not mocks or copies) against throwaway
 git repos. It covers the full enforcement contract:
 
