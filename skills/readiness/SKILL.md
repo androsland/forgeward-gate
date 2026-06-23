@@ -104,22 +104,48 @@ Adding them later does not modify the `ci-workflow` procedure or the report harn
 
 ## Step 3 — Run the `ci-workflow` check
 
-### 3a. Already have CI?
+### 3a. Already have CI? (don't-clobber — detect by intent, bias to safe)
+
+The guard's only job: **never overwrite a workflow that is already this project's CI.** Detect CI
+by what a workflow *does* — runs the project's checks on push/PR — **not** by a keyword allowlist.
+A test-runner allowlist (`test|vitest|jest|playwright|…`) is wrong: it misses a typecheck/lint-only
+workflow, `make ci`, `turbo run check`, or any custom script name — and it fails to recognize this
+skill's *own* lint-only output, so a re-run would clobber the workflow it just drafted.
 
 ```bash
-ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null
+ls .github/workflows/*.y*ml 2>/dev/null
 ```
 
-For each existing workflow, check whether it already runs tests:
+**The principle: a workflow that runs this project's scripts/build on push or PR is CI — leave it
+alone.** Concretely, treat a workflow as existing CI when it both triggers on `push`/`pull_request`
+and runs the project via a package manager or task runner:
 
 ```bash
-grep -lEi 'run:.*(test|vitest|jest|playwright|pytest|rspec|go test)' .github/workflows/*.y*ml 2>/dev/null
+for wf in .github/workflows/*.y*ml; do
+  [ -f "$wf" ] || continue
+  grep -qE 'pull_request|push' "$wf" || continue
+  grep -qE 'run:.*(pnpm|npm |npx|yarn|bun |make|turbo|nx |just |task |bazel|cargo|go (test|build)|mvn|gradle|composer|bundle|rake)' "$wf" \
+    && echo "CI-DETECTED:$wf"
+done
 ```
 
-- If a workflow already runs the test suite → mark `ci-workflow` **Covered**, cite the file,
-  and **do not overwrite it**. Offer (in the report) to supplement missing steps as a diff;
-  do not clobber.
-- Otherwise continue and draft a fresh `ci.yml`.
+- **Any workflow detected → mark `ci-workflow` Covered**, cite the file(s), and **never
+  overwrite**. In the report, say what it runs and offer to *supplement* missing checks as a diff
+  the user applies by hand — do not write `ci.yml`.
+- **Hard no-overwrite (belt and suspenders).** Never write over an existing workflow file. If
+  `.github/workflows/ci.yml` already exists, it is off-limits regardless of classification —
+  treat it as Covered, never overwrite the path.
+- **Safe bias when uncertain.** If `.github/workflows/` holds a workflow that triggers on push/PR
+  and runs *any* command you can't confidently classify → treat it as **Covered** (decline to
+  draft), not absent. Under-detecting CI is the dangerous direction: a false-Covered just means
+  the user drafts manually (recoverable); a false-absent overwrites hand-tuned work (destructive).
+  When in doubt, don't clobber.
+- **Only when NO workflow runs the project's scripts on push/PR** (and no `ci.yml` exists) →
+  continue and draft a fresh `ci.yml`.
+
+Because detection keys on "runs the project" (`pnpm run lint` matches `pnpm`), the skill now
+recognizes its **own** trimmed lint-only / typecheck-only output as Covered — a re-run never
+clobbers it.
 
 ### 3b. Package manager — the lockfile decides
 
@@ -276,7 +302,9 @@ jobs:
       - run: <e2e run>
 ```
 
-Write it only if 3a found no test-running workflow. Print the full file inline regardless.
+Write it only if 3a found no existing CI **and** no `.github/workflows/ci.yml` already exists
+(never overwrite that path). Otherwise mark Covered and offer a supplement. Print the full file
+inline regardless.
 
 ## Step 4 — Produce the report (inline by default; file only if asked — Step 1)
 

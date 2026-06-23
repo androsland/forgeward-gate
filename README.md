@@ -106,7 +106,7 @@ generated*. Together they cover:
 | `typecheck` | **present** (step emitted) and **absent** (no step invented) |
 | Doppler | **self-wrapping** scripts (token only, no double-wrap) and **bare** scripts (prefixed `doppler run --`), both with the `dopplerhq/cli-action` install step |
 | No scripts | **guard** — a repo with no `scripts` block gets a report, not a fabricated `npm test` |
-| Existing CI | **don't-clobber** — two real hand-tuned workflows left byte-for-byte untouched and marked Covered |
+| Existing CI | **don't-clobber** — detects CI by *intent* (any workflow that runs the project's scripts on push/PR), not a test-runner keyword list. Covers hand-tuned suites, **typecheck/lint-only** workflows, and the skill's **own** drafted output; biased to treat the uncertain case as Covered. Verified it leaves real hand-tuned workflows byte-for-byte untouched and re-recognizes its own lint-only `ci.yml` instead of overwriting it |
 | Runnability | a `lint` with no ESLint config, or an `e2e`/`test` step that boots the app or needs env/secrets, is **flagged `[Owner]`, not emitted red** (so a drafted workflow goes green on first run, not red-on-arrival) |
 
 This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
