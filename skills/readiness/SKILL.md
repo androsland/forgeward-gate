@@ -166,6 +166,34 @@ flag** for the detected runtime (Gemfile→Ruby, `pyproject.toml`/`requirements.
 `go.mod`→Go, `Cargo.toml`→Rust) and note "Phase 1 fully supports the Node/TS family; this
 runtime gets a skeleton — fill the install/test steps." Do not guess that runtime's commands.
 
+### 3b.5. pnpm needs a version — a bare `pnpm/action-setup@v4` FAILS
+
+`pnpm/action-setup@v4` with no version errors before anything runs:
+`Error: No pnpm version is specified.` It needs the version from one of: a `version:` input, a
+`packageManager` field in `package.json`, or `engines.pnpm`. **Never emit a bare action-setup.**
+
+```bash
+grep -nE '"packageManager"|"pnpm"' package.json; head -1 pnpm-lock.yaml
+```
+
+Resolve the pnpm version in this order, and emit accordingly:
+
+1. **`packageManager: "pnpm@X.Y.Z"` present** → emit the action **bare** (`pnpm/action-setup@v4`
+   with no `version:`); the action reads the field. Adding a `version:` that disagrees with the
+   field makes the action error, so don't. This is the robust single source of truth.
+2. **No `packageManager`, but `engines.pnpm` (e.g. `^9 || ^10 || ^11`)** → emit
+   `with: { version: <highest concrete major satisfying it> }`, and add an **[Owner]** line:
+   "add `\"packageManager\": \"pnpm@<X>\"` to package.json as the single source of truth, then
+   drop the workflow's `version:` pin."
+3. **Neither, but `pnpm-lock.yaml` `lockfileVersion`** → map to a compatible pnpm major
+   (`'9.0'` → pnpm 9+; pin a current major that reads it, e.g. `version: 10`) and add the same
+   `[Owner]` recommendation.
+4. **Nothing declared** → pin a recent stable major (`version: 10`) **with a visible note** that
+   it was unpinned and the repo should add `packageManager`.
+
+So the emitted setup is either bare-with-`packageManager` or carries an explicit `version:` —
+never a bare action-setup on a repo that lacks `packageManager`.
+
 ### 3c. Commands — read the REAL scripts (the bug-killer)
 
 Authoritative order: (1) `CLAUDE.md` `## Testing` section if it names commands, (2) the
@@ -234,9 +262,13 @@ it in the report as a **Deferred** option ("add a build step to catch build brea
 
 ### 3d. Node version
 
-`engines.node` in `package.json` → `.nvmrc` / `.node-version` → fallback. Pick a concrete
-major that satisfies the declared range (prefer the highest LTS named; default **20** if only
-a fallback). Record which source decided it.
+`engines.node` in `package.json` → `.nvmrc` / `.node-version` → fallback. Pick a concrete major
+that satisfies the declared range and is a **currently maintained LTS** — prefer the latest LTS
+the range allows (as of mid-2026 that's **22**; **20** is in maintenance and nearing end-of-life).
+Record which source decided it. If `.nvmrc`/`engines` pins a Node that's near or past EOL (e.g.
+18, or 20 once it ages out), still honor it but add a **report flag**: "Node `<v>` is nearing
+EOL — a warning now, a hard failure later; bump `engines.node`/`.nvmrc` when you can." Never
+silently pin a soon-dead Node.
 
 ### 3e. E2E browsers and job split
 
