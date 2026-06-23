@@ -32,14 +32,22 @@ The report header reads **"Baseline conformance pass (CI-first)"**. Phase 1 ship
 check — `ci-workflow` — plus the report harness. The check registry (Step 2) is built so
 later checks slot in as new rows without touching this one.
 
-## Core rule: evidence, never assumption
+## Core rule: evidence AND runnability
 
-Every detected fact MUST be backed by a real file, and the report cites it as `file:line` (or
-`file` when line is N/A). **Never emit a CI step for a command that has no backing script.**
-If `package.json` has no `typecheck` script, the workflow has no typecheck step — full stop.
-The lockfile decides the package manager; a guessed `npm ci` on a pnpm repo is the exact bug
-this skill exists to kill. When a fact can't be proven, mark it **Missing** or **[Owner]** —
-do not template-fill it.
+Two tests must both pass before a step is emitted:
+
+1. **Evidence** — the command is a real script that exists. Every detected fact is backed by a
+   real file, cited `file:line`. No `typecheck` script → no typecheck step. The lockfile decides
+   the package manager; a guessed `npm ci` on a pnpm repo is the bug this skill kills.
+2. **Runnability** — the command can plausibly **run green in a clean CI environment
+   as-drafted**. A real script that would fail in CI — `lint` with no ESLint config (interactive
+   setup prompt), or a `test`/`e2e` step that boots the app or needs env/secrets/a live backend
+   CI can't provide — is **flagged `[Owner]`, never emitted red.**
+
+A step that fails test 1 → omit silently (nothing to run). A step that passes test 1 but fails
+test 2 → **flag it `[Owner]` with the precise blocker; do not emit it.** A green-looking
+workflow that's red on arrival is *worse than no CI* — the exact outcome this skill exists to
+prevent. When a fact can't be proven, mark it **Missing** or **[Owner]** — never template-fill.
 
 ## Step 0 — Detect the real default branch
 
@@ -142,15 +150,57 @@ Authoritative order: (1) `CLAUDE.md` `## Testing` section if it names commands, 
 cat package.json
 ```
 
-From `package.json` `scripts{}`, emit a step **only for a key that exists**:
+From `package.json` `scripts{}`, a step is a **candidate** only if its key exists. Each
+candidate then passes the **runnability gate (3c.5)** before it's emitted:
 
 - **typecheck** — key `typecheck` or `type-check` (or a `tsc`-only script). Absent → no step.
-- **lint** — key `lint`. Absent → no step.
-- **unit test** — prefer `test:int` / `test:unit`; else `test`.
-- **e2e** — key `test:e2e` / `e2e` / `test:playwright`.
+  `tsc`/`turbo typecheck` need no runtime env → emit when present.
+- **lint** — key `lint`. Absent → no step. Subject to the ESLint-config gate (3c.5).
+- **unit test** — prefer `test:int` / `test:unit`; else `test`. Subject to the test-env gate (3c.5).
+- **e2e** — key `test:e2e` / `e2e` / `test:playwright`. Subject to the e2e-env gate (3c.5 + 3e).
 
 Quote each chosen script's value as the proof (e.g. `"lint": "eslint ."`) and put it as a
 trailing comment on the generated `run:` line, so the real command is visible in the YAML.
+
+### 3c.5. Runnability gate — would this candidate pass in clean CI?
+
+Before emitting any candidate, check it can run green as-drafted. If not, **do not emit it —
+add an `[Owner]` line naming the exact blocker.**
+
+- **lint → needs an ESLint config.** Emit `lint` only if a config exists: `.eslintrc*`,
+  `eslint.config.*`, or an `eslintConfig` key in `package.json`.
+  ```bash
+  ls .eslintrc* eslint.config.* 2>/dev/null; grep -l '"eslintConfig"' package.json 2>/dev/null
+  ```
+  If the `lint` script is `next lint` (or `turbo lint` → `next lint`) and **no config exists**,
+  `next lint` triggers an interactive setup prompt and **fails non-interactively in CI**. Do
+  NOT emit the step → `[Owner: add an ESLint config before lint can run in CI]`.
+
+- **e2e / Playwright → needs a runnable target + env.** Emit the e2e job only if it can run
+  headless without secrets CI can't supply. Treat it as **NOT runnable** (flag, don't emit) when:
+  ```bash
+  grep -nE 'webServer|baseURL.*localhost|process\.env|SUPABASE|DATABASE' playwright.config.* cypress.config.* 2>/dev/null
+  ls .env.test* .env.ci 2>/dev/null
+  ```
+  - the config has a `webServer` that boots the app (`dev`/`start`) **and** the app needs env
+    (a populated `.env.example`, env-validation, Supabase/DB) **and** no committed test-env
+    (`.env.test*`, `.env.ci`) or guaranteed secret provides it → `[Owner: e2e needs a booted
+    backend + test env/secrets wired]`.
+  - the e2e script needs secrets (doppler-wrapped, or references `SUPABASE_*`/`DATABASE_*`) with
+    no token guaranteed → same flag.
+  Only emit the e2e job when it would actually go green (e.g. a static target, a test-env is
+  committed, or the suite needs no app boot).
+
+- **unit / integration test → check it doesn't need a backend.** A pure unit suite (jsdom, no
+  DB) emits fine. But an **integration** suite (files named `*.int.*`/`integration`, hits API
+  routes, needs Supabase/DB, or is doppler-wrapped with no token) is red without env → flag
+  `[Owner: integration tests need a test DB/env in CI]` instead of emitting it red. When genuinely
+  unsure whether a unit step is self-contained, prefer emitting it but say so in the report
+  ("unit tests assumed self-contained; remove if they need env").
+
+**Net effect:** the drafted workflow contains only steps that should pass on first run.
+Everything real-but-not-yet-runnable lands in `[Owner]` with the precise fix, so the user sees
+the gap instead of a red check.
 
 **Build:** Phase 1 targets the baseline's `typecheck + lint + test` exactly. If a `build`
 script exists, do **not** add a build step automatically (it often needs env/secrets) — list
@@ -249,7 +299,9 @@ Date: <YYYY-MM-DD>
 ## Deferred  (conscious decision, valid to skip for MVP)
 - <e.g. build step; security-scanning CI per IDEAS.md>
 
-## [Owner]  (needs your account / secrets / sign-off — can't be detected from the repo)
+## [Owner]  (real scripts that can't yet run green in CI — flagged, NOT emitted red)
+- <e.g. lint: `next lint` has no ESLint config → add one before lint can run in CI>
+- <e.g. e2e: Playwright boots `pnpm dev` needing Supabase env → wire a test env/secrets first>
 - <e.g. enable branch protection requiring the CI checks; add DOPPLER_TOKEN if applicable>
 
 ## Detected facts (evidence)
@@ -269,8 +321,10 @@ End with a one-line tally and the next action (review the drafted `ci.yml`, then
 
 - **Advisory.** Default is one write — the draft `ci.yml`; the report prints inline and
   becomes a file only on request (Step 1). No code edits, no reviewers, no `/ship`, no gating.
-- **Evidence or it doesn't ship.** Every emitted step traces to a real script; every fact
-  cites a file. No phantom commands.
+- **Evidence AND runnability.** Emit a step only if the command both **exists** as a real
+  script AND **can run green in CI as-drafted**. A real script that would fail in clean CI
+  (lint with no config; a test/e2e step needing env, secrets, or a booted backend) is flagged
+  `[Owner]`, never emitted red. A green-looking workflow that's red on arrival is worse than none.
 - **The lockfile decides the package manager.** Never guess the PM.
 - **Detect, don't impose.** Secrets manager, build step, non-Node runtimes — surface them as
   conscious decisions; don't force a provider or command the repo doesn't use.

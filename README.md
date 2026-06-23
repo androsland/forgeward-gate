@@ -83,11 +83,14 @@ folding "drafts a file for you" into "blocks your push" would blur what the gate
    commit.
 3. **Prints a covered / missing / deferred / [Owner] report** inline (a file only if you ask).
 
-**The core guarantee — evidence, never assumption.** Every emitted step traces to a script that
-actually exists. No `typecheck` script → no typecheck step. The **lockfile** decides the package
-manager, so a pnpm repo never gets a guessed `npm ci`. If there's nothing real to run, it drafts
-nothing and says so. A CI file full of template defaults that don't match the repo is worse than
-none — this skill exists to never produce one.
+**The core guarantee — evidence AND runnability.** A step is emitted only if it passes both
+tests: the command **exists** as a real script (no `typecheck` script → no typecheck step; the
+**lockfile** decides the package manager, so a pnpm repo never gets a guessed `npm ci`), **and**
+it can **run green in a clean CI environment as-drafted**. A real script that would fail in CI —
+`lint` with no ESLint config (interactive setup prompt), or a `test`/`e2e` step that boots the
+app or needs env/secrets/a live backend CI can't supply — is **flagged `[Owner]` with the exact
+blocker, never emitted red.** A green-looking workflow that's red on arrival is worse than no CI;
+this skill exists to never produce one.
 
 **Validation.** Exercised against **7 real repositories** — of which **4 were drafted a new
 `ci.yml`** (the repos that had no test CI), **1 was correctly *not* drafted** (no `scripts` block
@@ -104,6 +107,7 @@ generated*. Together they cover:
 | Doppler | **self-wrapping** scripts (token only, no double-wrap) and **bare** scripts (prefixed `doppler run --`), both with the `dopplerhq/cli-action` install step |
 | No scripts | **guard** — a repo with no `scripts` block gets a report, not a fabricated `npm test` |
 | Existing CI | **don't-clobber** — two real hand-tuned workflows left byte-for-byte untouched and marked Covered |
+| Runnability | a `lint` with no ESLint config, or an `e2e`/`test` step that boots the app or needs env/secrets, is **flagged `[Owner]`, not emitted red** (so a drafted workflow goes green on first run, not red-on-arrival) |
 
 This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
 advisory and has no bearing on the enforcement contract. The gate's 24-assertion suite, security
