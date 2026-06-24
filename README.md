@@ -83,6 +83,13 @@ folding "drafts a file for you" into "blocks your push" would blur what the gate
    commit.
 3. **Prints a covered / missing / deferred / [Owner] report** inline (a file only if you ask).
 
+For e2e specifically it makes a **three-way** call: runs-green-as-is → emit a plain job; needs env
+a repo **Variable/Secret** can supply (a hosted backend reachable by URL+key) → emit a **gated,
+self-skipping** job (`if: ${{ vars.<KEY> != '' }}`) that stays green-by-default and activates when
+you set the Variable; needs **infrastructure that doesn't exist in CI** (a real database the app
+boots against — Payload/Prisma/etc.) → **hard-flag `[Owner]`, emit nothing** (a gate that can never
+make e2e pass is dead config). *(Gated-e2e is **drafted, not yet runner-verified** — see Validation.)*
+
 **The core guarantee — evidence AND runnability.** A step is emitted only if it passes both
 tests: the command **exists** as a real script (no `typecheck` script → no typecheck step; the
 **lockfile** decides the package manager, so a pnpm repo never gets a guessed `npm ci`), **and**
@@ -108,6 +115,7 @@ generated*. Together they cover:
 | No scripts | **guard** — a repo with no `scripts` block gets a report, not a fabricated `npm test` |
 | Existing CI | **don't-clobber** — detects CI by *intent* (any workflow that runs the project's scripts on push/PR), not a test-runner keyword list. Covers hand-tuned suites, **typecheck/lint-only** workflows, and the skill's **own** drafted output; biased to treat the uncertain case as Covered. Verified it leaves real hand-tuned workflows byte-for-byte untouched and re-recognizes its own lint-only `ci.yml` instead of overwriting it |
 | Runnability | a `lint` with no ESLint config, or an `e2e`/`test` step that boots the app or needs env/secrets, is **flagged `[Owner]`, not emitted red** (so a drafted workflow goes green on first run, not red-on-arrival) |
+| Gated e2e *(drafted — NOT yet runner-verified)* | e2e that needs Variable-suppliable env → a **self-skipping gated job** (green-by-default, activates when the Variable is set); e2e that needs a real DB → hard-flagged, no dead gated job. Gate logic is byte-identical to a proven merged workflow, but **both sides (skip-green, activate-and-run) await confirmation on a real Actions run** before this is claimed proven |
 
 This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
 advisory and has no bearing on the enforcement contract. The gate's 24-assertion suite, security

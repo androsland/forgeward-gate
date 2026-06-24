@@ -230,20 +230,26 @@ add an `[Owner]` line naming the exact blocker.**
   `next lint` triggers an interactive setup prompt and **fails non-interactively in CI**. Do
   NOT emit the step → `[Owner: add an ESLint config before lint can run in CI]`.
 
-- **e2e / Playwright → needs a runnable target + env.** Emit the e2e job only if it can run
-  headless without secrets CI can't supply. Treat it as **NOT runnable** (flag, don't emit) when:
+- **e2e / Playwright → three-way decision (see 3e).** e2e is the one step with a middle ground.
   ```bash
-  grep -nE 'webServer|baseURL.*localhost|process\.env|SUPABASE|DATABASE' playwright.config.* cypress.config.* 2>/dev/null
+  grep -nE 'webServer|command:|baseURL.*localhost|process\.env|SUPABASE|DATABASE|PAYLOAD' playwright.config.* cypress.config.* 2>/dev/null
+  grep -nE 'DATABASE_URL|DATABASE_URI|MONGO|POSTGRES|PAYLOAD_SECRET|PRISMA' .env.example 2>/dev/null
+  grep -nE '@payloadcms|prisma|drizzle|typeorm|mongoose|"pg"' package.json 2>/dev/null
   ls .env.test* .env.ci 2>/dev/null
   ```
-  - the config has a `webServer` that boots the app (`dev`/`start`) **and** the app needs env
-    (a populated `.env.example`, env-validation, Supabase/DB) **and** no committed test-env
-    (`.env.test*`, `.env.ci`) or guaranteed secret provides it → `[Owner: e2e needs a booted
-    backend + test env/secrets wired]`.
-  - the e2e script needs secrets (doppler-wrapped, or references `SUPABASE_*`/`DATABASE_*`) with
-    no token guaranteed → same flag.
-  Only emit the e2e job when it would actually go green (e.g. a static target, a test-env is
-  committed, or the suite needs no app boot).
+  Classify into one of three (full construction in **3e**):
+  1. **Runs green as-is** — no app boot, or boots with no required env, or a test-env is
+     committed → **emit a plain e2e job**.
+  2. **Needs env that a repo Variable/Secret can supply** — boots against a *hosted* service
+     reachable by URL+key (e.g. Supabase `NEXT_PUBLIC_*` URL+anon key), or just app config — i.e.
+     setting a value *actually* makes it runnable → **emit a GATED self-skipping e2e job** (3e).
+  3. **Needs infrastructure that doesn't exist in CI** — the app boots against a real **database**
+     (a `DATABASE_URL`/`DATABASE_URI`/Postgres/Mongo connection + a DB adapter like Payload/Prisma/
+     Drizzle, a seeded non-prod DB) that no Variable can conjure → **hard-flag `[Owner]`, emit
+     NOTHING** (not even a gated job — a gate whose var can never make e2e runnable is dead config).
+     Note the real path (e.g. "needs a Postgres service + migrate/seed in CI — wire deliberately").
+  The line between 2 and 3: *can a settable Variable/Secret make e2e actually pass?* Hosted-SaaS
+  URL+key → yes (gate). A database connection string the app must boot against → no (hard-flag).
 
 - **unit / integration test → check it doesn't need a backend.** A pure unit suite (jsdom, no
   DB) emits fine. But an **integration** suite (files named `*.int.*`/`integration`, hits API
@@ -279,6 +285,55 @@ If `playwright.config.*` or `cypress.config.*` exists, e2e needs a browser insta
 2. **Only a bundled `test`** that itself invokes e2e → run the whole `test` inside the `e2e`
    job (after browser install), so it never fails on missing browsers. Note this in the report.
 3. **No e2e config** → a single `test` job running typecheck/lint/`test`.
+
+The e2e job is emitted only per the **3c.5 three-way decision**. For the "needs env a Variable
+can supply" case, emit it **gated and self-skipping** (case 2). For the "needs infra that doesn't
+exist" case (case 3), emit **nothing** — hard-flag in the report.
+
+#### 3e.1. The gated self-skipping e2e job (case 2)
+
+The pattern (ported from a real, merged hand-tuned workflow): the job **skips, not fails**, until
+the activating Variable is set, so CI is **green-by-default**, and runs the moment it's configured.
+
+```yaml
+  e2e:
+    runs-on: ubuntu-latest
+    # green-by-default: this job SKIPS until the activating Variable is set
+    if: ${{ vars.<ACTIVATING_KEY> != '' }}
+    env:
+      <PUBLIC_KEY>: ${{ vars.<PUBLIC_KEY> }}      # public-by-design (URL, anon/publishable key)
+      <SECRET_KEY>: ${{ secrets.<SECRET_KEY> }}   # real secret (token, service key)
+    steps:
+      - uses: actions/checkout@v4
+      # <PM setup block per 3b/3b.5>   (+ dopplerhq/cli-action@v3 if doppler — per 3f)
+      - run: <install>
+      - run: <pm> exec playwright install --with-deps
+      - run: <pm> run test:e2e
+```
+
+Construction rules:
+- **`if:` gate** — pick the **activating key** from the env the app needs to boot the e2e target:
+  prefer a **public** one (a `NEXT_PUBLIC_*` URL/key, present in `.env.example`) so the gate reads
+  from `vars.*`. Gate on the single value whose presence means "this is wired" (the URL, usually).
+  The expression is exactly `if: ${{ vars.<KEY> != '' }}` — unset/empty ⇒ the whole job is skipped
+  (shown as a skipped check, not a failure); set ⇒ the job runs.
+- **env wiring** — map each needed var: **public** values (URLs, anon/publishable keys,
+  `NEXT_PUBLIC_*`) from `vars.*`; **real secrets** (service keys, tokens, API secrets) from
+  `secrets.*`. Detect the set from `.env.example` + the app's `process.env.*` reads.
+- **browsers + doppler** — always `playwright install --with-deps`; if the repo uses doppler
+  (3f), add `dopplerhq/cli-action@v3` and wrap/token per 3f.
+- **report the activation recipe** — list the exact repo **Variables** and **Secrets** to set
+  (Settings → Secrets and variables → Actions), naming which are Variables (public) vs Secrets.
+
+#### 3e.2. Hard-flag (case 3) — do NOT emit a gated job
+
+When e2e needs infrastructure a Variable can't provide — the app boots against a **database**
+(`DATABASE_URL`/`DATABASE_URI` + a DB adapter: Payload/Prisma/Drizzle/TypeORM/Mongoose), a seeded
+non-prod DB, or any service that must be *stood up*, not *pointed at* — **emit nothing**. A gated
+job here would activate into a red run (no DB to connect to), which is worse than no job. Hard-flag
+`[Owner]` with the real path: "e2e needs a Postgres service + Payload/Prisma migrate+seed in CI —
+a deliberate setup beyond a gated job; wire it when e2e matters." The distinguishing test is
+runnability-on-activation: if setting the gate Variable cannot by itself make e2e pass, it's case 3.
 
 ### 3f. Secrets manager — detect, never impose (the Doppler guard)
 
