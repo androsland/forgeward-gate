@@ -231,10 +231,16 @@ add an `[Owner]` line naming the exact blocker.**
   NOT emit the step → `[Owner: add an ESLint config before lint can run in CI]`.
 
 - **e2e / Playwright → three-way decision (see 3e).** e2e is the one step with a middle ground.
+  Read BOTH the deps/env **and the playwright/cypress config's own wiring** — the config is often
+  where "needs local infra" is actually declared. **(Inspect by KEY/PATTERN name only — never read
+  `.env`/`.env.local` or echo any secret value; `.env.example` placeholders are fine.)**
   ```bash
-  grep -nE 'webServer|command:|baseURL.*localhost|process\.env|SUPABASE|DATABASE|PAYLOAD' playwright.config.* cypress.config.* 2>/dev/null
+  # deps + example env (NAMES/placeholders only — do NOT read real .env/.env.local)
   grep -nE 'DATABASE_URL|DATABASE_URI|MONGO|POSTGRES|PAYLOAD_SECRET|PRISMA' .env.example 2>/dev/null
   grep -nE '@payloadcms|prisma|drizzle|typeorm|mongoose|"pg"' package.json 2>/dev/null
+  # the e2e config's wiring — these are the case-3 tells an adapter scan misses:
+  grep -nE 'webServer|command:|process\.env\.[A-Z_]+|SERVICE_ROLE|localhost|127\.0\.0\.1|throw|mailpit|MAILPIT|supabase (start|up)|globalSetup|storageState' \
+       playwright.config.* cypress.config.* 2>/dev/null
   ls .env.test* .env.ci 2>/dev/null
   ```
   Classify into one of three (full construction in **3e**):
@@ -243,13 +249,37 @@ add an `[Owner]` line naming the exact blocker.**
   2. **Needs env that a repo Variable/Secret can supply** — boots against a *hosted* service
      reachable by URL+key (e.g. Supabase `NEXT_PUBLIC_*` URL+anon key), or just app config — i.e.
      setting a value *actually* makes it runnable → **emit a GATED self-skipping e2e job** (3e).
-  3. **Needs infrastructure that doesn't exist in CI** — the app boots against a real **database**
-     (a `DATABASE_URL`/`DATABASE_URI`/Postgres/Mongo connection + a DB adapter like Payload/Prisma/
-     Drizzle, a seeded non-prod DB) that no Variable can conjure → **hard-flag `[Owner]`, emit
-     NOTHING** (not even a gated job — a gate whose var can never make e2e runnable is dead config).
-     Note the real path (e.g. "needs a Postgres service + migrate/seed in CI — wire deliberately").
-  The line between 2 and 3: *can a settable Variable/Secret make e2e actually pass?* Hosted-SaaS
-  URL+key → yes (gate). A database connection string the app must boot against → no (hard-flag).
+  3. **Needs infrastructure that doesn't exist in CI** → **hard-flag `[Owner]`, emit NOTHING** (not
+     even a gated job — a gate whose var can never make e2e runnable is dead config). Triggers:
+     - a real **database** the app boots against — `DATABASE_URL`/`DATABASE_URI`/Postgres/Mongo +
+       a DB adapter (Payload/Prisma/Drizzle/TypeORM/Mongoose), or a seeded non-prod DB; **or**
+     - the **e2e config UNCONDITIONALLY demands local infra** — a top-level (ungated) assertion that
+       throws unless the URL is `127.0.0.1`/`localhost`, a `*_SERVICE_ROLE_KEY`/admin secret
+       required to boot *for all specs*, or a hard `globalSetup`/mailpit/`supabase start`/`db:up`
+       dependency with no public path. (This is the **linkids** shape — its line-17 local-URL throw
+       runs at config load for every spec.)
+     Note the real path (e.g. "needs a local Supabase stack + service-role + mailpit, or a Postgres
+     service + migrate/seed — wire deliberately").
+
+  **The conditional/unconditional distinction — this is the linkids-vs-nutriloop boundary, and it
+  decides case 2 vs 3:**
+  - A local-infra requirement **gated behind an auth/mode flag** (`if (isAuthed)` / `E2E_AUTHED===1`)
+    that has a **public default suite** which boots on hosted public values (URL + anon key) → the
+    public suite is **case 2**: emit the gated job for the public default; the authed/local specs
+    self-skip (exactly nutriloop — its throw is inside `if (isAuthed)`, line 25, not top-level).
+  - The **same** requirement at **top level, ungated** (fires for every run) → **case 3** (linkids).
+  - **When you can't tell** whether the local requirement is unconditional or has a public default
+    (mixed signals: a local-URL/service-role mention *and* an `E2E_AUTHED`-style flag, but the
+    structure is unclear) → **do NOT silently gate.** Report exactly what you found and ask the user
+    to confirm "public hosted subset exists (case 2) vs needs a local stack (case 3)." Default lean:
+    **hard-flag**, because a wrongly-emitted gated job activates into a red run (dead config), which
+    is worse than a missing e2e job the user can add.
+
+  **The line between 2 and 3 in one test:** *can a settable Variable/Secret make e2e actually pass,
+  with no extra infra?* Hosted URL+anon-key a public suite boots against → gate (case 2). A
+  connection string, an **unconditional** local-stack/service-role/mailpit requirement → hard-flag
+  (case 3). A Supabase repo is **not** automatically case 2 — read whether its local requirement is
+  gated (case 2) or unconditional (case 3).
 
 - **unit / integration test → check it doesn't need a backend.** A pure unit suite (jsdom, no
   DB) emits fine. But an **integration** suite (files named `*.int.*`/`integration`, hits API
@@ -327,13 +357,20 @@ Construction rules:
 
 #### 3e.2. Hard-flag (case 3) — do NOT emit a gated job
 
-When e2e needs infrastructure a Variable can't provide — the app boots against a **database**
-(`DATABASE_URL`/`DATABASE_URI` + a DB adapter: Payload/Prisma/Drizzle/TypeORM/Mongoose), a seeded
-non-prod DB, or any service that must be *stood up*, not *pointed at* — **emit nothing**. A gated
-job here would activate into a red run (no DB to connect to), which is worse than no job. Hard-flag
-`[Owner]` with the real path: "e2e needs a Postgres service + Payload/Prisma migrate+seed in CI —
-a deliberate setup beyond a gated job; wire it when e2e matters." The distinguishing test is
-runnability-on-activation: if setting the gate Variable cannot by itself make e2e pass, it's case 3.
+When e2e needs infrastructure a Variable can't provide — **emit nothing**. A gated job here would
+activate into a red run, which is worse than no job. Two families of trigger:
+
+- **DB the app boots against** — `DATABASE_URL`/`DATABASE_URI` + a DB adapter (Payload/Prisma/
+  Drizzle/TypeORM/Mongoose), or a seeded non-prod DB.
+- **e2e config demands a local stack** (the linkids shape — a "hosted" backend that still needs
+  local infra): the config **asserts a local URL** (throws unless the Supabase URL is
+  `127.0.0.1`/`localhost`), **requires a `*_SERVICE_ROLE_KEY`/admin secret to boot**, or depends on
+  a **local mail/seed service** (mailpit, `supabase start`/`db:up`, a seeding `globalSetup`).
+
+Hard-flag `[Owner]` with the real path, e.g. "e2e needs a local Supabase stack + service-role +
+mailpit (or a Postgres service + migrate/seed) — a deliberate setup beyond a gated job; wire it
+when e2e matters." The distinguishing test is **runnability-on-activation**: if setting the gate
+Variable cannot *by itself* make e2e pass, it's case 3 — do not emit a gated job.
 
 ### 3f. Secrets manager — detect, never impose (the Doppler guard)
 
