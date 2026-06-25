@@ -6,6 +6,13 @@
 
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
+This plugin has **two deliberately distinct parts**:
+- **The gate (enforced)** — read-only reviewers plus a blocking hook that stops the push until
+  they pass. Everything below describes it.
+- **`/forgeward:readiness` (advisory)** — an on-demand helper that drafts a correct CI workflow
+  from your repo's real stack. It **never blocks**. See
+  [its section](#forgewardreadiness--advisory-ci-helper-does-not-gate).
+
 gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
 *blocking* gate: its `/ship` is fully automated and never refuses to publish. This plugin
 adds the reviewers gstack has no equivalent for and makes them **block `/ship` until every
@@ -54,6 +61,66 @@ only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) an
 package.json **version-field-only** bump. Any change to source **or dependencies** after the
 gate flips the hash and forces a re-gate — a dependency added between gate and push does
 **not** sail through.
+
+## `/forgeward:readiness` — advisory CI helper (does not gate)
+
+The gate above *enforces*. `/forgeward:readiness` *prepares* — a separate, advisory skill in
+the same plugin that helps a repo reach the baseline, starting with the most automatable slice:
+CI. **It drafts; it never blocks.** No hook, no reviewers, no `/ship` interception — running it
+changes nothing you don't commit yourself. (That's why it's a distinct skill, not a gate axis:
+folding "drafts a file for you" into "blocks your push" would blur what the gate guarantees.)
+
+**What it does.** Run `/forgeward:readiness` in a repo and it:
+
+1. **Detects the real stack** — package manager from the **lockfile** (pnpm/npm/yarn/bun), the
+   real `test`/`lint`/`typecheck` commands from `package.json` `scripts` (and `CLAUDE.md` if it
+   names them), Node version from `engines`/`.nvmrc`, e2e framework from `playwright.config`/
+   `cypress.config`, and a secrets manager (Doppler) **only if the repo actually uses one**.
+2. **Drafts `.github/workflows/ci.yml`** using those **real** commands and the repo's **real
+   default branch** — typecheck + lint + test, the correct setup action for the detected
+   package manager, a separate browser-install job for Playwright, and Doppler wiring (plus the
+   `dopplerhq/cli-action` install step) when detected. It writes the file for you to review and
+   commit.
+3. **Prints a covered / missing / deferred / [Owner] report** inline (a file only if you ask).
+
+For e2e specifically it makes a **three-way** call: runs-green-as-is → emit a plain job; needs env
+a repo **Variable/Secret** can supply (a hosted backend reachable by URL+key) → emit a **gated,
+self-skipping** job (`if: ${{ vars.<KEY> != '' }}`) that stays green-by-default and activates when
+you set the Variable; needs **infrastructure that doesn't exist in CI** (a real database the app
+boots against — Payload/Prisma/etc.) → **hard-flag `[Owner]`, emit nothing** (a gate that can never
+make e2e pass is dead config). *(The gated-e2e pattern is **proven to activate-and-run-green on a real Actions run**; one generate-on-a-fresh-repo caveat remains — see Validation.)*
+
+**The core guarantee — evidence AND runnability.** A step is emitted only if it passes both
+tests: the command **exists** as a real script (no `typecheck` script → no typecheck step; the
+**lockfile** decides the package manager, so a pnpm repo never gets a guessed `npm ci`), **and**
+it can **run green in a clean CI environment as-drafted**. A real script that would fail in CI —
+`lint` with no ESLint config (interactive setup prompt), or a `test`/`e2e` step that boots the
+app or needs env/secrets/a live backend CI can't supply — is **flagged `[Owner]` with the exact
+blocker, never emitted red.** A green-looking workflow that's red on arrival is worse than no CI;
+this skill exists to never produce one.
+
+**Validation.** Exercised against **7 real repositories** — of which **4 were drafted a new
+`ci.yml`** (the repos that had no test CI), **1 was correctly *not* drafted** (no `scripts` block
+— the guard fired, a report instead of a fabricated `npm test`), and **2 were left byte-for-byte
+untouched** (they already had hand-tuned CI, marked Covered). A synthetic fixture covered the one
+Doppler path no real repo exercised. "7 repositories" means *exercised across 7*, not *7 workflows
+generated*. Together they cover:
+
+| Dimension | Covered |
+|-----------|---------|
+| Package manager | **pnpm** and **npm** (lockfile-driven: `pnpm install --frozen-lockfile` vs `npm ci`) |
+| Default branch | **main** and **master** (detected — a `master` repo gets `branches: [master]`, not a workflow that silently never fires on push) |
+| `typecheck` | **present** (step emitted) and **absent** (no step invented) |
+| Doppler | **self-wrapping** scripts (token only, no double-wrap) and **bare** scripts (prefixed `doppler run --`), both with the `dopplerhq/cli-action` install step |
+| No scripts | **guard** — a repo with no `scripts` block gets a report, not a fabricated `npm test` |
+| Existing CI | **don't-clobber** — detects CI by *intent* (any workflow that runs the project's scripts on push/PR), not a test-runner keyword list. Covers hand-tuned suites, **typecheck/lint-only** workflows, and the skill's **own** drafted output; biased to treat the uncertain case as Covered. Verified it leaves real hand-tuned workflows byte-for-byte untouched and re-recognizes its own lint-only `ci.yml` instead of overwriting it |
+| Runnability | a `lint` with no ESLint config, or an `e2e`/`test` step that boots the app or needs env/secrets, is **flagged `[Owner]`, not emitted red** (so a drafted workflow goes green on first run, not red-on-arrival) |
+| Gated e2e *(verified — one caveat below)* | **Verified on all three legs.** (1) **Gate pattern proven in real CI**: a merged hand-tuned workflow runs green-by-default (e2e self-skips until the public Variable is set). (2) **The skill generates that exact pattern** — its emitted `if: ${{ vars.<KEY> != '' }}` gate + `vars.*` wiring is equivalence-verified byte-for-byte against that merged job. (3) **Activate-and-run-green confirmed on a real Actions run**: with the two public Variables set, the e2e job flipped **Skipped → Running (1m45s, not a skip) → green**, 14 public specs passed and the 7 authed specs correctly self-skipped (no `E2E_AUTHED`). **Remaining caveat:** the full *generate-on-a-fresh-case-2-repo → that generated file runs green* chain hasn't been done in one continuous run — no fresh case-2 repo exists in the fleet (the only hosted-public repo, nutriloop, was hand-tuned). So: gate pattern + skill-generation + activate-and-run-green are each proven; only the end-to-end "skill emits the job on a never-touched case-2 repo and it goes green" remains, awaiting such a repo |
+| e2e case-2/3 classification | distinguishes **gatable** e2e (boots on a hosted URL+anon-key the public suite uses → gated job) from **hard-flag** e2e (needs infra no Variable conjures → emit nothing). Reads both deps/`.env.example` (DB adapters/connection NAMES) **and the playwright config's wiring**; a Supabase repo with an **unconditional** local-URL/service-role/mailpit requirement is case 3 (linkids), while the same requirement **gated behind an `E2E_AUTHED`-style flag with a public default** stays case 2 (nutriloop). Ambiguous → defers to the user, biased to hard-flag (a dead gated job is worse than a missing one) |
+
+This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
+advisory and has no bearing on the enforcement contract. The gate's 24-assertion suite, security
+scope, and honest limits are unchanged.
 
 ## Install
 
@@ -113,7 +180,7 @@ activate on install with no `settings.json` edit. The enforcement hook reads JSO
 
 ## Validation / what's tested
 
-**Automated suite — 21 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
+**Automated suite — 24 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
 exercises the **real plugin scripts** in `scripts/` (not mocks or copies) against throwaway
 git repos. It covers the full enforcement contract:
 
