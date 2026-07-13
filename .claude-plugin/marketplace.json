@@ -8,15 +8,15 @@
     {
       "name": "forgeward",
       "source": "./",
-      "description": "Enforced, read-only conformance gate for gstack. Adds the reviewers gstack lacks (privacy, accessibility, ai-output, seo, supply-chain) and blocks /ship until every fired reviewer returns VERDICT: PASS.",
-      "version": "0.1.0",
+      "description": "Enforced, read-only conformance gate for gstack. Adds the reviewers gstack lacks (privacy, accessibility, ai-output, seo, supply-chain, security) and blocks /ship until every fired reviewer returns VERDICT: PASS.",
+      "version": "0.2.0",
       "author": {
         "name": "Andreas Demetriou"
       },
       "homepage": "https://github.com/androsland/forgeward-gate",
       "repository": "https://github.com/androsland/forgeward-gate",
       "license": "MIT",
-      "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain"],
+      "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain", "security", "sast"],
       "category": "workflow"
     }
   ]

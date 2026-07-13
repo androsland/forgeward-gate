@@ -1,6 +1,6 @@
 ---
 name: gate
-description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker and invokes gstack's /ship in one motion. On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
+description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests, code security), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker and invokes gstack's /ship in one motion. On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
 allowed-tools:
   - Bash
   - Read
@@ -57,9 +57,10 @@ ALSO self-skips if its surface turns out absent, so when unsure, fire it.
 | `ai-output-reviewer` | an LLM / paid-AI call | `openai`, `anthropic`, `@anthropic-ai`, `chat.completions`, `messages.create`, `generateText`, model SDK calls |
 | `seo-reviewer` | public, indexable pages | marketing/landing/public routes, `<head>`/meta, `sitemap`, `robots.txt` — NOT behind-auth app pages |
 | `supply-chain-reviewer` | a dependency manifest | `package.json`, lockfiles, `*.csproj`/`packages.lock.json`, `composer.json`, `requirements.txt`, `go.mod`, `Cargo.toml` |
+| `security-reviewer` | executable code (the broad surface — fire on any code that could carry a vuln) | DB queries (`$wpdb->`, raw SQL, string-built queries), request/AJAX/route handlers, auth/capability/nonce logic, `exec`/`eval`/shell, deserialization, file paths built from input, network fetch from input, `.sql` files, template/HTML output of dynamic data |
 
 Print the firing decision, e.g.:
-`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no → firing: accessibility, privacy`.
+`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes → firing: accessibility, privacy, security`.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
@@ -67,7 +68,8 @@ For each fired reviewer, spawn it with the **Agent** tool (one message, multiple
 calls, so they run in parallel). Use the matching `subagent_type`
 (`forgeward:privacy-reviewer`, `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
-`forgeward:supply-chain-reviewer`). Tell each to review the diff of `<base>...HEAD`.
+`forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`). Tell each to review
+the diff of `<base>...HEAD`.
 
 Each reviewer returns findings and ends with one line: `<AXIS> VERDICT: PASS|FAIL`.
 Collect every verdict line. Do not edit any code in response to findings.

@@ -4,6 +4,33 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## DECISION — add a security reviewer + CI enforcement (reversed "delegate security to /cso")
+
+**Date:** 2026-07-13
+
+**Prior decision.** forgeward deliberately shipped no general security reviewer, delegating the
+OWASP/STRIDE/CVE axis to gstack's `/cso`, and the README documented "no SAST, no CI merge-gating —
+handle those in your project's CI." The rationale was avoiding duplication of `/cso`.
+
+**What broke it.** On a real PR (a wp-admin SQL runner executing committed `.sql` against a live
+DB), the gate fired only privacy + accessibility and returned PASS. `/cso` is opt-in and manual;
+it wasn't run. A commercial SAST scanner (Wiz) independently flagged **1 critical + 13 high** on
+the same diff — including a SQL-injection-class finding. The delegation assumed `/cso` would be
+run; in the real workflow it wasn't, so the security axis was simply absent at the moment of ship.
+
+**Decision.** (1) Add `security-reviewer` as a sixth gate reviewer — diff-scoped, read-only, runs
+a bundled framework-aware SAST rulepack (`rules/wp-security.yml`) plus injection/authz reasoning,
+returns `SECURITY VERDICT: PASS|FAIL`. (2) Add `/forgeward:ci-gate` (absorbing the former
+`readiness` skill) to wire real scanners (Semgrep, PHPCS/WPCS, Trivy, Gitleaks) into CI and
+optionally make them required checks via branch protection. `/cso` remains the deep whole-repo
+audit; the reviewer does not replace it — it stops the gate greenlighting injection.
+
+**Scope note.** `security-reviewer` is diff-scoped and one reviewer won't match a commercial SAST
+engine's recall — the `ci-gate` CI scanners are the unskippable floor; the reviewer is fast local
+feedback. Verified: the bundled rulepack flags 8 dynamic-SQL sinks on the PR above (6 unprepared
+`$wpdb` queries + a value interpolated into a `prepare()` format string) and stays silent on
+correctly-prepared and literal queries.
+
 ## RESOLVED — base detection on a direct-to-base commit (origin/<base> fallback)
 
 **Date:** 2026-06-22

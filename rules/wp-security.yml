@@ -1,0 +1,64 @@
+# forgeward — WordPress/PHP security rules
+# Covers the framework-specific injection sinks that Semgrep's stock p/php and
+# p/security-audit packs miss because they don't model WordPress's $wpdb API.
+# Philosophy matches WPCS WordPress.DB.PreparedSQL: a $wpdb query built from
+# anything other than a literal or an inline $wpdb->prepare() must be proven safe.
+rules:
+  - id: forgeward-wpdb-query-not-prepared
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 Injection"
+      references:
+        - https://developer.wordpress.org/reference/classes/wpdb/prepare/
+    message: >
+      Dynamic $wpdb query is not wrapped in an inline $wpdb->prepare(). Table,
+      column, WHERE, or statement text is interpolated/concatenated straight into
+      SQL run against the database. Use $wpdb->prepare() with %s/%d placeholders,
+      or if identifiers are dynamic, validate them against an allowlist. If this
+      query is already prepared via a variable, inline the prepare() call or add a
+      reviewed justification.
+    patterns:
+      - pattern-either:
+          - pattern: $wpdb->query($Q)
+          - pattern: $wpdb->get_results($Q)
+          - pattern: $wpdb->get_results($Q, $M)
+          - pattern: $wpdb->get_var($Q)
+          - pattern: $wpdb->get_var($Q, ...)
+          - pattern: $wpdb->get_row($Q)
+          - pattern: $wpdb->get_row($Q, ...)
+          - pattern: $wpdb->get_col($Q)
+      - pattern-not: $wpdb->query($wpdb->prepare(...))
+      - pattern-not: $wpdb->get_results($wpdb->prepare(...))
+      - pattern-not: $wpdb->get_results($wpdb->prepare(...), $M)
+      - pattern-not: $wpdb->get_var($wpdb->prepare(...))
+      - pattern-not: $wpdb->get_var($wpdb->prepare(...), ...)
+      - pattern-not: $wpdb->get_row($wpdb->prepare(...))
+      - pattern-not: $wpdb->get_row($wpdb->prepare(...), ...)
+      - pattern-not: $wpdb->get_col($wpdb->prepare(...))
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
+            # not a plain single string literal (those are static, safe)
+            - pattern-not-regex: '^\s*[''"][^''"$.]*[''"]\s*$'
+
+  - id: forgeward-wpdb-prepare-interpolated
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 Injection"
+    message: >
+      A variable is interpolated or concatenated INTO the $wpdb->prepare() format
+      string. Interpolating into the format string defeats prepare() entirely —
+      the value never passes through a placeholder. Move every dynamic value to a
+      %s/%d placeholder and pass it as a prepare() argument instead.
+    patterns:
+      - pattern-either:
+          - pattern: $wpdb->prepare("...{$X}...", ...)
+          - pattern: $wpdb->prepare("..." . $X, ...)
+          - pattern: $wpdb->prepare($A . $B, ...)
+          - pattern: $wpdb->prepare("..." . $X . "...", ...)

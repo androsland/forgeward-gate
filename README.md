@@ -1,17 +1,18 @@
 # forgeward gate
 
 > gstack ships fast. forgeward-gate makes sure it ships clean — an enforced, read-only review
-> gate that blocks the push until privacy, accessibility, AI-output, SEO, and supply-chain
-> checks pass.
+> gate that blocks the push until privacy, accessibility, AI-output, SEO, supply-chain, and
+> security checks pass.
 
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
-This plugin has **two deliberately distinct parts**:
+This plugin has **two distinct parts**:
 - **The gate (enforced)** — read-only reviewers plus a blocking hook that stops the push until
   they pass. Everything below describes it.
-- **`/forgeward:readiness` (advisory)** — an on-demand helper that drafts a correct CI workflow
-  from your repo's real stack. It **never blocks**. See
-  [its section](#forgewardreadiness--advisory-ci-helper-does-not-gate).
+- **`/forgeward:ci-gate`** — an on-demand skill that detects your repo's real stack, drafts the
+  CI it's missing (tests/lint **and** security scanning), and offers to make those checks
+  required via branch protection. Drafting is advisory; enforcement is one explicit, confirmed
+  step. See [its section](#forgewardci-gate--draft-the-ci-then-enforce-it).
 
 gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
 *blocking* gate: its `/ship` is fully automated and never refuses to publish. This plugin
@@ -20,7 +21,7 @@ fired reviewer returns `VERDICT: PASS`.** It touches zero gstack files.
 
 ## What it adds (and what it deliberately doesn't)
 
-Five read-only reviewers, each firing **only** when the diff touches its surface:
+Six read-only reviewers, each firing **only** when the diff touches its surface:
 
 | Reviewer | Fires when the diff touches | Why it's here (not redundant with gstack) |
 |----------|------------------------------|-------------------------------------------|
@@ -29,10 +30,19 @@ Five read-only reviewers, each firing **only** when the diff touches its surface
 | `ai-output-reviewer` | an LLM / paid-AI call | gstack covers prompt-injection for *its* browser, not *your* LLM output reliability/cost |
 | `seo-reviewer` | public, indexable pages | no SEO/crawlability/metadata coverage anywhere in gstack |
 | `supply-chain-reviewer` | a dependency manifest | gstack's `/cso` Phase 3 covers CVEs/install-scripts/lockfiles but **not** typosquatted/hallucinated packages or copyleft-license conflicts |
+| `security-reviewer` | executable code (queries, handlers, auth, file/shell/network I/O, `.sql`) | gstack's `/cso` covers this axis but is **opt-in and manual** — see below |
 
-**Not included on purpose:** a code-quality reviewer (gstack's `/review` covers it) and a
-general security reviewer (gstack's `/cso` covers OWASP + STRIDE + dependency CVEs). We
-ported only the verified `/cso` gap into `supply-chain-reviewer`.
+**Why a security reviewer now (this reversed a prior decision).** forgeward used to delegate the
+general security axis to gstack's `/cso`, reasoning that `/cso` already covers OWASP + STRIDE +
+CVEs. In practice `/cso` is **opt-in and manual** — on a real PR it simply wasn't run: the gate
+fired only privacy + accessibility, returned PASS, and a **critical SQL-injection-class change
+shipped on a green marker** (a commercial SAST scanner independently flagged 1 critical + 13 high
+on the same diff). `security-reviewer` closes that — it fires automatically in the gate,
+diff-scoped, running a bundled framework-aware SAST rulepack plus injection/authz reasoning. It
+does **not** replace `/cso` for a deep whole-repo audit, and one reviewer won't match a commercial
+SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real scanners into CI.
+
+**Still not included on purpose:** a code-quality reviewer — gstack's `/review` covers it.
 
 ## How it works
 
@@ -62,26 +72,26 @@ package.json **version-field-only** bump. Any change to source **or dependencies
 gate flips the hash and forces a re-gate — a dependency added between gate and push does
 **not** sail through.
 
-## `/forgeward:readiness` — advisory CI helper (does not gate)
+## `/forgeward:ci-gate` — draft the CI, then enforce it
 
-The gate above *enforces*. `/forgeward:readiness` *prepares* — a separate, advisory skill in
-the same plugin that helps a repo reach the baseline, starting with the most automatable slice:
-CI. **It drafts; it never blocks.** No hook, no reviewers, no `/ship` interception — running it
-changes nothing you don't commit yourself. (That's why it's a distinct skill, not a gate axis:
-folding "drafts a file for you" into "blocks your push" would blur what the gate guarantees.)
+The gate above enforces locally, before a push. `/forgeward:ci-gate` extends that into CI, so a
+red check blocks the merge for **everyone** — not just whoever ran the local gate. It replaces
+the old advisory `readiness` drafter: same evidence-based engine, now with teeth.
 
-**What it does.** Run `/forgeward:readiness` in a repo and it:
+**Two phases, clearly separated:**
 
-1. **Detects the real stack** — package manager from the **lockfile** (pnpm/npm/yarn/bun), the
-   real `test`/`lint`/`typecheck` commands from `package.json` `scripts` (and `CLAUDE.md` if it
-   names them), Node version from `engines`/`.nvmrc`, e2e framework from `playwright.config`/
-   `cypress.config`, and a secrets manager (Doppler) **only if the repo actually uses one**.
-2. **Drafts `.github/workflows/ci.yml`** using those **real** commands and the repo's **real
-   default branch** — typecheck + lint + test, the correct setup action for the detected
-   package manager, a separate browser-install job for Playwright, and Doppler wiring (plus the
-   `dopplerhq/cli-action` install step) when detected. It writes the file for you to review and
-   commit.
-3. **Prints a covered / missing / deferred / [Owner] report** inline (a file only if you ask).
+- **Draft (advisory, default).** Detects the real stack — package manager from the **lockfile**
+  (pnpm/npm/yarn/bun), the real `test`/`lint`/`typecheck` commands from `package.json` `scripts`
+  (and `CLAUDE.md` if it names them), Node from `engines`/`.nvmrc`, e2e framework from
+  `playwright.config`/`cypress.config`, and Doppler **only if the repo uses it** — then drafts the
+  CI it's missing: `.github/workflows/ci.yml` (typecheck/lint/test/e2e) **and**
+  `.github/workflows/forgeward-security.yml` (the bundled SAST rulepack + Semgrep security packs,
+  plus PHPCS/WPCS for WordPress, Trivy, and Gitleaks). It writes the files for you to review and
+  commit, and prints a covered / missing / deferred / [Owner] report inline.
+- **Enforce (explicit, confirmed).** Offers to make those checks **required** on your real default
+  branch via branch protection — the step that actually blocks prod. This changes shared repo
+  settings, so it is **never automatic**: always a confirmed yes, even with admin. Decline (or lack
+  admin) and it hands you the exact manual steps instead.
 
 For e2e specifically it makes a **three-way** call: runs-green-as-is → emit a plain job; needs env
 a repo **Variable/Secret** can supply (a hosted backend reachable by URL+key) → emit a **gated,
@@ -118,9 +128,10 @@ generated*. Together they cover:
 | Gated e2e *(verified — one caveat below)* | **Verified on all three legs.** (1) **Gate pattern proven in real CI**: a merged hand-tuned workflow runs green-by-default (e2e self-skips until the public Variable is set). (2) **The skill generates that exact pattern** — its emitted `if: ${{ vars.<KEY> != '' }}` gate + `vars.*` wiring is equivalence-verified byte-for-byte against that merged job. (3) **Activate-and-run-green confirmed on a real Actions run**: with the two public Variables set, the e2e job flipped **Skipped → Running (1m45s, not a skip) → green**, 14 public specs passed and the 7 authed specs correctly self-skipped (no `E2E_AUTHED`). **Remaining caveat:** the full *generate-on-a-fresh-case-2-repo → that generated file runs green* chain hasn't been done in one continuous run — no fresh case-2 repo exists in the fleet (the only hosted-public repo, nutriloop, was hand-tuned). So: gate pattern + skill-generation + activate-and-run-green are each proven; only the end-to-end "skill emits the job on a never-touched case-2 repo and it goes green" remains, awaiting such a repo |
 | e2e case-2/3 classification | distinguishes **gatable** e2e (boots on a hosted URL+anon-key the public suite uses → gated job) from **hard-flag** e2e (needs infra no Variable conjures → emit nothing). Reads both deps/`.env.example` (DB adapters/connection NAMES) **and the playwright config's wiring**; a Supabase repo with an **unconditional** local-URL/service-role/mailpit requirement is case 3 (linkids), while the same requirement **gated behind an `E2E_AUTHED`-style flag with a public default** stays case 2 (nutriloop). Ambiguous → defers to the user, biased to hard-flag (a dead gated job is worse than a missing one) |
 
-This validation is **additive** to the gate's own validation below; `/forgeward:readiness` is
-advisory and has no bearing on the enforcement contract. The gate's 24-assertion suite, security
-scope, and honest limits are unchanged.
+This validation covers `ci-gate`'s **drafting** engine (inherited from the former `readiness`
+skill); it is **additive** to the gate's own validation below and has no bearing on the
+enforcement contract. `ci-gate`'s branch-protection step is separate and always confirmed. The
+gate's 24-assertion suite, security scope, and honest limits are unchanged.
 
 ## Install
 
@@ -232,13 +243,19 @@ a sandbox.
 
 ## Security scope
 
-**Static review, not dynamic scanning.** forgeward-gate (and gstack's `/cso`, which covers the
-general security axis this plugin delegates to it) provide *static* security review — code,
-dependencies, secrets, and OWASP/STRIDE reasoning. They do **not** perform dynamic/runtime
-scanning (DAST, e.g. OWASP ZAP), run SAST engines, scan container images, or CI-enforce
-merge-gating on a security scan. Those require a deployed app and a CI pipeline — handle them in
-your project's CI, not here. A gate PASS means the reviewed change is clean, not that the running
-application is secure.
+**What forgeward covers.** The gate's `security-reviewer` fires on any code change and runs a
+bundled framework-aware SAST rulepack (e.g. unprepared `$wpdb` queries that generic Semgrep packs
+miss) plus injection/authz reasoning, diff-scoped. `/forgeward:ci-gate` wires **real scanners**
+(Semgrep, PHPCS/WPCS, Trivy, Gitleaks) into CI and can make them a **required, merge-blocking**
+check via branch protection. Between them, forgeward does static security review **and**
+CI-enforced SAST merge-gating.
+
+**Honest boundaries.** This is still *static* review — no dynamic/runtime scanning (DAST, e.g.
+OWASP ZAP) and no container-image scanning. The gate's `security-reviewer` is **diff-scoped**: it
+reviews the change, not the whole repo, and one LLM reviewer won't match a dedicated commercial
+SAST engine's recall. Run gstack's `/cso` for a deep whole-repo audit, and treat the `ci-gate` CI
+scanners as your unskippable floor. A gate PASS means the reviewed change is clean, not that the
+running application is secure.
 
 ## Accepted design gaps (documented, not bugs)
 
