@@ -9,7 +9,7 @@
       "name": "forgeward",
       "source": "./",
       "description": "Enforced, read-only conformance gate for gstack. Adds the reviewers gstack lacks (privacy, accessibility, ai-output, seo, supply-chain, security) and blocks /ship until every fired reviewer returns VERDICT: PASS.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "Andreas Demetriou"
       },
