@@ -7,8 +7,8 @@
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
 This plugin has **two distinct parts**:
-- **The gate (enforced)** — read-only reviewers plus a blocking hook that stops the push until
-  they pass. Everything below describes it.
+- **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
+  hook that blocks an un-gated push. Everything below describes it.
 - **`/forgeward:ci-gate`** — an on-demand skill that detects your repo's real stack, drafts the
   CI it's missing (tests/lint **and** security scanning), and offers to make those checks
   required via branch protection. Drafting is advisory; enforcement is one explicit, confirmed
@@ -49,22 +49,30 @@ SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real 
 - **Happy path:** run `/forgeward:gate`. It detects which surfaces the diff touches, fires
   only the relevant reviewers (read-only — `Read, Grep, Glob, Bash`, no edits), and on
   all-PASS writes a pass marker and hands off to gstack's `/ship` in one motion.
-- **Enforcement (two hooks, shipped in the plugin, auto-registered on install):**
+- **Enforcement — fast feedback in Claude Code, and the real lock at `pre-push`:**
   1. `UserPromptExpansion` on a typed ship command → halts immediately if there's no fresh PASS
      for the current code, before any work runs. The matcher is `^([A-Za-z0-9_]+-)?ship$`, so it
      fires on `ship` **and** any prefixed variant (`gstack-ship` and any custom gstack `--prefix`),
      and not on lookalikes (`shipment`, `airship`).
-  2. `PreToolUse` on `Bash` → denies `git push` / `gh pr create` / `glab mr create` unless a
-     fresh PASS marker matches the current code. This is the floor; it fires no matter how
-     `/ship` was triggered.
+  2. `PreToolUse` on `Bash` → a **best-effort reminder**: on a `git push` / `gh pr create` /
+     `glab mr create`, it denies when the current checkout's branch has no fresh marker. It reads
+     command *text*, so it is leaky by design — `git -C`, quoting, a script file, an alias all
+     slip past. Treat it as fast feedback, **not** the boundary. (Four security reviews confirmed
+     no text-matching hook can be both bypass-proof and usable.)
+  3. **`pre-push` hook — the enforcement.** `scripts/forgeward-pre-push.sh`, installed per repo
+     with `scripts/forgeward-install-pre-push.sh`. Git runs it *inside* the push and hands it the
+     exact refs + SHAs on stdin, after the shell has resolved `git -C` / quoting / `$vars` /
+     `xargs` — so none of those can evade it. It blocks the push if any branch ref being pushed
+     lacks a fresh marker. It is **opt-in per repo** (`git config forgeward.gate enabled`, set by
+     the installer), so it is safe to live in a shared/global `core.hooksPath` dir — a no-op
+     everywhere except repos that opted in.
 
-**Enforcement holds for every gstack install variant.** The floor (hook 2) matches the *publish
-command*, not the skill name, so it is completely prefix-independent — whether gstack is installed
-plain, with `--prefix`, or under a custom prefix, an un-gated push is blocked. Hook 1 (the fast
-early halt) covers `ship` and any `[A-Za-z0-9_]+-ship` prefix; only an exotic prefix containing
-characters outside `[A-Za-z0-9_]` would slip past the *early* halt (the floor still catches it). To
-cover such a prefix, add it to the alternation in `hooks/hooks.json` → `UserPromptExpansion.matcher`
-(e.g. `^(my.weird.prefix-)?ship$`) and run `/reload-plugins`.
+**Honest limits — strong, not indestructible.** `git push --no-verify` skips the pre-push hook;
+the marker is a local file that can be forged; git hooks are not cloned (re-install in a fresh
+clone, and after a plugin update — the enforcer path is baked into the installed hook). No
+purely-local gate escapes these. For an **unbypassable** boundary, gate the MERGE server-side
+with `/forgeward:ci-gate` (required checks + branch protection). Hooks 1–2 match the *publish
+command*, not the skill name, so they are prefix-independent across gstack install variants.
 
 The marker pins a hash of the **reviewed code and dependencies** (`base...HEAD`), excluding
 only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and a
@@ -184,32 +192,37 @@ required, not optional.** Bare `claude plugin install forgeward` does *not* reso
 
 ### After install
 
-The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and both hooks
-activate on install with no `settings.json` edit. The enforcement hook reads JSON with
-`jq` if present, else `python3` (one of which is on virtually every dev machine); if
-*neither* exists it fails open — see limits.
+The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and the two
+in-editor hooks (the `/ship` halt and the `PreToolUse` reminder) activate on install with no
+`settings.json` edit. The **enforcement** hook (`pre-push`) is **not** auto-registered — run
+`scripts/forgeward-install-pre-push.sh` once per repo to turn it on (it sets
+`git config forgeward.gate enabled` and installs the hook into the repo's effective hooks
+dir). The hooks read JSON with `jq` if present, else `python3`; if *neither* exists they fail
+open — see limits.
 
 ## Validation / what's tested
 
-**Automated suite — 24 assertions, `npm test`.** `test/gate-test.sh` is framework-free and
-exercises the **real plugin scripts** in `scripts/` (not mocks or copies) against throwaway
-git repos. It covers the full enforcement contract:
+**Automated suites — `npm test`.** Both are framework-free and exercise the **real plugin
+scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
 
+`test/gate-test.sh` (27 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
-  `glab mr create` are all blocked; a typed `/ship` is halted at expansion (exit 2).
-- **Allow on a fresh PASS marker** — `git push` proceeds and `/ship` expansion passes (exit 0).
-- **Version-bump invariance** — a package.json **version-field-only** bump (gstack's post-gate
-  Step 12) leaves the diff hash unchanged, so the marker survives and the push stays allowed.
-- **Dependency change forces a re-gate** — adding a dependency flips the hash and re-denies the
-  push (the supply-chain bypass this is designed to stop).
-- **Stale-code re-gate** — any new source committed after the marker invalidates it.
-- **Non-publish commands are never touched**, and **outside a git repo the hook fails open**
-  (allows) rather than wedging your shell.
-- **Ship matcher** (read from the real `hooks.json`, evaluated with JS-regex semantics) fires
-  on `ship`, `gstack-ship`, and any `<prefix>-ship`, and **not** on lookalikes `shipment` /
-  `airship`.
-- **Base-detection fallback** — resolves `main`/`master` correctly when `origin/HEAD` is unset,
-  and honors `origin/HEAD` when it is set (the regression that previously yielded an empty base).
+  `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
+- **Allow on a fresh PASS marker**; **version-bump invariance** (a version-field-only bump keeps
+  the marker); **dependency change** and **stale code** force a re-gate.
+- **Non-publish commands are never touched**; **outside a git repo it fails open**.
+- **Worktree honor-cd** — `cd <worktree> && git push` is evaluated in that worktree (gated →
+  allow, ungated → deny), including a single-quoted spaced path.
+- **Ship matcher** and **base-detection fallback**.
+
+`test/pre-push-test.sh` (10 assertions) — the enforcement layer, driven exactly as git drives
+it (refs on stdin, so no command parsing):
+- gated ref allowed; ungated ref blocked (names it); multi-ref one-ungated blocked / all-gated
+  allowed; branch deletion allowed; stale blocked; version-only bump allowed; tag allowed; **a
+  marker written inside a linked worktree honored from the main checkout** (the original bug);
+  and the **opt-in no-op** (a repo without `forgeward.gate` is never blocked — safe as a global
+  hook). An end-to-end harness additionally confirms real pushes via `git -C`, `git  push`,
+  `"git" push`, and `g\it push` are all blocked while ungated, and `--no-verify` bypasses.
 
 **Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
 session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
@@ -218,17 +231,20 @@ the hash — proving the actual plugin **hook dispatched**, not just that the sc
 isolation. The `supply-chain-reviewer` caught the typosquat with registry evidence.
 
 **What "validated" means here (honest boundary).** Tested means *tested-as-designed* — the
-deny/allow logic and live hook dispatch behave as specified. It does **not** mean tamper-proof:
-the gate is **enforced-by-default**, and (as in [limit 1](#three-honest-limits)) anyone who
-disables the plugin or pushes outside Claude Code is past it. This raises the floor; it is not
-a sandbox.
+deny/allow logic behaves as specified, and real pushes through the installed `pre-push` hook
+are blocked/allowed as expected. It does **not** mean tamper-proof (see limit 1). This raises
+the floor; it is not a sandbox.
 
 ## Three honest limits
 
-1. **Enforced by default, not tamper-proof.** A normal user can't accidentally skip the gate
-   and configures nothing. But anyone can disable the plugin (`claude plugin disable
-   forgeward`) or push outside Claude Code entirely, and the gate is gone. No plugin can stop
-   a user who removes the plugin. This raises the floor; it is not a sandbox.
+1. **Strong, not tamper-proof — and local, not server-side.** The `pre-push` hook enforces on
+   any `git push` from that machine (Claude Code *or* a plain terminal), immune to command-text
+   tricks. But it is still client-side: `git push --no-verify` skips it, the marker is a local
+   file that can be forged, git hooks aren't cloned (re-install per clone / after a plugin
+   update), and disabling the plugin removes the reviewers. No purely-local gate escapes these —
+   for an **unbypassable** boundary, gate the MERGE server-side with `/forgeward:ci-gate`
+   (required checks + branch protection). The in-editor `PreToolUse` hook is only a best-effort
+   reminder and is leaky by design.
 
 2. **gstack's Codex review is a separate privacy exposure this gate does not cover.** gstack's
    `/ship` and `/review` send your work to OpenAI's Codex for a second opinion by launching

@@ -89,6 +89,37 @@ denies "$(pretool "$R" "git push")" && ok "new code after marker -> git push DEN
 out="$(pretool "$TMP" "git push")"   # $TMP is not a git repo
 [ -z "$out" ] && ok "outside a git repo -> fail open (allow)" || nok "fail-open outside repo" "got: $out"
 
+# --- worktree: the PreToolUse layer is a best-effort REMINDER (not the lock), but it
+# must still handle the common "cd into a worktree, then push" case — honor the cd and
+# find the marker under the shared common git dir. Precise, per-ref ENFORCEMENT lives
+# in the pre-push hook (test/pre-push-test.sh), which needs none of this text parsing.
+# R stays on `feature`; worktrees are added without moving R's HEAD. ---
+WT="$TMP/wt"
+git -C "$R" worktree add -q -b wtfeat "$WT" main >/dev/null 2>&1
+( cd "$WT"; printf 'const w = 1;\n' > wt.js; git add -A; git commit -qm "feat: worktree"; "$WRITE" main "privacy" ) >/dev/null
+
+# W1: `cd <worktree> && git push` -> honor cd -> the worktree's GATED branch -> ALLOWED
+# (marker written inside the worktree is found via the common git dir).
+out="$(pretool "$R" "cd $WT && git push")"
+[ -z "$out" ] && ok "worktree: 'cd <worktree> && git push' on a gated branch -> ALLOWED (honor cd + common-dir marker)" \
+  || nok "worktree honor-cd gated allow" "got: $out"
+
+# W2: a worktree on an UNGATED branch -> the reminder still fires there -> DENIED.
+WTB="$TMP/wtbad"
+git -C "$R" worktree add -q -b wtbad "$WTB" main >/dev/null 2>&1
+( cd "$WTB"; echo x > b.js; git add -A; git commit -qm "feat: ungated" ) >/dev/null
+denies "$(pretool "$R" "cd $WTB && git push")" \
+  && ok "worktree: 'cd <worktree> && git push' on an ungated branch -> DENIED" \
+  || nok "worktree honor-cd ungated deny"
+
+# W3: single-quoted cd with a spaced path resolves too (gated) -> ALLOWED.
+WTS="$TMP/wt spaced"
+git -C "$R" worktree add -q -b wtspace "$WTS" main >/dev/null 2>&1
+( cd "$WTS"; echo x > s.js; git add -A; git commit -qm "feat: spaced"; "$WRITE" main "privacy" ) >/dev/null
+out="$(pretool "$R" "cd '$WTS' && git push")"
+[ -z "$out" ] && ok "worktree: single-quoted 'cd <spaced worktree> && git push' (gated) -> ALLOWED" \
+  || nok "worktree single-quoted cd allow" "got: $out"
+
 # S10: the UserPromptExpansion matcher (read from the real hooks.json) must fire on
 # `ship` AND any <prefix>-ship (gstack --prefix), but NOT on lookalike commands.
 # Evaluated as a JS regex (node) to match Claude Code's matcher engine; python re
