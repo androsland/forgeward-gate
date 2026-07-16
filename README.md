@@ -80,6 +80,48 @@ package.json **version-field-only** bump. Any change to source **or dependencies
 gate flips the hash and forces a re-gate — a dependency added between gate and push does
 **not** sail through.
 
+## Turn on enforcement (one command per repo)
+
+Installing or updating the plugin activates the reviewers and the in-editor **reminder** — but
+that reminder is best-effort and leaky by design (see above). To actually **block** an ungated
+push, install the `pre-push` hook once in each repo you want gated. From inside the repo:
+
+```bash
+bash ~/.claude/plugins/marketplaces/forgeward-gate/scripts/forgeward-install-pre-push.sh .
+```
+
+Pass a path instead of `.` to gate a repo you're not in:
+
+```bash
+bash ~/.claude/plugins/marketplaces/forgeward-gate/scripts/forgeward-install-pre-push.sh /path/to/repo
+```
+
+(The script lives in the plugin's `scripts/` dir — adjust the path if your plugins live
+elsewhere.) It sets the per-repo opt-in (`git config forgeward.gate enabled`) and installs the
+hook into the repo's effective hooks dir (honoring `core.hooksPath`). From then on, **any**
+`git push` from that repo — Claude Code *or* a plain terminal — is blocked unless the branch has
+passed `/forgeward:gate`. Re-run it in a fresh clone and after a plugin update (git hooks aren't
+cloned, and the enforcer path is baked into the installed hook).
+
+Turn it back **off** for a repo (leaves any shared hook in place; just no-ops there):
+
+```bash
+git config --unset forgeward.gate
+```
+
+### Which layer do you want?
+
+The three layers stack — pick per repo:
+
+| You want… | Do this | Still bypassable by |
+|---|---|---|
+| A heads-up in Claude Code before an ungated push | nothing — active on install | anything (it's only a reminder) |
+| Ungated pushes **blocked** on your machine | run the installer above (per repo) | `git push --no-verify`, or forging the local marker |
+| An **unbypassable** gate for everyone, any machine | `/forgeward:ci-gate` → GitHub required check + branch protection | only a deliberate repo-admin override |
+
+Rows 1–2 are local convenience and honest-mistake protection. The server-side check (row 3) is
+the only *hard* guarantee — that's where enforcement lives when it must not be skippable.
+
 ## `/forgeward:ci-gate` — draft the CI, then enforce it
 
 The gate above enforces locally, before a push. `/forgeward:ci-gate` extends that into CI, so a
@@ -194,11 +236,10 @@ required, not optional.** Bare `claude plugin install forgeward` does *not* reso
 
 The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and the two
 in-editor hooks (the `/ship` halt and the `PreToolUse` reminder) activate on install with no
-`settings.json` edit. The **enforcement** hook (`pre-push`) is **not** auto-registered — run
-`scripts/forgeward-install-pre-push.sh` once per repo to turn it on (it sets
-`git config forgeward.gate enabled` and installs the hook into the repo's effective hooks
-dir). The hooks read JSON with `jq` if present, else `python3`; if *neither* exists they fail
-open — see limits.
+`settings.json` edit. The **enforcement** hook (`pre-push`) is **not** auto-registered — turn it
+on per repo with one command; see [Turn on enforcement](#turn-on-enforcement-one-command-per-repo).
+The hooks read JSON with `jq` if present, else `python3`; if *neither* exists they fail open —
+see limits.
 
 ## Validation / what's tested
 
