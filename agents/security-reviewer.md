@@ -29,6 +29,11 @@ diff is only docs, styles, images, or a lockfile with no code, say so and pass. 
 full diff with `git diff "<base>...HEAD"` and note the changed line ranges — findings
 must land on changed lines, not pre-existing code.
 
+One affordance, not an exemption: when the diff **redefines** something that already
+exists (see *Redefinition posture drift* in Step 3), read the prior definition to
+establish the baseline. Reading outside the diff is expected there — only the *finding*
+must still land on a changed line.
+
 Detect the stack from the changed files and repo root (`composer.json`/`wp-config.php`/
 `wp-content` ⇒ WordPress/PHP; `package.json` ⇒ Node; `requirements.txt`/`pyproject.toml`
 ⇒ Python; etc.). The stack decides which scanners and which manual checks apply.
@@ -83,6 +88,58 @@ Scanners are syntactic. You are not. On the changed code, manually audit for:
 - **Dangerous output / XSS** — dynamic data echoed without escaping (`esc_html`,
   `esc_attr`, `wp_kses`, framework auto-escaping).
 - **Sensitive error exposure** — raw driver/stack errors surfaced to the client.
+- **Redefinition posture drift** — when the diff redefines an existing callable
+  (`create or replace` on a SQL function or procedure, a re-created trigger or RLS policy,
+  and the equivalents elsewhere: a re-exported module, an overridden middleware, a
+  re-registered handler), find the prior definition and diff against it. Reading only the
+  new body is how a silent privilege change ships — a reconstructed-from-memory
+  redefinition drops guards that nothing in the diff shows were ever there.
+  **High**: `SECURITY INVOKER` → `SECURITY DEFINER`, or any language equivalent
+  (privilege elevation, sudo, a service-role client swapped in for a user-scoped one);
+  `search_path` or equivalent resolution-order pinning removed or widened on a definer
+  function; an authz or validation guard present in the old body and gone from the new;
+  `GRANT`/`REVOKE` loosened, or a new grant to a broader role. **Medium**: signature
+  changes (params added, removed, reordered, or a default dropped), and dropped input
+  normalization or bounds (de-dup, null-strip, length or size cap).
+  **The burden of proof is on the diff.** If a comment, the commit message, or the PR
+  body states the change and why, it is not a finding — note it as reviewed-and-intended.
+  Silence is the finding: a deliberate posture change is cheap to document, an accidental
+  one never is. But a stated rationale discharges the burden only if it holds: when the
+  note claims a compensating control (validation moved to the app layer, a check added
+  elsewhere, a constraint on the table), confirm that control actually exists before
+  accepting it. A justification that names something not present in the repo is a finding
+  in its own right — the guard is gone and nothing replaced it.
+  To find the baseline you have `Grep`, `Glob` and `Bash`. In a timestamped-migration repo,
+  grep every migration for the symbol and take the **last** one before the file under
+  review; elsewhere use `git log -S "<symbol>"` or the file's own history. Definitions
+  stack — a function redefined five times has five hits and only the latest is the
+  baseline, so the first one you find is usually the wrong one. Name the file you diffed
+  against and scope the claim to it: migration history is a proxy for the live definition,
+  not proof of it (a callable may have been changed out-of-band or squashed into a schema
+  baseline). Report "prior definition per `<file>`", not what the callable currently is.
+- **Check-then-act without a lock, and the silent no-op** — within a single function or
+  transaction, flag: (1) a read that gates a later write to the same rows, where the read
+  takes no row lock (`for update` / `for share` / equivalent) **and** the guarding
+  predicate is not repeated in the write's `WHERE`. Under `READ COMMITTED` every statement
+  takes a fresh snapshot, so a concurrent transaction committing between the read and the
+  write is simply overwritten — reintroducing the bug the guard was added to fix. (2) a
+  conditional write whose row count is never checked (`get diagnostics`, `RETURNING` plus
+  a null test, ORM `rowcount`) when its `WHERE` carries a predicate that can legitimately
+  match zero rows — the caller gets success and its work is silently discarded.
+  Not a finding when the read and write are one atomic statement (that IS the fix — do not
+  flag it), when the rows are provably locked earlier in the same transaction, at
+  `SERIALIZABLE`, or when a zero-row outcome is genuinely the intended no-op — but say
+  why, do not assume it.
+  **High only if you can state the interleaving**: the concrete sequence (transaction A
+  commits X between the read and the write, leaving state Y) and what it costs, on a path
+  guarding authorization, money, or a terminal-state transition. If you can only observe
+  that two statements look racy, it is **Medium**. Same discipline the injection findings
+  get — a race you cannot narrate is not a High.
+  On the fix: fold the predicate into the write's `WHERE` and raise when `RETURNING` yields
+  nothing. Do **not** recommend comparing intended row count against actual — a row can
+  legitimately fail to match for a benign reason, so a count check trades a silent-failure
+  bug for a false-refusal one that strands valid work. Refuse on *why* the row did not
+  match, by testing the specific bad states, not on a count.
 
 For each real issue, trace the path: where untrusted or dynamic input enters, how it
 reaches the sink, and what an attacker gets. Do not report a sink as vulnerable if the
