@@ -310,7 +310,10 @@ CI-enforced SAST merge-gating.
 **Honest boundaries.** This is still *static* review — no dynamic/runtime scanning (DAST, e.g.
 OWASP ZAP) and no container-image scanning. The gate's `security-reviewer` is **diff-scoped**: it
 reviews the change, not the whole repo, and one LLM reviewer won't match a dedicated commercial
-SAST engine's recall. Run gstack's `/cso` for a deep whole-repo audit, and treat the `ci-gate` CI
+SAST engine's recall. (One narrow exception: when the diff *redefines* an existing callable it
+reads the prior definition to establish a baseline — but the finding must still land on a changed
+line, and the baseline comes from source/migration history, which is a proxy for the deployed
+definition rather than proof of it.) Run gstack's `/cso` for a deep whole-repo audit, and treat the `ci-gate` CI
 scanners as your unskippable floor. A gate PASS means the reviewed change is clean, not that the
 running application is secure.
 
