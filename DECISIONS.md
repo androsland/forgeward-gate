@@ -4,6 +4,61 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## DECISION — page posture is per route group, not per site; three postures became five plus `unknown`
+
+**Date:** 2026-07-23
+
+**Problem.** The seo-reviewer treated "public" and "indexable" as the same thing. A site
+deliberately serving `User-agent: * / Disallow: /` while carrying Open Graph tags — so a
+link renders a card in chat but never appears in search — was reported as Critical/High
+("a public page that can't be indexed") and hard-failed the gate. That is a legitimate,
+common design: share links, unlisted deliverables, client previews, invite-only pages.
+No waiver mechanism existed, and `skills/gate/SKILL.md` correctly forbids the orchestrator
+from rationalizing a FAIL into a pass, so the only escape was `git push --no-verify`,
+which skips **every** axis to silence one.
+
+**Why not a waiver.** A whitelist suppresses a finding; it does not teach the reviewer what
+it is looking at. The reviewer would keep being wrong and the user would keep annotating
+around it. Posture is the right primitive: declare (or detect) what the page IS, and the
+ruleset follows. An expiring, committed waiver file remains a reasonable last resort for
+genuine one-offs, but it is not the fix for this class.
+
+**Decision.** The reviewer classifies posture **per route group** and switches ruleset:
+`public-indexed`, `private-shareable`, `private-closed`, `staging-preview`,
+`authenticated-shareable`, and `unknown`. Per-route matters more than the taxonomy itself —
+the single most common real shape is indexed marketing pages plus an authenticated app on
+one origin, and a site-wide verdict necessarily gets one of them wrong. `unknown` reports
+only what holds under every candidate posture rather than guessing; a wrong posture yields
+confident findings about the wrong thing, which is worse than an acknowledged gap.
+
+Under `private-shareable` the checklist inverts: indexability findings are the intent and
+must not appear at any severity (reporting them as Low still trains the reader to ignore
+the reviewer), while a broken link preview becomes High — missing or partial OG tags,
+client-rendered OG tags that preview bots never execute, a relative `og:image`, or a
+blanket disallow with no per-agent allowlist group.
+
+**Privacy consequence.** These sites have no authorization boundary — the URL *is* the
+credential — and every rule in the privacy-reviewer presupposed one ("visible to users who
+shouldn't see it" assumes accounts). Added an unauthenticated-PII-surface section, led by
+two rules: bulk PII crossing to the client for a lookup UI (a search feature must match
+server-side and return only the matching record), and two paths to one data store with
+different auth postures, where the credentialed path creates false confidence about the
+whole feature. The gate now fires the privacy-reviewer on `private-shareable` groups even
+when the diff looks like markup or config, since on such a group any new route or
+client-reachable data source is a personal-data change.
+
+**Also recorded as a limit.** `skills/gate/SKILL.md` now requires the gate to state what the
+diff cannot see — externally-resolved engines, submodules, gitignored paths that committed
+tooling references — because a PASS on a thin customization layer must never read as a PASS
+on the system. The privacy-reviewer carries a matching blind-spot list. An unstated limit is
+indistinguishable from a claim of coverage.
+
+**Deliberately excluded.** A `paywalled`/metered posture (its own specialist rulebook;
+half-implementing it is worse than not claiming it) and an "indexed but no OG tags" posture
+(on an indexed site missing OG is a defect, already Medium/Low — absence of OG only reads as
+intent when the site has also opted out of search). Postures are capped deliberately: each
+one added is another chance to misclassify.
+
 ## RESOLVED — gate false-blocks a push from a git worktree; enforcement moved to pre-push
 
 **Date:** 2026-07-15 (resolved 2026-07-16)
