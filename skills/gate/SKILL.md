@@ -52,15 +52,59 @@ ALSO self-skips if its surface turns out absent, so when unsure, fire it.
 
 | Reviewer | Fire when the diff touches… | Signals to look for |
 |----------|------------------------------|---------------------|
-| `privacy-reviewer` | personal data | forms/fields for name/email/phone/address, logging of user data, analytics/Sentry/3rd-party sends, PII in URLs |
+| `privacy-reviewer` | personal data — **or** any change to a `private-shareable` site (see below) | forms/fields for name/email/phone/address, logging of user data, analytics/Sentry/3rd-party sends, PII in URLs; on a `private-shareable` site also: any new route, lookup/search UI, data-source URL reaching the client, third-party embed, or OG tag change |
 | `accessibility-reviewer` | UI | `.tsx/.jsx/.vue/.svelte/.html` components/templates, markup, styles |
 | `ai-output-reviewer` | an LLM / paid-AI call | `openai`, `anthropic`, `@anthropic-ai`, `chat.completions`, `messages.create`, `generateText`, model SDK calls |
-| `seo-reviewer` | public, indexable pages | marketing/landing/public routes, `<head>`/meta, `sitemap`, `robots.txt` — NOT behind-auth app pages |
+| `seo-reviewer` | any publicly reachable page — indexed **or** deliberately unindexed-but-shareable | marketing/landing/public routes, `<head>`/meta, `sitemap`, `robots.txt`, OG/Twitter Card tags — NOT behind-auth app pages. It detects the posture itself and switches ruleset |
 | `supply-chain-reviewer` | a dependency manifest | `package.json`, lockfiles, `*.csproj`/`packages.lock.json`, `composer.json`, `requirements.txt`, `go.mod`, `Cargo.toml` |
 | `security-reviewer` | executable code (the broad surface — fire on any code that could carry a vuln) | DB queries (`$wpdb->`, raw SQL, string-built queries), request/AJAX/route handlers, auth/capability/nonce logic, `exec`/`eval`/shell, deserialization, file paths built from input, network fetch from input, `.sql` files, template/HTML output of dynamic data |
 
 Print the firing decision, e.g.:
 `Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes → firing: accessibility, privacy, security`.
+
+### Step 1a — classify posture per route group (it changes which reviewers fire and how)
+
+Posture is a property of a **route group, not a repo**. One repo commonly holds
+several — the usual shape is indexed marketing pages plus an authenticated app on
+the same origin. Group the changed pages by route prefix / directory / layout and
+classify each from `robots.txt`, per-route `noindex`, auth guards, deploy config,
+and whether Open Graph tags are present. The seo-reviewer does this in detail; you
+need enough to route the work.
+
+The postures are `public-indexed`, `private-shareable`, `private-closed`,
+`staging-preview`, `authenticated-shareable`, and `unknown`. A repo may pin them in
+`.forgeward/config.yml` (`seo.posture`, or `seo.routes` per prefix); a pin wins.
+
+Two of these change firing:
+
+- **`private-shareable`** — reachable without a login, deliberately unindexed, OG
+  tags on purpose. There is no auth boundary: the URL is the credential. **Fire the
+  privacy-reviewer even when the diff looks like markup or config**, and tell it the
+  posture. On such a group, every new route and every data source that reaches the
+  browser is a personal-data change.
+- **`staging-preview`** — a non-production deploy. Fire the privacy-reviewer if any
+  seed or fixture data could be real records.
+
+`Disallow: /` together with OG tags is a legitimate, deliberate design, NOT a
+misconfiguration — never treat it as one. If posture is `unknown`, say so in the
+firing decision and fire the superset of plausibly-relevant reviewers rather than
+guessing a narrow one.
+
+### Step 1b — say what the diff cannot see
+
+Before firing, check whether the repo is a thin layer over code it does not contain:
+a vendored or externally-located engine, a git submodule, a framework core resolved
+at runtime, or gitignored directories that committed tooling references. Look at the
+entry point, `.gitignore`, and any path in config that escapes the repo root.
+
+If so, **say it explicitly in the firing decision** — e.g. `NOTE: request handling
+lives in <engine>, resolved at runtime and absent from this repo; privacy/security
+coverage here is limited to configuration and client assets.` The reviewers cannot
+audit what is not in the diff, and a PASS on a thin customization layer must never
+read as a PASS on the system. Recommend gating the engine repo separately.
+
+This is also a finding in its own right: if committed tooling references a path that
+is untracked, the security-reviewer should hear about it.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 

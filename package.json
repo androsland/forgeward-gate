@@ -1,6 +1,6 @@
 {
   "name": "forgeward-gate",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Tooling/test metadata for the forgeward gate plugin (the plugin manifest is .claude-plugin/plugin.json).",
   "scripts": {
