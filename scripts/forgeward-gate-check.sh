@@ -130,6 +130,45 @@ fi
 
 # --- pretooluse ---
 cmd="$(json_get '.tool_input.command')"
+
+# --- read-only artifact guard -------------------------------------------------
+# Deny a SCANNER invocation whose output flag points at a DRIVE-LETTER path. In a
+# POSIX shell (Git Bash, WSL, Cygwin) `C:/…` is a RELATIVE path, so the scanner
+# creates a `C:` directory tree inside the repo under review — on-disk name `C` +
+# U+F03A, untracked, matched by no common .gitignore, and therefore committed by any
+# `git add -A`. Observed twice from security-reviewer; the second time the spawn
+# prompt explicitly told the agent to write artifacts outside the repository and it
+# did this anyway, so this is enforced rather than requested.
+#
+# NARROW ON PURPOSE — but it DOES misfire, and pretending otherwise would be the same
+# over-claim this change exists to remove. It matches command TEXT, so a command that
+# merely QUOTES the defective shape is denied even though it runs no scanner and writes
+# nothing: `grep -rn 'semgrep -o "C:/Users' DECISIONS.md` is refused. That is
+# over-denial, which fails safe and is recoverable (reword, or use a file), and it is
+# the same leaky-by-design tradeoff the README states for the publish reminder. Explicit
+# non-goals — all of these are ALLOWED and must stay allowed:
+#   - `semgrep -o report.json` (a developer's own run; the gate has no business
+#     blocking it), `-o /tmp/x.json`, and any output flag with a POSIX path;
+#   - a drive path in a NON-scanner command, e.g. `docker run -v C:/repo:/scan …`,
+#     which native Windows docker resolves correctly.
+# BLIND SPOT: it matches an ENUMERATED set of tools and output flags from the
+# command TEXT. An unlisted scanner, an unusual output flag, or a path built inside
+# a shell variable all pass. forgeward-scan.sh (refuses the flag at the invocation)
+# and forgeward-workspace-guard.sh (diffs the tree afterwards) cover from the other
+# side; neither this nor those is sufficient alone.
+case "$cmd" in
+  *semgrep*|*trivy*|*gitleaks*|*phpcs*|*phpcbf*|*bandit*|*osv-scanner*|*grype*|*syft*|*checkov*|*tfsec*|*retire*)
+    # Two forms. Separated (`-o C:/x`, `--output=C:/x`), and CUDDLED (`-oC:/x`) — one
+    # argv token, so the separated pattern cannot see it. The cuddled pattern therefore
+    # matches any flag immediately followed by a drive-letter path.
+    _out_re='(^|[[:space:]])(-o|--output|--output-file|--outfile|--out-file|--report-file|--report-path|--sarif-output|--json-output|--sarif-file)([[:space:]]+|=)("|'"'"')?[A-Za-z]:[\\/]'
+    _cuddle_re='(^|[[:space:]])-[A-Za-z][A-Za-z-]*=?("|'"'"')?[A-Za-z]:[\\/]'
+    if [[ "$cmd" =~ $_out_re ]] || [[ "$cmd" =~ $_cuddle_re ]]; then
+      deny "forgeward: refusing to run a scanner with a drive-letter output path. This shell is POSIX (Git Bash/WSL), where 'C:/...' is a RELATIVE path — the scanner would create a 'C:' directory tree inside the repo under review, untracked and matched by no .gitignore, and 'git add -A' would commit it. Reviewers are read-only: drop the output flag and capture the report from STDOUT (add --json and read the output), or run it through \"\${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-scan.sh, which enforces this. If a file is genuinely unavoidable, put it under \$(\"\${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-artifact-dir.sh)."
+    fi
+    ;;
+esac
+
 case "$cmd" in
   *"git push"*|*"gh pr create"*|*"glab mr create"*) ;;
   *) exit 0 ;;   # not a publish command — never interfere with other Bash

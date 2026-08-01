@@ -23,19 +23,60 @@ The two enforcement hooks (`UserPromptExpansion` on `/ship`, `PreToolUse` on the
 push/PR) are the backstop for someone who skips this skill. This skill is the
 intended happy path: review once, then ship in the same motion with no double cost.
 
-## Step 0 — Detect the base branch
+## Step 0 — Detect the base ref (the publish boundary)
 
-Detect the branch this work targets (the same way /ship does). Base detection lives
-in a tested script so it ALWAYS resolves to a real branch — never an empty string
-(an empty base would mis-scope the diff and review the wrong surface):
+Detect what this work will be published against. Base detection lives in a tested
+script so it always resolves to a real, CURRENT ref:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-base.sh"
 ```
 
-It resolves in order: GitHub default branch → `origin/HEAD` target (only when set) →
-`origin/main` → local `main` → `master`. Call the result `<base>`. If you are on
-`<base>` itself, stop: "Nothing to gate — you're on the base branch."
+Call the result `<base>` and use it **verbatim** — it is a REF, and it is often a
+remote-tracking ref like `origin/main`. Do not strip the remote prefix, and do not
+substitute the bare branch name. A bare name resolves to the LOCAL branch, which is
+only as current as the last time the user touched it, and it mis-scopes the review in
+both directions:
+
+- local **behind** the remote → reviewers audit already-merged code (one real repo:
+  267 files instead of 0). Wasted budget, and a FAIL can land on someone else's code.
+- local **ahead** of the remote (unpushed commits on the base branch) → the diff is
+  **smaller than what the push publishes**, so the gate writes a PASS marker for code
+  it never saw. That is a false PASS, and it is the reason this must not be
+  hand-rolled.
+
+Resolution is: GitHub default branch → `origin/HEAD` target (only when set) →
+`origin/main` → local `main` → `master` for the branch NAME; then that branch's
+configured upstream → an existing `<remote>/<name>` ref → the local branch, for the
+REF. A remote ref is used only when it exists, so a local-only repo, an
+unauthenticated `gh`, or a base branch never pushed all correctly stay local.
+
+If you need the bare branch name (e.g. to pass `gh pr create --base <name>`), ask for
+it explicitly: `forgeward-detect-base.sh --name`.
+
+**Surface the script's stderr.** When the local base branch has drifted from the
+publish boundary, the script re-scopes automatically and prints a note like
+`local 'master' is 14 commit(s) behind and 0 ahead of 'origin/master'`. Repeat that
+note in your firing decision. The re-scope is automatic because a mis-scoped diff is a
+correctness bug rather than a user preference; the note is mandatory because a stale
+checkout is a fact the user acts on, and a silent correction would make the reviewed
+surface differ from what they'd compute by hand.
+
+**Two things this cannot see — say so if they might apply:**
+- **Fetch staleness.** The script never runs `git fetch`, so `origin/<base>` is only
+  as current as the user's last fetch. If the remote moved since, the publish boundary
+  is stale and the review is scoped against old ground. Suggest `git fetch` when the
+  drift note appears.
+- **The real PR target.** It infers the base from repo defaults. A PR aimed at a
+  release branch or stacked on another feature branch has a different base, and
+  nothing here can tell. If you know the target differs, scope the diff by hand and
+  say you did.
+
+Decide "nothing to gate" from the **diff**, never from branch names. If
+`git diff --name-only "<base>...HEAD"` is empty, stop: "Nothing to gate — HEAD matches
+the publish boundary `<base>`." Being *on* the base branch is not that condition: a base
+branch with unpushed commits resolves `<base>` to `origin/<base>`, and those unpushed
+commits are exactly what needs reviewing.
 
 ## Step 1 — Scope the diff (which surfaces does it touch?)
 
@@ -108,17 +149,48 @@ is untracked, the security-reviewer should hear about it.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
+**Before spawning anything**, snapshot the working tree so the read-only contract can
+be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
+
+```bash
+ART="$("${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh")"
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
+```
+
 For each fired reviewer, spawn it with the **Agent** tool (one message, multiple Agent
 calls, so they run in parallel). Use the matching `subagent_type`
 (`forgeward:privacy-reviewer`, `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
 `forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`). Tell each to review
-the diff of `<base>...HEAD`.
+the diff of `<base>...HEAD`, passing `<base>` exactly as Step 0 produced it.
 
 Each reviewer returns findings and ends with one line: `<AXIS> VERDICT: PASS|FAIL`.
 Collect every verdict line. Do not edit any code in response to findings.
 
+**Then check the contract held:**
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
+```
+
+Non-zero means a reviewer wrote into the repo it was auditing. That has happened: a
+scanner handed a Windows path from a POSIX shell created a `C:` directory tree at the
+repo root — untracked, matched by no common `.gitignore`, and committed by any
+`git add -A`. Handle it in Step 3; never ignore it, and **do not delete the paths
+yourself** — they are untracked files whose provenance only the user can confirm, and
+the drive-letter shape is actively dangerous to remove: under Git Bash `C:` without a
+leading `./` resolves to the **drive root**, so an `rm -rf` there is a far worse bug
+than the one it cleans up. Print the paths and let the user run
+`rm -rf -- "./C:"` themselves.
+
 ## Step 3 — Decide
+
+- **If the workspace guard reported new paths**: HALT before shipping, whatever the
+  verdicts were. Print the paths and stop with:
+  `forgeward gate: reviewers left files in your repo — delete them and re-run. Nothing was shipped.`
+  The verdicts still stand (contamination does not invalidate a security finding), but
+  /ship stages and commits, so handing off now is how the artifact lands in the user's
+  history. This is a halt, not a FAIL: no marker is written and nothing is deleted.
 
 - **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
@@ -141,6 +213,13 @@ Collect every verdict line. Do not edit any code in response to findings.
 ## Rules
 
 - **Read-only.** You never Edit/Write code here. You dispatch reviewers and report.
+- **Read-only covers the filesystem, not just the code.** The repo must be
+  byte-identical when the gate finishes — no scanner reports, no scratch files.
+  Reviewers run scanners through `scripts/forgeward-scan.sh` (report on stdout, output
+  flags refused) and take any scratch directory from `scripts/forgeward-artifact-dir.sh`.
+  A `PreToolUse` deny and the workspace guard back that up, because the same reviewer
+  broke this contract twice — the second time with a spawn prompt that explicitly
+  forbade it. Do not treat an instruction as a control.
 - **Conditional.** Only fire reviewers whose surface the diff touches; say which you skipped and why.
 - **The marker is only written on all-PASS.** No marker ⇒ the push hook blocks /ship. That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.

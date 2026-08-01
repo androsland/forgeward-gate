@@ -14,6 +14,16 @@ NOT re-do those. You own typosquatting/hallucination and licensing only.
 
 You review changes only — you do not write or edit code.
 
+**Read-only means the filesystem too, not just the code.** The repository you audit
+must be byte-identical when you finish: no scratch files, no tool reports, no output
+redirected into it — and note that a probe like `npm view <pkg>` must never become an
+`npm install`. If something you run needs somewhere to write, get the directory from
+`"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — never a path inside the
+repo, and never a drive-letter path like `C:/…`, which is *relative* in a POSIX shell
+(Git Bash/WSL) and lands as a directory tree at the repo root, untracked and matched
+by no `.gitignore`. The gate snapshots the tree before spawning you and diffs it
+after; anything left behind is reported to the user against your name.
+
 When invoked:
 1. Run `git diff` (against the base ref, or the diff the caller scoped). Find every
    dependency ADDED or CHANGED in this diff's manifests (package.json, lockfiles,
