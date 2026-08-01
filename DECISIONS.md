@@ -110,11 +110,19 @@ repository. An instruction is not a control.
    (`rm -rf -- "./C:"`) stays relative, so the wrapper prints that for the user to run.
    The hazard is written into the script so nobody re-adds the automatic delete.
 2. `PreToolUse` deny in `forgeward-gate-check.sh` — denies a scanner command whose output
-   flag targets a drive-letter path, with a reason that teaches the stdout form. **Unverified
-   dependency:** the hook's decision logic is tested directly (P1–P6), but whether the harness
-   routes a *subagent's* Bash calls through `PreToolUse` was not confirmed here. If it does not,
-   layer 2 protects the main agent only and layers 1, 3 and 4 carry the reviewers. That is why
-   the fix is not the hook alone.
+   flag targets a drive-letter path, with a reason that teaches the stdout form.
+   **Verified to reach subagents** (2026-08-01): the open question was whether the harness
+   routes a *subagent's* Bash calls through `PreToolUse` at all. Probed directly — a
+   throwaway repo with no marker, and a harmless `echo` whose text contains `git push`.
+   The main agent's call was denied; the identical call issued from inside a subagent was
+   denied too, with the same reason text delivered as a tool error the agent can read, and
+   the hook resolved the branch from the `cd` target inside the compound command rather
+   than the session cwd. So layer 2 does cover the reviewers.
+   **The real dependency is deployment, not routing:** hooks run from the INSTALLED plugin
+   cache (`~/.claude/plugins/cache/forgeward-gate/forgeward/<version>/`), not from a
+   working tree. Layer 2 protects nothing until this version is actually installed — which
+   is exactly how the first probe of this guard came back "not denied" while the code sat
+   green in the branch. Layers 1, 3 and 4 need no install to work.
 3. `scripts/forgeward-artifact-dir.sh` — hands out a path that is absolute *in this
    shell* (translating a Windows `TMPDIR` via `cygpath`) and outside the repo.
 4. `scripts/forgeward-workspace-guard.sh` — the gate snapshots the tree before spawning
