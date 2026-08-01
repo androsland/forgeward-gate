@@ -4,6 +4,234 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — base detection returned a stale LOCAL branch, mis-scoping the review
+
+**Date:** 2026-07-31 · supersedes *"base detection on a direct-to-base commit"* below,
+whose step-4 special case is now one instance of the general rule.
+
+**Symptom.** `scripts/forgeward-detect-base.sh` returned a bare branch NAME (`master`),
+and `skills/gate/SKILL.md` fed it straight into `git diff "<base>...HEAD"`, where a bare
+name resolves to the **local** branch — which may be arbitrarily out of date with its
+remote.
+
+**Repro (verified, over-scoping).** A repo whose local `master` had never been
+fast-forwarded: local `de1bbf3`, `origin/master` `5b94aac` (14 commits ahead).
+`git diff --name-only master...HEAD` → **267 files**; `origin/master...HEAD` → **0**.
+The gate would have dispatched six reviewers over 267 files of already-merged code.
+
+**Repro (verified here, under-scoping — the dangerous direction).** Base branch with
+unpushed commits, feature branched off them: `main...HEAD` lists only the feature file
+while `origin/main...HEAD` lists the feature file **plus** the unpushed base commits the
+push will publish. The gate reviews less than ships and writes a PASS marker for a
+surface it never saw — a **false PASS**. Covered by `test/gate-test.sh` B6.
+
+**Cause.** All three name-resolution arms produced a bare name, and two of them proved a
+remote ref existed and then discarded it: the `origin/HEAD` arm stripped
+`refs/remotes/origin/` off a ref it had just read, and the `origin/main` arm verified
+`origin/main` and set `base=main`. Guaranteeing a non-empty base — the reason the script
+exists — was never sufficient: it also has to be **current**.
+
+**Fix.** Two-stage resolution. Stage A picks the branch NAME (unchanged). Stage B
+resolves that name to the **publish boundary** ref: the branch's configured upstream
+(`<base>@{upstream}`, so a fork tracking `upstream` and a local branch tracking a
+differently-named remote branch both work), else `<remote>/<name>` for the first remote
+that actually has it, else the local branch. A remote ref is adopted only when
+`git rev-parse` confirms it exists — nothing is blindly prefixed with `origin/`, so a
+local-only repo, an unauthenticated `gh`, and a base branch with no remote counterpart
+all correctly stay local. Detached HEAD is unaffected: resolution never depends on which
+branch is checked out.
+
+**Silent correction, loud report — argued, not assumed.** Blocking on drift was rejected:
+a base branch behind its remote is the normal state of a working checkout, not an error,
+and a gate that refuses to run on the common case gets bypassed — a bypassed gate reviews
+nothing. Silence was also rejected: "your local master is 14 commits behind" is a fact the
+user acts on, and a silent re-scope makes the reviewed surface differ from what the user
+would compute by hand. So the re-scope is automatic (a mis-scoped diff is a correctness
+bug, not a preference) and the drift goes to **stderr**, leaving stdout exactly one clean
+ref for `$(...)` capture. `SKILL.md` Step 0 requires the orchestrator to repeat the note.
+
+**Knock-on, and it is correct.** The marker now records a remote-tracking base
+(`"base": "origin/main"`), which both `forgeward-gate-check.sh` and
+`forgeward-pre-push.sh` replay through `forgeward-diff-hash.sh` at push time. If a fetch
+moves `origin/main` between gate and push, the publish boundary genuinely moved, the hash
+flips, and the gate re-fires. Slightly more re-gating, and the alternative — pinning to a
+boundary that has since shifted — is the false PASS this entry exists to remove.
+
+**Stated blind spots** (in the script header and `SKILL.md`): it never runs `git fetch`,
+so `origin/<base>` is only as current as the last fetch — the same class of error one
+level up, invisible from here; and it infers the base from repo defaults, so it cannot
+know a PR targets a release branch or is stacked on another feature branch.
+
+**Coverage.** `test/gate-test.sh` B5–B13: behind-remote, ahead-of-remote (with an
+assertion that the naive base misses what the push publishes), no remote at all, detached
+HEAD, fork with a non-`origin` upstream, base with no remote counterpart, local branch
+tracking a differently-named remote branch, single-line stdout + non-empty stderr note,
+and `--name`.
+
+## RESOLVED — a read-only reviewer wrote scanner output into the repo it was auditing
+
+**Date:** 2026-07-31
+
+**Symptom.** Running `agents/security-reviewer.md` created a directory named `C` +
+U+F03A (bytes `43 EF 80 BA` — the private-use colon substitute MSYS/Cygwin uses) at the
+**root of the repo under review**, containing a nested path tree with `semgrep.json` at
+the leaf.
+
+**Cause (confirmed, not inferred).** A scanner was given an absolute *Windows* output
+path from a POSIX shell. Reproduced directly: `semgrep scan --json -o
+"C:/Users/…/scratchpad/semgrep.json" a.js` creates the entire `C:/Users/…` tree inside
+the current directory — semgrep's writer creates the parents itself, so no separate
+`mkdir` is involved. Under a POSIX runtime `C:/…` is a **relative** path; MSYS stores the
+`:` as U+F03A on NTFS, which is the byte sequence observed. Confirmed on Git Bash
+(`MINGW64_NT-10.0`) that a path whose `C:` is not the first component lands as a
+directory tree in the CWD with exactly that on-disk encoding.
+
+**Why it is not cosmetic.** (1) The tree is untracked and matched by no common
+`.gitignore`, so any `git add -A` commits the reviewer's scratch into the user's
+repository. (2) A read-only reviewer wrote into the repo it was auditing, breaking the
+contract the gate's whole design rests on and advertises.
+
+**Why the fix is not a prompt.** It happened **twice**, the second time with a spawn
+prompt that explicitly instructed the agent to write all scanner artifacts outside the
+repository. An instruction is not a control.
+
+**Fix — four layers, narrowest first, none sufficient alone.**
+1. `scripts/forgeward-scan.sh` — the invocation reviewers are now told to use. Refuses
+   output-file flags and drive-letter arguments, puts the report on stdout, and diffs the
+   repo's untracked set across the run, reporting anything the scan left behind and naming
+   the drive-letter shape specifically.
+
+   **It reports; it does not delete — and that is not timidity.** The first draft removed
+   the tree it had just watched a scanner create, which looks obviously safe. It is not:
+   on Git Bash the directory is named `C` + U+F03A, MSYS maps that back to `C:`, and
+   `readlink -f "C:"` there resolves to `C:/` — **the drive root** (verified on
+   `MINGW64_NT-10.0`). That `rm -rf` would have targeted the user's entire C: drive on
+   precisely the platform this bug occurs on. Only the `./`-prefixed form
+   (`rm -rf -- "./C:"`) stays relative, so the wrapper prints that for the user to run.
+   The hazard is written into the script so nobody re-adds the automatic delete.
+2. `PreToolUse` deny in `forgeward-gate-check.sh` — denies a scanner command whose output
+   flag targets a drive-letter path, with a reason that teaches the stdout form.
+   **Verified to reach subagents** (2026-08-01): the open question was whether the harness
+   routes a *subagent's* Bash calls through `PreToolUse` at all. Probed directly — a
+   throwaway repo with no marker, and a harmless `echo` whose text contains `git push`.
+   The main agent's call was denied; the identical call issued from inside a subagent was
+   denied too, with the same reason text delivered as a tool error the agent can read, and
+   the hook resolved the branch from the `cd` target inside the compound command rather
+   than the session cwd. So layer 2 does cover the reviewers.
+   **The real dependency is deployment, not routing:** hooks run from the INSTALLED plugin
+   cache (`~/.claude/plugins/cache/forgeward-gate/forgeward/<version>/`), not from a
+   working tree. Layer 2 protects nothing until this version is actually installed — which
+   is exactly how the first probe of this guard came back "not denied" while the code sat
+   green in the branch. Layers 1, 3 and 4 need no install to work.
+3. `scripts/forgeward-artifact-dir.sh` — hands out a path that is absolute *in this
+   shell* (translating a Windows `TMPDIR` via `cygpath`) and outside the repo.
+4. `scripts/forgeward-workspace-guard.sh` — the gate snapshots the tree before spawning
+   reviewers and diffs it after; contamination halts the handoff to `/ship`, since /ship
+   stages and commits. It reports and never deletes: untracked files are the user's.
+
+**Non-goals, stated so the absence of a limit is not read as coverage.** The hook fires
+only on drive-letter paths, so a deliberate `semgrep -o report.json`, an `-o /tmp/x.json`,
+and `docker run -v C:/repo:/scan …` all stay allowed. Layers 1–2 read command *text*, so
+an unlisted scanner, an unusual output flag, or a path built inside a shell variable pass
+them; layer 4 sees the result regardless of cause. Layer 4 in turn cannot see a write to
+an already-gitignored path, a write outside the repo, or which reviewer did it. The hook
+also **over**-denies: a command that merely quotes the defective shape (grepping these
+very docs) is refused. That fails safe and is recoverable, and it is written into the
+script rather than papered over.
+
+**Caught by the gate reviewing itself.** The first version of layers 1–2 anchored the
+drive-letter pattern to the *start* of an argv token, so the cuddled short-flag form
+`-oC:/Users/…` — one token, a standard getopt convention — evaded **both**, which
+directly contradicted the comment claiming "layers 2 and 3 are the net" for a flag layer
+1 misses. `looks_like_path()` was inverted for the same reason: it refused only values
+containing a slash or a known extension, so a bare `-o myreport` created `./myreport` in
+the repo. Both are now deny-by-default — a drive-letter path is refused anywhere in a
+token, and an output flag's value is treated as a destination unless it is a recognized
+format word (`json`, `sarif`, `table`, …), so `-o json` still works. Regression tests
+P2b, P8b–P8d. A test that cleaned up with a bare `rm -rf 'C:'` was corrected to the
+`./`-prefixed form for the drive-root reason above — the suite must not depend on `mkdir`
+and `rm` translating a drive-letter argument identically.
+
+**Then the FIXES were re-reviewed, and both had over-refused.** Worth recording, because
+the failure mode is the interesting one: each correction overshot in the same direction.
+(1) Closing the cuddled-flag hole with a fully unanchored `*[A-Za-z]:[\/]*` also matched
+any token with a letter before `:/` — `--config https://semgrep.dev/p/ci` and syft/grype
+source specifiers `dir:/repo`, `oci-dir:/img`. Legitimate scanner arguments, refused. The
+match is now anchored to a real path boundary (token start, after `/`, after `=`) with a
+separate flag-cuddled pattern. (2) `_FORMAT_WORDS` wraps across three source lines, so
+the wrap points are literal newlines; a `*" $1 "*` test against the raw string silently
+dropped `yml`, `cyclonedx`, `compact` and `full`, treating them as destination paths.
+Normalized before matching. Neither was exploitable — both fail closed — but friction in
+a guard is not free: it is what pushes a reviewer to bypass the wrapper, which costs more
+than the shape being caught. Regression tests P8e, P8f.
+
+**Third pass returned FAIL, and it was right.** Every check accepted `=` as the
+flag/value separator and nothing else, so `--output:C:/x` — the MSBuild/dotnet/PowerShell
+convention — matched none of them and passed through untouched. That is worse than an
+unlisted flag (a stated non-goal): it is an *enumerated* flag reached through a side
+door, so the guarantee was defeated rather than merely incomplete, and layer 3 would only
+have reported the write after it landed. `:` is now accepted everywhere `=` is, in all
+three checks. Verified it does not repeat the overshoot: a colon-joined URL and a
+registry ref with a port and tag (`localhost:5000/img:latest`) both stay allowed.
+Regression test P8g, both directions.
+
+**Fourth pass returned FAIL on a demonstrated arbitrary file write.** `looks_like_path()`
+short-circuited on `-*` — "that token starts with a dash, so it is another flag, not this
+flag's value." That is simply false for getopt-family parsers: pflag/Cobra, which
+**gitleaks and trivy use**, consume the next token as the value unconditionally. Verified
+end to end against the real binary: `forgeward-scan.sh gitleaks dir . --report-path
+-evil.json` was passed through with no objection, and gitleaks wrote `-evil.json` into the
+repo under review — the exact class this wrapper exists to close, through one of the four
+scanners it names. The exception is now narrowed to a bare `-` (stdout, the one dash-led
+value that is not a file); everything else dash-led is checked. Cost: a malformed
+`--output --json` is refused rather than ignored, which fails closed on a command that
+was already broken. Regression tests P8h (shapes, plus a `--` decoy and the bare-`-`
+allow) and P8i (the same invocation against real gitleaks, asserting the repo stays
+clean).
+
+**Fifth pass returned FAIL: the format allowlist was tool-agnostic and should never have
+been.** grype and syft OVERLOAD `-o` — `-o json` prints to stdout, `-o json=file` writes.
+trivy does not: its own help reads `-o, --output string   output file name`, with
+`-f/--format` separate, so `trivy -f json -o json .` writes a file literally named
+`json`. semgrep and gitleaks match trivy. So the allowlist turned every format word into
+a writable filename for **three of the four scanners this wrapper names** — and P8b
+asserted that as correct, which is the worse half: a test was pinning the bug in place.
+The exception is now keyed on the tool (`grype`, `syft` only); everywhere else an output
+flag's value is a destination, full stop. Regression tests assert both directions per
+tool, and that grype's own write form `-o json=out.json` is still refused.
+
+**Sixth pass PASSED, with one Medium accepted as a documented limit.** The per-tool `-o`
+exemption trusts `basename "$tool"`, so an executable *named* `grype` that is not grype
+inherits it and could write a file named after one of the ~30 format words. Not closed,
+deliberately: this script runs `"$tool" "$@"`, so anyone able to place that executable
+already has code execution here — the write is strictly weaker than what they already
+hold — and probing `--version` would not close it either, since a spoofed binary can
+print anything. Written into the script header as a blind spot rather than left implied.
+The half of that finding that *was* worth acting on: contamination used to exit with the
+tool's own code, so a scanner that found nothing (exit 0) left the repo written-to and
+still read as success. A tool exiting 0 after leaving new untracked paths now yields
+exit 3; a non-zero tool exit is preserved, since the caller already knows.
+
+**The pattern across all five failing passes is the durable finding.** Every correction to this
+guard erred along the SAME axis — which token shapes count as a flag/value boundary —
+first anchoring too tightly, then too loosely, then handling one separator, then trusting
+a leading dash. None of it surfaced from reading the code; each took an adversarial pass
+with a concrete PoC, and the last one needed a real scanner binary rather than an
+argument about string shapes. Two conclusions worth keeping: a guard whose correctness is
+a claim about token shapes needs its counterexamples **enumerated in tests**, not argued
+in comments; and layer 1 should be understood as removing an affordance, not as a
+boundary — the reason layers 3 and 4 exist is that this kind of enumeration is never
+finished.
+
+**Coverage.** `test/gate-test.sh` P1–P12: the deny fires on both slash conventions, and
+does **not** fire on relative `-o`, POSIX-absolute `-o`, or a drive path in a non-scanner
+command; the wrapper refuses flags and drive paths and passes stdout through; the artifact
+dir is POSIX-absolute, exists, and is outside the repo; the workspace guard flags a
+staged `C:` tree and stays quiet on a clean one; and a live control asks the platform
+whether an unguarded drive-letter write actually lands in the repo before asserting either
+way — a POSIX-only assertion would pass while the bug remained, because the bug *is* the
+path translation.
+
 ## DECISION — page posture is per route group, not per site; three postures became five plus `unknown`
 
 **Date:** 2026-07-23
@@ -188,12 +416,21 @@ by that commit. `git diff master...HEAD` is empty; the push hook blocks; the gat
 "nothing to gate." First observed live while shipping the README "Security scope" note
 (worked around at the time by manually scoping the marker to `origin/master`).
 
-**Fix.** Step 4 in `scripts/forgeward-detect-base.sh`: when `HEAD` is ON the resolved
-base branch AND `origin/<base>` exists AND differs from `HEAD`, return `origin/<base>`
-(the publish boundary). The diff then scopes to the real unpushed change. Guarded two
-ways: a base branch in sync with its remote keeps the bare base (genuinely nothing to
-gate), and a feature branch (`HEAD != base`) skips step 4 entirely, so that resolution
-is byte-for-byte unchanged.
+**Fix (SUPERSEDED 2026-07-31 — see the stale-local-branch entry at the top).** Step 4 in
+`scripts/forgeward-detect-base.sh`: when `HEAD` is ON the resolved base branch AND
+`origin/<base>` exists AND differs from `HEAD`, return `origin/<base>` (the publish
+boundary). The diff then scopes to the real unpushed change. Guarded two ways: a base
+branch in sync with its remote keeps the bare base (genuinely nothing to gate), and a
+feature branch (`HEAD != base`) skips step 4 entirely, so that resolution is
+byte-for-byte unchanged.
+
+**Why it was superseded — the lesson, not just the code.** The fix was right about the
+*case* and wrong about the *rule*: it special-cased "HEAD is on the base branch" instead
+of recognizing that the base should ALWAYS be the publish boundary. The guard that kept
+it narrow ("a feature branch skips step 4 entirely, so that resolution is byte-for-byte
+unchanged") is exactly what preserved the bug on every feature branch — which is the
+common path. Step 4 is now deleted; stage B resolves the remote-tracking ref for every
+branch, and this case falls out of it with no special-casing.
 
 **Coverage.** `test/gate-test.sh` B4 (assertions 22–23): a direct-to-base commit with
 `origin/main` behind → detect returns `origin/main`, and the test proves meaningfulness

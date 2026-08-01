@@ -23,7 +23,10 @@ other.
 ## Step 1 — Scope the diff
 
 Run `git diff --name-only "<base>...HEAD"` (the caller scopes `<base>`; if it did not,
-detect it as `origin/HEAD` → `origin/main` → `main` → `master`). Keep only executable
+get it from `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-base.sh"`, which resolves
+the **publish boundary** — the remote-tracking ref when one exists. Never substitute a
+bare branch name: a local branch drifts from its remote in both directions, and one of
+them silently shrinks the diff below what the push publishes). Keep only executable
 code — `.php .js .ts .jsx .tsx .py .go .rb .cs .java .sql` and server templates. If the
 diff is only docs, styles, images, or a lockfile with no code, say so and pass. Get the
 full diff with `git diff "<base>...HEAD"` and note the changed line ranges — findings
@@ -40,28 +43,71 @@ Detect the stack from the changed files and repo root (`composer.json`/`wp-confi
 
 ## Step 2 — Run the deterministic scanners (best-effort, never fail the run if absent)
 
-For each tool, check `command -v <tool>` first. If it is missing, note
-`scanner <tool>: not installed (skipped)` and move on — a missing scanner never fails
-the gate, but you MUST report which ran so the user knows the deterministic coverage
-they actually got. Scan only the changed files where possible (fast, diff-scoped).
+Run **every** scanner through the wrapper, never as a bare command:
 
-- **Semgrep** (`command -v semgrep`), always when present:
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-scan.sh" <tool> [args…]
+```
+
+It puts the report on **stdout** — read it from there. Exit `127` means the tool is
+not installed: note `scanner <tool>: not installed (skipped)` and move on. A missing
+scanner never fails the gate, but you MUST report which ran, so the user knows the
+deterministic coverage they actually got. Scan only the changed files where possible
+(fast, diff-scoped).
+
+### The artifact contract — enforced, not requested
+
+You are read-only, and that has to be true of the **filesystem**, not just of your
+findings: the repository you are auditing must be byte-identical when you finish.
+
+This is spelled out because it was violated. A previous run of this reviewer passed a
+Windows scratch path to a scanner's `-o` flag from a POSIX shell (Git Bash). There
+`C:/Users/…` is a **relative** path, so the scanner created a `C:` directory tree at
+the **root of the repo under review** — on-disk name `C` + U+F03A, untracked, matched
+by no common `.gitignore`, and therefore committed by any `git add -A`. It happened a
+second time with a spawn prompt that explicitly told this agent to write artifacts
+outside the repository. An instruction is not a control, so:
+
+- **Never** pass `-o`, `--output`, `--output-file`, `--report-file`, `--report-path`,
+  `--sarif-output`, or a `>` redirect that lands inside the repo. The wrapper refuses
+  them and a `PreToolUse` hook denies the command outright.
+- **Never** pass a path starting with a drive letter (`C:/…`, `D:\…`). In the shell
+  you are running in, that is a relative path, whatever it looks like.
+- If a file on disk is genuinely unavoidable, get the directory from
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — it always returns a
+  path that is absolute *in this shell* and outside the repo.
+- The gate snapshots the repo before spawning you and diffs it after. Anything you
+  leave behind is reported to the user against your name, and halts the ship.
+- If the wrapper tells you a scan left paths in the repo, **report it in your output**
+  and do not try to clean up yourself. Under Git Bash the contaminated directory is
+  named `C` + U+F03A, which resolves to the **drive root** without a leading `./` —
+  an `rm -rf` there is a much worse bug than the one it fixes. The wrapper prints the
+  correct command; leave it to the user.
+
+### The scanners
+
+- **Semgrep**, always when present:
   - Bundled forgeward rules (catch the framework sinks stock packs miss):
-    `semgrep scan --config "${CLAUDE_PLUGIN_ROOT}/rules/wp-security.yml" --error --metrics=off <changed-files>`
+    `forgeward-scan.sh semgrep scan --config "${CLAUDE_PLUGIN_ROOT}/rules/wp-security.yml" --error --metrics=off --json <changed-files>`
   - Stock security packs for breadth:
-    `semgrep scan --config p/security-audit --config p/secrets --metrics=off <changed-files>`
+    `forgeward-scan.sh semgrep scan --config p/security-audit --config p/secrets --metrics=off --json <changed-files>`
     (add `--config p/php`, `p/javascript`, `p/python`, `p/golang` … matching the stack).
-- **WordPress/PHP only — PHPCS + WPCS** (`command -v phpcs`), the WP-native SAST:
-  `phpcs --standard=WordPress-Extra,WordPress.Security --extensions=php <changed .php files>`
+- **WordPress/PHP only — PHPCS + WPCS**, the WP-native SAST:
+  `forgeward-scan.sh phpcs --standard=WordPress-Extra,WordPress.Security --extensions=php --report=full <changed .php files>`
+  (`--report=full` selects a *format* written to stdout — it is not an output file.)
   This is the tool that catches the WordPress checks Semgrep is weak on:
   `WordPress.DB.PreparedSQL[Placeholders]` (unprepared `$wpdb`),
   `WordPress.Security.NonceVerification`, `WordPress.Security.ValidatedSanitizedInput`,
   `WordPress.Security.EscapeOutput`. If phpcs is present but the WordPress standard is
   not installed, say so and recommend `composer global require wp-coding-standards/wpcs`.
-- **Trivy** (`command -v trivy`, else `docker run --rm -v "$PWD":/scan aquasec/trivy fs`):
-  `trivy fs --scanners vuln,secret,misconfig --exit-code 0 --quiet <repo-or-changed-paths>`
-  covers vulnerable dependencies, committed secrets, and IaC misconfig.
-- **Gitleaks** (`command -v gitleaks`): `gitleaks dir <changed-paths> --no-banner` for secrets.
+- **Trivy**: `forgeward-scan.sh trivy fs --format json --scanners vuln,secret,misconfig --exit-code 0 --quiet <repo-or-changed-paths>`
+  Note `-f/--format` selects the format and goes to stdout; trivy's `-o/--output` is a
+  **filename** (`trivy -f json -o json .` writes a file called `json`), so the wrapper
+  refuses it. Same for semgrep and gitleaks. Only grype and syft overload `-o`.
+  covers vulnerable dependencies, committed secrets, and IaC misconfig. The
+  `docker run --rm -v "$PWD":/scan aquasec/trivy fs /scan` fallback is fine when the
+  binary is absent — mount read-only (`:ro`) and keep the report on stdout.
+- **Gitleaks**: `forgeward-scan.sh gitleaks dir <changed-paths> --no-banner` for secrets.
 
 Parse each tool's output. Map its severities onto Critical/High/Medium/Low. De-dupe
 findings that two tools report on the same `file:line`.

@@ -47,15 +47,22 @@ SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real 
 ## How it works
 
 - **Happy path:** run `/forgeward:gate`. It detects which surfaces the diff touches, fires
-  only the relevant reviewers (read-only — `Read, Grep, Glob, Bash`, no edits), and on
+  only the relevant reviewers (read-only — `Read, Grep, Glob, Bash`, no edits, and no
+  writes into the repo at all: scanners run through `scripts/forgeward-scan.sh`, which
+  keeps reports on stdout, and the gate diffs the working tree before/after to prove it), and on
   all-PASS writes a pass marker and hands off to gstack's `/ship` in one motion.
 - **Enforcement — fast feedback in Claude Code, and the real lock at `pre-push`:**
   1. `UserPromptExpansion` on a typed ship command → halts immediately if there's no fresh PASS
      for the current code, before any work runs. The matcher is `^([A-Za-z0-9_]+-)?ship$`, so it
      fires on `ship` **and** any prefixed variant (`gstack-ship` and any custom gstack `--prefix`),
      and not on lookalikes (`shipment`, `airship`).
-  2. `PreToolUse` on `Bash` → a **best-effort reminder**: on a `git push` / `gh pr create` /
-     `glab mr create`, it denies when the current checkout's branch has no fresh marker. It reads
+  2. `PreToolUse` on `Bash` → two things. A **best-effort reminder**: on a `git push` /
+     `gh pr create` / `glab mr create`, it denies when the current checkout's branch has no fresh
+     marker. And an **artifact guard**: it denies a scanner invoked with a drive-letter output
+     path (`semgrep … -o C:/Users/…`), which in a POSIX shell is a *relative* path and writes a
+     `C:` directory tree into the repo under review — untracked, matched by no common
+     `.gitignore`, and committed by any `git add -A`. That guard is deliberately narrow: a
+     developer's own `-o report.json` is never blocked. It reads
      command *text*, so it is leaky by design — `git -C`, quoting, a script file, an alias all
      slip past. Treat it as fast feedback, **not** the boundary. (Four security reviews confirmed
      no text-matching hook can be both bypass-proof and usable.)
@@ -246,7 +253,7 @@ see limits.
 **Automated suites — `npm test`.** Both are framework-free and exercise the **real plugin
 scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
 
-`test/gate-test.sh` (27 assertions) — the in-editor layer:
+`test/gate-test.sh` (74 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **Allow on a fresh PASS marker**; **version-bump invariance** (a version-field-only bump keeps
@@ -254,7 +261,20 @@ scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
 - **Non-publish commands are never touched**; **outside a git repo it fails open**.
 - **Worktree honor-cd** — `cd <worktree> && git push` is evaluated in that worktree (gated →
   allow, ungated → deny), including a single-quoted spaced path.
-- **Ship matcher** and **base-detection fallback**.
+- **Ship matcher**.
+- **Base detection resolves the publish boundary, not a local branch name** — behind-remote
+  (over-scoping), ahead-of-remote (the false-PASS direction: a bare base hides unpushed base
+  commits the push will publish), no remote at all, detached HEAD, a fork tracking a non-`origin`
+  upstream, a base with no remote counterpart, a local branch tracking a differently-named remote
+  branch, one-line stdout with the drift note on stderr, and `--name`.
+- **Reviewers cannot write into the repo they audit** — a scanner invoked with a drive-letter
+  output path is denied (`C:/…` is *relative* in a POSIX shell, so it lands as a directory tree at
+  the repo root); a deliberate `-o report.json`, `-o /tmp/x.json`, or a drive path in a non-scanner
+  command stay allowed; the scan wrapper refuses output flags and reports (never deletes —
+  under Git Bash `rm -rf "C:"` resolves to the **drive root**) anything a scan leaves behind; the
+  workspace guard catches whatever the text-level guards can't see. The live control asks the
+  platform whether the contamination is even stageable before asserting — a POSIX-only test would
+  pass while the bug remained, because the bug *is* the path translation.
 
 `test/pre-push-test.sh` (10 assertions) — the enforcement layer, driven exactly as git drives
 it (refs on stdin, so no command parsing):
