@@ -599,6 +599,13 @@ out=""; rc=0
 case "${1:-}" in
   --hardcoded)      out='C:/Users/x/scratchpad/semgrep.json' ;;
   --hardcoded-fail) out='C:/Users/x/scratchpad/semgrep.json'; rc=9 ;;  # contaminates AND fails
+  # PLAIN-RELATIVE contamination: a scratch file with no drive letter, so it lands in
+  # the repo on EVERY platform. The exit-code contract (0 -> 3, non-zero preserved) is
+  # not a property of the drive-letter shape — it is a property of "this run left new
+  # untracked paths behind" — so it must be asserted where the drive-letter shape is
+  # unstageable (MSYS/native-Windows runtimes resolve 'C:/…' absolutely).
+  --dirty)          out='reviewer-report.json' ;;
+  --dirty-fail)     out='reviewer-report.json'; rc=9 ;;                # contaminates AND fails
   --out) out="${2:-}" ;;
 esac
 [ -n "$out" ] || { echo '{"results":[]}'; exit "$rc"; }
@@ -669,6 +676,43 @@ else
   case "$hard" in *results*) ok "forgeward-scan: internal-path contamination not stageable here (platform resolves drive paths natively); tool still ran, stdout intact" ;;
                   *) nok "forgeward-scan internal-path passthrough" "stdout='$hard'" ;; esac
 fi
+
+# P12c/P12d: the exit-code contract, asserted on EVERY platform.
+#
+# P12/P12b above can only run where the drive-letter tree is stageable, so on MSYS and
+# native-Windows runtimes the two assertions that matter most — contamination is not
+# success, and the substitution never masks a real failure — were skipped entirely. That
+# is backwards: the wrapper's exit-code logic keys off "did the untracked set change",
+# not off the drive letter, so a plain relative scratch file exercises the identical
+# branch and lands in the repo everywhere. These run unconditionally; the drive-letter
+# pair stays platform-conditional because the '.C:'-tree MESSAGE genuinely is
+# platform-specific.
+dfile="$SGR/reviewer-report.json"
+dout="$( cd "$SGR" && "$SCAN" "$STUB" --dirty 2>"$ad/dirty-stderr.txt" )"; drc=$?
+derr="$(cat "$ad/dirty-stderr.txt" 2>/dev/null)"
+{ [ "$drc" = 3 ] && [ -e "$dfile" ]; } \
+  && ok "forgeward-scan: a tool that exits 0 but leaves an untracked file yields exit 3 (asserted on every platform)" \
+  || nok "forgeward-scan contamination exit code (platform-independent)" "rc=$drc, file present: $([ -e "$dfile" ] && echo yes || echo no)"
+{ case "$derr" in *reviewer-report.json*) true ;; *) false ;; esac; } \
+  && { case "$dout" in *results*) true ;; *) false ;; esac; } \
+  && ok "forgeward-scan: names the contaminating path on stderr and still passes tool stdout through" \
+  || nok "forgeward-scan contamination report (platform-independent)" "stdout='$dout' stderr='$derr'"
+rm -f "$dfile"
+
+# The one the checkpoint flagged as missing off-Linux: contaminates AND fails. Only a
+# ZERO becomes 3; a tool that already failed keeps its own code, because the caller
+# knows something went wrong and 3 would erase which thing.
+( cd "$SGR" && "$SCAN" "$STUB" --dirty-fail ) >/dev/null 2>&1; dfrc=$?
+{ [ "$dfrc" = 9 ] && [ -e "$dfile" ]; } \
+  && ok "forgeward-scan: a tool that contaminates AND fails keeps its own exit code (9, not 3) — asserted on every platform" \
+  || nok "forgeward-scan masks tool failure (platform-independent)" "rc=$dfrc, expected 9; file present: $([ -e "$dfile" ] && echo yes || echo no)"
+rm -f "$dfile"
+
+# Control: a clean run of the same stub must NOT trip the contamination path, or the two
+# assertions above would pass for the wrong reason (any exit-3 would look like a catch).
+( cd "$SGR" && "$SCAN" "$STUB" ) >/dev/null 2>&1; crc=$?
+[ "$crc" = 0 ] && ok "forgeward-scan: same stub with no writes -> exit 0 (the exit-3 assertions above are not vacuous)" \
+  || nok "forgeward-scan clean-run control" "rc=$crc, expected 0"
 
 # Opt-in: the same control against the real scanner, off by default (slow, hits the
 # rule registry). FORGEWARD_TEST_SEMGREP=1 bash test/gate-test.sh
