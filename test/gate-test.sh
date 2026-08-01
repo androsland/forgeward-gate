@@ -725,6 +725,35 @@ if [ "${FORGEWARD_TEST_SEMGREP:-0}" = 1 ] && command -v semgrep >/dev/null 2>&1;
     || nok "real semgrep vs stub" "semgrep=$real stub=$contaminates"
 fi
 
+# --- G1..G4 (marker GC): markers must not accumulate forever -------------------
+# One marker per branch ever gated, left behind by every merge-and-delete. Never
+# consulted (lookup is keyed by the CURRENT branch) but unbounded. write-marker prunes
+# on write. Placed last so nothing downstream depends on R's marker state.
+MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+
+# G1: a marker is written for a branch that is about to be deleted.
+( cd "$R" && git checkout -qb gcdead && echo g > gc.txt && git add -A && git commit -qm gc && "$WRITE" main "privacy" ) >/dev/null 2>&1
+[ -f "$MARKDIR/gcdead.json" ] && ok "marker GC: precondition — a marker exists for branch 'gcdead'" \
+  || nok "marker GC precondition" "no $MARKDIR/gcdead.json"
+
+# G2: delete the branch, gate again -> the orphaned marker is pruned.
+( cd "$R" && git checkout -q feature && git branch -D gcdead ) >/dev/null 2>&1
+( cd "$R" && "$WRITE" main "privacy" ) >/dev/null 2>&1
+[ ! -f "$MARKDIR/gcdead.json" ] && ok "marker GC: a marker whose branch no longer exists is pruned on the next write" \
+  || nok "marker GC prunes orphan" "$MARKDIR/gcdead.json still present"
+
+# G3: the marker just written survives (the obvious way to get this wrong).
+[ -f "$MARKDIR/feature.json" ] && ok "marker GC: the marker just written survives its own GC pass" \
+  || nok "marker GC ate its own marker" "no $MARKDIR/feature.json"
+
+# G4 (the case it must NOT fire on): a branch checked out in ANOTHER linked worktree
+# is alive. Existence is checked against refs/heads under the common git dir, which
+# every worktree shares -- so 'wtfeat', gated from inside $WT and never checked out in
+# R, must keep its marker. Deleting it would force a needless re-gate in that worktree.
+{ [ -f "$MARKDIR/wtfeat.json" ] && [ -f "$MARKDIR/wtspace.json" ]; } \
+  && ok "marker GC: markers for branches live in OTHER worktrees survive (refs/heads is shared)" \
+  || nok "marker GC ate a live worktree branch's marker" "wtfeat/wtspace marker missing"
+
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
 # Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —
 # doing so fails plugin load with "Duplicate hooks file detected". The manifest.hooks
