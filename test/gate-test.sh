@@ -57,6 +57,324 @@ denies "$(pretool "$R" "glab mr create -b main")"   && ok "no marker -> glab mr 
 # S4: expansion blocks a typed /ship with no marker (exit 2)
 [ "$(expansion "$R")" = "2" ] && ok "no marker -> /ship expansion BLOCKED (exit 2)" || nok "/ship expansion blocked"
 
+# --- A1..A7 (publish matcher: ISSUED vs MENTIONED) ----------------------------
+# Runs HERE, before S5 writes a marker, so a match is observable as a deny.
+# The matcher must fire on a publish command ISSUED and stay silent on one MENTIONED.
+# The old glob matched the verb anywhere in the text and denied both; it fired six
+# times in one session on this repo, whose own docs and tests are ABOUT these commands.
+#
+# The distinction is drawn by QUOTING, not by position: quoted spans are blanked and
+# the plain substring test runs on the remainder. Two earlier designs anchored the verb
+# to a command position and both failed review in opposite directions -- too narrow
+# (prefixes like `time`/`env`/`sudo` and backticks evaded) and too wide (`!` and `)` in
+# the anchor class denied ordinary prose). A1 below carries every shape those reviews
+# surfaced, so a return to position-anchoring fails here.
+#
+# The expected verdicts are not a reading of shell grammar. Each case was run against
+# stubbed git/gh/glab binaries to observe whether a publish verb ACTUALLY executed, and
+# the table below matches that observation -- including the divergences pinned in A4,
+# which is the authority on that list (a count here would just go stale). One case in an
+# earlier draft (`echo "start\"; ..."`) was expected to deny and turned out to execute
+# nothing; the oracle corrected it, not the reverse.
+#
+# Note the mention cases use single quotes where the payload must stay valid JSON
+# through pretool(); backslash cases are written doubled for the same reason.
+matrix() { # matrix <name> <label>  — reads want|cmd lines on stdin
+  local name="$1" label="$2" want cmd got bad=""
+  local okflag=1
+  while IFS='|' read -r want cmd; do
+    [ -n "$want" ] || continue
+    if denies "$(pretool "$R" "$cmd")"; then got=deny; else got=allow; fi
+    [ "$got" = "$want" ] || { okflag=0; bad="$bad [$want!=$got: $cmd]"; }
+  done
+  [ "$okflag" = 1 ] && ok "$label" || nok "$name" "$bad"
+}
+
+matrix "publish matcher MISSES an issued publish command (recall regression)" \
+  "publish matcher: fires on a publish command ISSUED in unquoted text, whatever precedes it (separators, keywords, command prefixes, substitution)" <<'CASES'
+deny|git   push
+deny|git add -A; git push
+deny|foo | git push
+deny|(git push)
+deny|git push;
+deny|set -e\ngit push
+deny|cd /x && gh pr create --base main
+deny|glab mr create -b main
+deny|{ git push; }
+deny|if true; then git push; fi
+deny|while true; do git push; break; done
+deny|if x; then y; else git push; fi
+deny|case x in x) git push;; esac
+deny|! git push
+deny|f(){ git push; }; f
+deny|until done; do gh pr create; done
+deny|time git push
+deny|exec git push
+deny|command git push
+deny|nohup git push &
+deny|env FOO=bar git push
+deny|sudo git push
+deny|timeout 30 git push
+deny|nice -n5 git push
+deny|stdbuf -oL git push
+deny|\\git push
+deny|x=`git push`
+deny|$(git push)
+deny|git push > out.txt
+deny|time gh pr create
+deny|exec glab mr create
+CASES
+
+matrix "publish matcher over-denies a mention" \
+  "publish matcher: a MENTIONED publish command in an argument is NOT denied (the over-denial this fixes)" <<'CASES'
+allow|git commit -m 'docs: run gh pr create after the gate'
+allow|git commit -m 'chore: mention git push in the README'
+allow|grep -rn 'gh pr create' README.md
+allow|echo 'the command is git push'
+allow|printf '{\"command\":\"git push\"}' > payload.json
+allow|git pushx
+allow|npm run push-docs
+allow|echo 'Careful! git push will trigger CI'
+allow|git commit -m 'Add CI helper (git push automation)'
+allow|git commit -m 'fix; git push now'
+allow|echo \"say 'git push' loudly\"
+allow|echo 'say \"git push\" loudly'
+CASES
+
+# A3 (the reserved-word trap): `then`/`do`/`else` are ordinary English words. Under the
+# current quote-stripping design these pass for the simple reason that they are quoted.
+# The block is kept because the trap is real for any POSITION-based design: an earlier
+# version anchored on a bare ' do ' and denied ordinary prose. If someone reintroduces
+# keyword anchoring, this fails here before it reaches review.
+matrix "publish matcher denies quoted prose containing a reserved word" \
+  "publish matcher: quoted prose containing shell reserved words stays allowed (guards against reintroducing keyword anchoring)" <<'CASES'
+allow|echo 'what to do git push now'
+allow|echo 'things to do: git push'
+allow|echo 'or else git push manually'
+allow|echo 'wait until git push finishes'
+CASES
+
+# A4: the DISCLOSED gaps, asserted so they STAY disclosed. These pin real limits, not
+# desired behaviour -- if one starts behaving differently, the BLIND SPOTS comment in
+# forgeward-gate-check.sh has gone stale and must be updated in the same commit. Every
+# line here was confirmed to diverge by running it against stubbed publish binaries.
+#
+# The SYNTHESISED SEPARATOR group (`git${IFS}push`) is the other unfixable one: the
+# regex wants literal whitespace between the words and an expansion supplies it at
+# RUNTIME, so the words are adjacent for the shell and disjoint in the text. Routing to
+# raw text does not help -- the raw text has no whitespace there either. It is here
+# because an earlier version of the source comment claimed raw-text matching "cannot
+# hide anything", which this falsifies.
+#
+# The QUOTED COMMAND WORD group (`'git' push` and friends) is the uncomfortable one:
+# each really executes. It is here rather than fixed because the only thing separating
+# `git 'push'` from `echo 'the command is git push'` is command position, and any rule
+# that catches the first catches the second -- which is the over-denial this whole
+# change exists to remove. The old bare substring missed these too (`'git' push` does
+# not contain the characters `git push`), so nothing regressed; the gap simply was not
+# disclosed before, and an earlier version of this file wrongly called the list complete.
+matrix "a disclosed gap changed behaviour — update the BLIND SPOTS comment" \
+  "publish matcher: disclosed gaps behave as documented (quoted-wrapper and -C under-match; UNQUOTED mention over-denies)" <<'CASES'
+allow|bash -c 'git push'
+allow|eval 'git push'
+allow|ssh host 'git push'
+allow|trap 'git push' EXIT
+allow|git -C /some/path push
+allow|'git' push
+allow|git 'push'
+allow|g'i't push
+allow|g""it push
+allow|gh 'pr' create
+allow|git pu''sh
+allow|git${IFS}push
+allow|git$IFS'push'
+allow|gh${IFS}pr${IFS}create
+allow|echo 'unterminated; git push
+deny|echo git push is next
+deny|echo $(echo git push)
+deny|echo \"$(echo 'git push')\"
+deny|git commit -m \"$(printf 'docs: git push notes')\"
+CASES
+
+# A8: COMMAND SUBSTITUTIONS ARE DISTRUSTED, NOT PARSED.
+#
+# A blanking scanner and a substitution are a bad match: bash gives each `$( … )` and
+# each backtick span its own quoting scope, a left-to-right scanner does not, and three
+# consecutive security reviews of this branch each found a DIFFERENT desync from trying
+# to teach it one. All three had the same shape -- state restored early, real code after
+# that point blanked as data -- and all three silently allowed a command that really
+# pushed:
+#   1. flat quote parity   git commit -m "$(printf '%s' "it's done")" && git push
+#   2. plain paren pairs   git commit -m "$( (true) ; git push )"
+#   3. case-clause `)`     echo "$(case y in y) git push;; esac)"
+# Each fix was correct and each left another, which is the tell that the approach was
+# wrong rather than the implementation. So a command containing `$(` or a backtick is
+# matched on its RAW text instead: it cannot hide anything, and it retires the whole
+# class rather than its current instance.
+#
+# Every deny below is a command that really executes a publish (confirmed against
+# stubbed binaries), including all three historical repros. The allow cases are the
+# controls that keep this from being vacuous -- substitutions with no verb anywhere in
+# the text, which must still pass through untouched.
+#
+# The `${ ... }` pair is bash 5.3's ksh-style value substitution, which RUNS a command
+# with neither `$(` nor a backtick in the text. Neither bash here (5.1) nor Git Bash's
+# (4.4) supports it -- both reject it as a bad substitution, so these two cases assert
+# the GUARD rather than an observed execution, and they are the one pair in this file
+# whose expected verdict is not backed by the oracle on this machine. Said plainly
+# because an unstated exception is how the last three disclosures went wrong.
+#
+# The first two allow cases are the ones that actually exercise the guard. The other
+# three contain no `push`/`create` anywhere, so the pre-filter short-circuits them
+# before the guard is ever consulted -- they were the only controls here at first, which
+# made the "controls" claim hollow in precisely the way A9 exists to catch. These two
+# carry `push` (inside `push-docs`, which the word boundary must reject) AND a
+# substitution, so they reach the guard, take the raw-text path, and must still allow.
+# `${HOME}` also pins that ordinary parameter expansion is NOT treated as a value
+# substitution -- if it were, most quoted-variable commands would over-deny.
+matrix "publish matcher trusts a substitution-bearing command's stripped residue" \
+  "publish matcher: a command containing \$( ) or a backtick is matched on raw text, so no substitution-scope desync can hide a publish" <<'CASES'
+deny|a=\"$(printf '\"')\" git push
+deny|y=\"$(printf '%s' \"it's fine\")\"; git push
+deny|git commit -m \"$(printf '%s' \"it's done\")\" && git push
+deny|git commit -m \"$( (true) ; git push )\"
+deny|git commit -m \"$( x=$(( 1+2 )) ; git push )\"
+deny|git commit -m \"`(true) ; git push`\"
+deny|echo \"$(case y in y) git push;; esac)\"
+deny|echo \"`case y in y) git push;; esac`\"
+deny|echo \"$(echo \"$(case y in y) git push;; esac)\")\"
+deny|echo \"$( (echo hi) ; git push )\"
+deny|echo \"$(date) deploying\" && git push
+deny|x=$(echo hi); echo \"it's $x\"; git push
+deny|echo \"$(git push)\"
+deny|echo \"outer `git push` inner\"
+deny|echo \"$(( 1+2 )) done\"; git push
+deny|echo \"${ git push; }\"
+deny|echo \"${| git push; }\"
+allow|git commit -m \"$(cat msg.txt)\" && npm run push-docs
+allow|echo \"${HOME}/bin\" && npm run push-docs
+allow|git commit -m \"$(cat msg.txt)\"
+allow|git commit -m \"$( (echo safe) )\"
+allow|echo \"$( (echo 'it') ; echo done )\"
+CASES
+
+# A10: the non-substitution constructs that carry parens must keep working, since the
+# guard above does not cover them -- these go through the scanner, not the raw text.
+# A12: PROGRAM-NAME CASE. On an NTFS-backed checkout the program name resolves
+# case-insensitively, so `Git push` really runs a push on Git Bash while `git`'s own
+# subcommand parsing stays case-sensitive (`GIT PUSH` does not run one -- git rejects
+# `PUSH`). The verb test is therefore case-insensitive and the pre-filter deliberately is
+# not: a real publish always carries a lowercase `push`/`create`, so the cheap filter
+# stays exact while the decision does not. Pre-existing before this change; the old
+# substring had the same gap. The allow cases are the control -- quoted prose is blanked,
+# so making the test case-insensitive must not start denying quoted mentions. The last
+# case pins the one NEW over-denial this bought: an UNQUOTED mixed-case mention now
+# denies where the case-sensitive matcher allowed it. Fail-safe, and disclosed.
+matrix "publish matcher misses a case-variant program name" \
+  "publish matcher: program-name case is ignored (Git/GIT resolve on a case-insensitive filesystem) while quoted mentions stay allowed" <<'CASES'
+deny|Git push
+deny|GIT push
+deny|Gh pr create
+deny|Glab mr create
+allow|echo 'Git Push is the plan'
+allow|git commit -m 'docs: Git push notes'
+deny|echo the docs say Git push first
+CASES
+
+matrix "publish matcher mishandles parens outside a substitution" \
+  "publish matcher: subshells, case arms, function bodies and process substitution still classify correctly without any paren modelling" <<'CASES'
+deny|(git push)
+deny|case x in x) git push;; esac
+deny|f(){ git push; }; f
+deny|diff <(echo a) <(echo b); git push
+deny|(( 1 + 2 )); git push
+allow|echo 'in a case arm: x) git push;; esac'
+CASES
+
+# A11: LINE CONTINUATION. An unquoted backslash-newline is a splice -- bash deletes both
+# characters and the lines join with NOTHING between them, so `git pu\<newline>sh` really
+# runs a push. Two separate things went wrong here before the join was added: awk saw two
+# records and put a space and a record boundary where bash puts nothing, and the raw text
+# contains neither "push" nor "create", so the pre-filter exited before any scanning
+# happened at all. The second is why the join has to sit ABOVE the pre-filter, and the
+# first case below fails if it is ever moved back down. The third case is the control:
+# a continuation inside quotes is still a mention and must stay allowed.
+#
+# This block is also the only thing that catches a CR bug in json_get: on Windows,
+# python3's stdout is a text stream and turns every "\n" into "\r\n", so a multi-line
+# command arrived carrying a CR the real shell never sees, and the join silently matched
+# nothing. It passed on WSL and failed on Git Bash. Note the coverage is conditional --
+# jq does not translate newlines, so on a machine WITH jq these cases exercise the jq
+# path and say nothing about the python one. Both machines here lack jq, which is why it
+# was observable at all.
+lc_ok=1; lc_bad=""
+lc_check() { # lc_check <want> <cmd>
+  local got
+  if denies "$(pretool "$R" "$1")"; then got=deny; else got=allow; fi
+  [ "$got" = "$2" ] || { lc_ok=0; lc_bad="$lc_bad [$2!=$got]"; }
+}
+lc_check 'git pu\\\nsh' deny
+lc_check 'gi\\\nt push' deny
+lc_check "echo 'safe \\\nmention of git push'" allow
+[ "$lc_ok" = 1 ] && ok "publish matcher: a backslash-newline line continuation is joined before both the pre-filter and the scan, so a spliced verb is still caught" \
+  || nok "publish matcher misses a verb split across a line continuation" "$lc_bad"
+
+# A9: the harness itself. pretool() assembles JSON with raw printf, so a case whose
+# payload contains an unescaped double quote produces MALFORMED JSON; json_get then
+# returns an empty command and the hook allows via the empty-command short-circuit
+# rather than by classifying anything. A mention case would still read "allow" and
+# look correct while testing nothing. This case must DENY, so a malformed payload
+# fails loudly here instead of silently hollowing out the cases above.
+denies "$(pretool "$R" 'echo \"a\"; git push')" \
+  && ok "test harness: a payload containing escaped double quotes survives JSON assembly intact (guards the A2/A5/A8 cases against silently testing nothing)" \
+  || nok "test harness produces malformed JSON for payloads containing double quotes — the quoted cases are not testing what they claim"
+
+# A5: BACKSLASH state. Outside quotes `\'` is a LITERAL quote, so a scanner that only
+# pairs quote characters mis-pairs here and blanks a command that really does execute.
+# The extglob-substitution attempt failed exactly this. Inside double quotes `\"` is
+# also literal, which is why the second case runs nothing and must stay allowed.
+matrix "publish matcher mishandles backslash-escaped quotes" \
+  "publish matcher: escaped quotes cannot hide an issued publish, nor manufacture a mentioned one" <<'CASES'
+deny|echo start\\'; git push; \\'echo end
+deny|echo 'a'\\''b'; git push
+allow|echo 'it'\\''s fine to git push later'
+allow|echo \"start\\\"; git push; \\\"end\"
+CASES
+
+# A6: LINEAR in quote density. The extglob attempt was correct but superlinear here:
+# 2.3s on 1KB and 55s on 3KB of quote-dense input, while measuring 15ms on quote-SPARSE
+# 20KB -- so a sparse benchmark hides it entirely and this case must stay dense. The
+# bound is deliberately loose; it separates "linear" from "blows up", not fast from slow.
+dense=""; while [ "${#dense}" -lt 3000 ]; do dense="$dense'a'"; done
+t0=$(date +%s)
+dense_out="$(pretool "$R" "echo $dense; git push")"
+t1=$(date +%s)
+if denies "$dense_out" && [ "$((t1-t0))" -lt 5 ]; then
+  ok "publish matcher: quote-dense 3KB command scanned in $((t1-t0))s and still denied (linear in quote density)"
+else
+  nok "publish matcher is superlinear in quote density, or missed the trailing publish" \
+      "elapsed=$((t1-t0))s denied=$(denies "$dense_out" && echo yes || echo no)"
+fi
+
+# A7: awk unavailable -> fall back to the RAW text. The scan is the only part of this
+# matcher that needs a helper process, and the failure mode has to be OVER-denial, not
+# under-denial: a reworded command costs a retry, a missed gate does not announce
+# itself. Simulated with a failing awk on PATH rather than a stripped PATH, because
+# stripping PATH removes coreutils too and would test the wrong thing.
+SHADOW="$TMP/noawk"; mkdir -p "$SHADOW"
+printf '#!/bin/sh\nexit 127\n' > "$SHADOW/awk"; chmod +x "$SHADOW/awk"
+pretool_noawk() { printf '{"cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2" | PATH="$SHADOW:$PATH" "$CHECK" pretooluse; }
+
+noawk_issued="$(pretool_noawk "$R" "git push")"
+noawk_mention="$(pretool_noawk "$R" "echo 'the command is git push'")"
+noawk_other="$(pretool_noawk "$R" "npm test")"
+if denies "$noawk_issued" && denies "$noawk_mention" && [ -z "$noawk_other" ]; then
+  ok "publish matcher: with awk unavailable it degrades to the old raw-text test (issued DENIED, mention over-denied, unrelated untouched) — fails closed, never open"
+else
+  nok "publish matcher fails OPEN when awk is unavailable" \
+      "issued=$(denies "$noawk_issued" && echo deny || echo allow) mention=$(denies "$noawk_mention" && echo deny || echo allow) other=${noawk_other:-empty}"
+fi
+
 # S5: PASS marker written -> publish allowed
 "$WRITE" main "privacy" >/dev/null
 out="$(pretool "$R" "git push -u origin feature")"
