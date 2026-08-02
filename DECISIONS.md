@@ -4,6 +4,244 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — the publish matcher denied any command CONTAINING a publish verb
+
+**Date:** 2026-08-02
+
+**Symptom.** `scripts/forgeward-gate-check.sh` tested the publish verbs as a bare
+substring of the whole command, so a command that merely MENTIONED one was denied as
+if it issued one. It fired six times in a single session on this repo, including on
+the patch script that was fixing it. A repo whose subject matter IS these commands
+trips it constantly; a commit message quoting one, a `grep` for one, and a JSON test
+payload containing one were all refused.
+
+**Cause.** The test asked "does this text contain the verb", which cannot distinguish
+DATA from CODE. Both are text.
+
+**Fix.** Decide by QUOTING, which is how the shell itself encodes that distinction:
+blank the quoted spans, then run the plain substring test on what remains. This needs
+no model of separators, reserved words, or command prefixes — a `time`-prefixed
+publish matches for the same reason a bare one does. Word boundaries on both sides
+keep `git pushx` and `npm run push-docs` clear.
+
+**Three attempts failed before this one; the failures are the useful part.**
+
+1. and 2. Anchored the verb to a "command position" (start of text, after a
+   separator, after a reserved word). Both failed review, in OPPOSITE directions:
+   too narrow (`time`, `env FOO=bar`, `sudo`, `nohup`, backticks, and a
+   backslash-escaped verb all evaded, every one of which the old substring caught),
+   then too wide (widening the anchor class to `!` and `)` denied ordinary prose such
+   as `echo 'Careful! ... will trigger CI'`). Chasing both at once means enumerating
+   shell grammar with a regex, which this file's own header already calls a dead end.
+   **Position was the wrong signal.**
+3. Blanked the quotes with bash extglob substitution — the right idea, wrong
+   mechanism. It mishandled backslash state (outside quotes an escaped quote is
+   LITERAL, so a scanner that only pairs quote characters mis-pairs and blanks a
+   command that really executes), and it was superlinear in quote DENSITY: 2.3s on
+   1KB and 55s on 3KB of quote-dense input. Its own code comment quoted 0.006s on
+   20KB, measured on quote-SPARSE input — true, and useless, because density is what
+   drives the cost. Preserved on local tag `item2-wip-quote-stripping`.
+
+**The constraint that caused attempt 3 was self-imposed.** "No fork" was assumed, not
+required: `json_get` already forks `jq` or `python3` on EVERY invocation of this hook,
+so a single `awk` pass was available the whole time. The fix is one awk pass tracking
+quote state, backslash state, and command-substitution scope, gated behind a
+`push|create` prefilter so the common path stays fork-free. Measured on WSL/gawk 5.1.0:
+~7ms for the fork; the scan itself is linear and density-independent (1ms at 3KB, 10ms
+at 20KB, 17ms at 60KB).
+
+**A fourth failure mode, found in security review after the fix was already written.**
+The first version of the scanner tracked quote parity FLAT across the whole command.
+bash does not: each `$( … )` and each backtick span gets its own quoting scope. So a
+mismatched quote type inside a substitution flipped parity for everything after it and
+swallowed a later, entirely separate, entirely unquoted publish command:
+
+```
+git commit -m "$(printf '%s' "it's done")" && git push    ->  ALLOWED, and really pushed
+a="$(printf '"')" git push                                ->  ALLOWED, and really pushed
+```
+
+An apostrophe in a commit message is enough. This was a REGRESSION against the old bare
+substring, which caught both because it ignored quoting entirely — the exact shape the
+"kept honest" disclosure existed to prevent, missed by all three disclosed bullets and
+by tests A1–A7.
+
+**Then twice more, each time in the fix for the previous one.** A scope stack was added
+so each `$( … )` got its own quote scope. Round 2 found that a scope opens only on `$(`,
+so a plain `(` … `)` pair inside a substitution — a subshell, the second paren of
+`$(( ))`, any literal parens — popped the real scope early. Per-scope paren depth fixed
+that. Round 3 found that a `case` pattern clause produces a bare `)` with no opening
+paren at all, which did the same thing:
+
+```
+git commit -m "$( (true) ; git push )"        ->  ALLOWED, and really pushed
+echo "$(case y in y) git push;; esac)"        ->  ALLOWED, and really pushed
+```
+
+**So the approach was wrong, not the implementations.** Three consecutive reviews, three
+different desyncs, every fix correct and every one leaving another. The next version
+would have modelled `case`/`in`/`esac`, and this file's own header already says where
+enumerating shell grammar ends.
+
+**The fix is to stop parsing substitutions and start distrusting them.** If the command
+contains `$(` or a backtick, the blanked residue is not trusted and the RAW text is
+matched instead. That cannot hide anything, and it retires the entire desync class
+rather than its current instance. The scope stack, the paren depth and the backtick
+tracking were all deleted; the scanner went back to quote and backslash state only,
+which is all it needs for the commands it still handles.
+
+What this buys and what it costs, precisely: commands WITHOUT a substitution — a commit
+message, a grep pattern, a JSON payload, which is exactly the shape of all six original
+false denials — keep the precise treatment. Commands WITH one over-deny if they mention
+a verb anywhere. Nothing can be hidden by a scanner bug in between, because there is no
+longer a scanner on that path.
+
+**The generalizable lesson, and it cost three rounds to learn.** All three bugs had the
+same shape: a state desync whose damage lands AFTER the construct that causes it. Every
+test that put the interesting token near the verb passed, because the verb was never
+where the corruption was. When a scanner carries state across a line, the test that
+matters puts the trigger EARLY and the verb LATE with unrelated text between. All three
+were found by executing against stubbed binaries; reading the code said it was correct
+every time. And when consecutive fixes to the same mechanism each reveal a new instance,
+the signal is to delete the mechanism, not to add a case to it.
+
+This is also the argument for running the gate on a change whose whole subject is the
+gate: each disclosure was honest about what it had considered, and each was still wrong.
+
+**Method note, which is why this one held.** The expected verdicts were not derived by
+reading shell grammar. Every case was executed against stubbed `git`/`gh`/`glab`
+binaries to observe whether a publish ACTUALLY ran. That oracle corrected two beliefs:
+a case drafted as a deny turned out to execute nothing (`\"` inside double quotes is
+literal, so the command stays one argument), and a documented "blind spot" turned out
+not to be a gap at all (an unterminated quote makes the command unparseable, so
+nothing runs and allowing it is correct). Both are now assertions.
+
+**A fourth review round, and the premise itself was wrong.** The comment above says
+quoting encodes data-vs-code. It does not. Quoting suppresses splitting and globbing;
+the shell then concatenates adjacent fragments back into one word. So a quoted COMMAND
+WORD executes exactly like an unquoted one, while the scanner blanks the span and the
+regex stops seeing the verb:
+
+```
+'git' push        g'i't push        git 'push'        g""it push      ->  all really push
+```
+
+This one is NOT fixed, and the reason matters more than the gap. The only thing
+separating `git 'push'` (runs) from `echo 'the command is git push'` (does not) is
+whether the quoted word sits in COMMAND POSITION. Any rule that catches the first
+catches the second, which is precisely the over-denial this change exists to remove, and
+deciding position is the grammar-enumeration dead end the file header warns about. The
+old bare substring missed these too — `'git' push` does not contain the characters
+`git push` either — so nothing regressed; the gap was simply never disclosed. Pinned in
+A4 so it stays disclosed.
+
+The same round found one that WAS fixable. An unquoted backslash-newline is a splice:
+bash deletes both characters and the lines join with nothing between them, so
+`git pu\<newline>sh` really pushes. Two things went wrong — awk saw two records and put a
+space and a boundary where bash puts nothing, and the raw text contains neither "push"
+nor "create", so the pre-filter exited before any scanning happened. Continuations are
+now joined ABOVE the pre-filter, and A11 fails if that line is moved back below it.
+
+**And fixing that exposed an older one, in `json_get`.** The join worked on WSL and did
+nothing on Git Bash. Cause: on Windows, python3's stdout is a TEXT stream and translates
+every `\n` to `\r\n`, so a multi-line command arrived carrying a CR that the shell it
+describes never sees — the join looked for `\` + LF and found `\` + CRLF. The python
+branch now writes bytes (`sys.stdout.buffer.write`) instead of using `print()`. This was
+pre-existing and silent: every multi-line command has been mildly corrupted on Windows
+since the fallback was written, harmless for single-line matching, and invisible on any
+machine with `jq` — jq does not translate newlines, so the bug only exists on the
+python path. Neither machine here has jq, which is the only reason it surfaced.
+
+Worth stating as a rule rather than an anecdote: **a difference between two platforms is
+only findable by running both.** Nothing about reading this code suggests a CR, and no
+amount of reasoning on WSL would have produced it.
+
+**A fifth round, and the same overclaim a third time.** The comment introduced above said
+raw-text matching "cannot hide anything". It cannot hide anything QUOTING would have
+hidden, which is a much smaller claim. A separator supplied at RUNTIME defeats it, in the
+raw text exactly as in the residue, because the regex wants literal whitespace between
+the words:
+
+```
+git${IFS}push      git$IFS'push'      gh${IFS}pr${IFS}create    ->  all really publish
+```
+
+Not fixable here for the same reason as the quoted command word — catching it means
+modelling word-splitting and expansion. Disclosed and pinned in A4. Pre-existing: the old
+substring missed these too. The same class can split the VERB rather than the separator:
+`git pu''sh` runs, carries no literal `push`, and therefore dies at the cheap pre-filter
+— a full miss where even the raw-text fallback never runs.
+
+The same round found one that WAS fixable, on the platform this file keeps getting caught
+by. On an NTFS-backed checkout the PROGRAM name resolves case-insensitively, so `Git push`
+really runs a push on Git Bash — while git's own subcommand parsing stays case-sensitive,
+so `GIT PUSH` does not. The verb test is now case-insensitive (`nocasematch`, scoped to
+that one test and restored, since it also changes `case` semantics and the artifact guard
+above depends on those). The pre-filter deliberately stays case-sensitive: a real publish
+always carries a lowercase `push`/`create`, so the cheap path stays exact. Pinned by A12.
+
+`marker_get` got the same byte-writing treatment as `json_get`. Its values are
+single-line so the continuation bug never applied, but `print()`'s trailing newline still
+becomes CRLF on Windows and `$(...)` strips only the LF — the surviving CR rides along on
+`base`, which is then passed to `forgeward-diff-hash.sh` as a ref, fails to resolve, and
+makes a genuinely fresh marker read as stale. Fail-safe (an extra gate run, never a false
+PASS), but it was the untouched twin of a bug fixed two functions above it.
+
+**Accepted loss, stated because it is real.** A publish verb inside a quoted argument
+to a shell wrapper (`bash -c`, `eval`, `ssh host`, `trap ... EXIT`) is no longer
+denied. The old substring caught those. Blanking the quotes is what hides them, and
+un-blanking is exactly the over-denial this change removes. It is not the accidental
+"I forgot to gate" shape this layer targets, and the enforcement boundary is still the
+pre-push hook, which binds to resolved refs and SHAs. Pinned in `test/gate-test.sh` A4
+so the disclosure cannot silently go stale.
+
+**On completeness, which this entry has now got wrong three times.** First it said 118
+oracle-checked cases meant "no command outside the list went unnoticed"; the next review
+produced two that were, both inside the categories that sentence named. Then the fix for
+those introduced "that cannot hide anything"; the round after falsified it with
+`git${IFS}push`. The pattern is not that the individual claims were careless — each was
+written directly after testing the thing it described. It is that a claim about what
+CANNOT happen is not something testing can establish, and every round of this file that
+tried to state one was wrong within a review.
+
+So: the disclosed list is what has been FOUND, on bash 5.1.16 (WSL) and 4.4.23 (Git
+Bash), across 118 executed cases plus five review rounds. It is not a proof of
+completeness, and no sentence here should read like one. A lexical matcher over shell
+text cannot be complete in principle — that is exactly why this is a reminder and the
+pre-push hook, which sees resolved refs and SHAs after the shell has finished expanding
+everything, is the boundary that actually holds.
+
+Bash 5.3's value substitutions `${ cmd; }` / `${| cmd; }` run a command with neither
+`$(` nor a backtick in the text, so the guard also matches `${` followed by whitespace
+or `|`. Matching a bare `${` was tried first and reverted — `${VAR}` is ordinary bash,
+and routing every quoted-variable command to raw text gave back a large slice of the very
+over-denial this change exists to remove.
+
+**And that arm was documented as unreachable here, which was wrong — for an instructive
+reason.** The comment said neither local shell supports the syntax, on the strength of a
+probe that ran `bash -c '${ git push; }'` and got "bad substitution". The probe used
+`/bin/bash` (5.1.16). This script's shebang is `#!/usr/bin/env bash`, which on this
+machine resolves to a linuxbrew **5.3.15** that executes it for real. The measurement was
+correct and answered a question about a different interpreter than the one the hook runs
+under. Round 6 caught it because the reviewer's shell resolved the same way the script's
+does. The mechanism was fine — the arm denies correctly on 5.3 — but "I tested it" is
+only as good as testing the thing that actually runs.
+
+Covered by `test/gate-test.sh` A1–A12. Each assertion was mutation-tested: five go red
+against the old substring matcher, two against the extglob attempt, A7 against removing
+the awk-absent fallback, A8 against removing the substitution guard, A11 against moving
+the continuation join back below the pre-filter, and A12 against dropping `nocasematch`.
+
+Two of those assertions exist because a test was found to be hollow rather than wrong,
+which is the same failure twice and worth naming. A9 covers the harness: `pretool()`
+assembles JSON with raw `printf`, so a case containing an unescaped double quote reached
+the hook as an EMPTY command and was allowed by short-circuit while appearing to exercise
+the matcher — one A2 case was silently hollow that way. And A8's `allow` controls were
+originally three substitutions containing no `push`/`create` at all, so the pre-filter
+short-circuited every one of them before the guard they were supposed to control was ever
+consulted; they now carry `push-docs` so they reach it. A test that cannot fail is not a
+test, and both of these looked green the whole time.
+
 ## RESOLVED — base detection returned a stale LOCAL branch, mis-scoping the review
 
 **Date:** 2026-07-31 · supersedes *"base detection on a direct-to-base commit"* below,
