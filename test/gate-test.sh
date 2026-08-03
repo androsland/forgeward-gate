@@ -679,6 +679,121 @@ n="$(cd "$RB" && "$DETECT" --name 2>/dev/null)"
 [ "$n" = "main" ] && ok "base detect: --name returns the bare branch name ('main') for PR targeting" \
   || nok "base detect --name" "got: '$n'"
 
+# B14: step 1 of stage A (`gh repo view`) is a NETWORK call. It must not fire when
+# no remote could possibly BE a GitHub repo — a repo with no remote at all, or one
+# whose remote is a filesystem path — because it can only ever fail there, and this
+# script runs ~15 times per suite (unguarded 114s/201s/93s vs guarded 29s/33s/37s
+# over three runs each; the 108s-wide spread is the network showing through). The
+# guard must be a short-circuit, not a behavior change: with a networked remote the
+# call still fires and still wins, so the positive control below is the assertion
+# that matters. A stub `gh` on PATH records whether it was invoked.
+GHBIN="$TMP/ghstub"; mkdir -p "$GHBIN"
+printf '#!/usr/bin/env bash\nprintf "called\\n" >> "$GH_STUB_LOG"\nexit 1\n' > "$GHBIN/gh"
+chmod +x "$GHBIN/gh"
+gh_calls() { # gh_calls <repo>  -> number of times detect invoked gh
+  local log="$TMP/gh-stub.log"
+  : > "$log"
+  ( cd "$1" && PATH="$GHBIN:$PATH" GH_STUB_LOG="$log" "$DETECT" >/dev/null 2>&1 )
+  wc -l < "$log" | tr -d ' '
+}
+
+# RN has no remote at all; RB has one, but it is the filesystem path './.git'.
+[ "$(gh_calls "$RN")" = "0" ] && ok "base detect: no remote at all -> gh NOT invoked (network call skipped)" \
+  || nok "no-remote skips gh" "gh was invoked $(gh_calls "$RN") time(s)"
+[ "$(gh_calls "$RB")" = "0" ] && ok "base detect: filesystem-path remote -> gh NOT invoked (a path is never a GitHub repo)" \
+  || nok "path-remote skips gh" "gh was invoked $(gh_calls "$RB") time(s)"
+
+# Positive control: a networked remote MUST still reach gh, or the guard has
+# silently deleted step 1 rather than short-circuiting it. Uses a URL that is never
+# contacted — the stub answers first.
+RGH="$TMP/repo-github"
+mkrepo "$RGH"
+( cd "$RGH"; echo c0 > f; git add -A; git commit -qm c0; git branch -M main
+  git remote add origin https://github.com/example/example.git
+  git checkout -q -b feature; echo x > x.txt; git add -A; git commit -qm feat ) >/dev/null 2>&1
+[ "$(gh_calls "$RGH")" -ge 1 ] && ok "base detect: networked remote -> gh IS invoked (guard short-circuits, does not remove step 1)" \
+  || nok "networked remote reaches gh" "gh was never invoked"
+# Still with the stub on PATH: the suite must never make a real network call, and
+# the stub's non-zero exit is exactly the "gh present but unhelpful" case anyway.
+n_gh="$( cd "$RGH" && PATH="$GHBIN:$PATH" GH_STUB_LOG="$TMP/gh-stub.log" "$DETECT" --name 2>/dev/null )"
+[ "$n_gh" = "main" ] \
+  && ok "base detect: gh failing after the guard still falls through to the local answer ('main')" \
+  || nok "gh-failure fallthrough" "got: '$n_gh'"
+
+# The guard must not change WHICH base the no-remote repos resolve to (B7 asserts
+# the value; this asserts the guard did not perturb it).
+[ "$(detect "$RN")" = "main" ] && ok "base detect: guard leaves the no-remote answer unchanged ('main')" \
+  || nok "guard perturbed no-remote answer" "got: '$(detect "$RN")'"
+
+# The guard classifies by URL SHAPE, and the shapes that must still reach gh are the
+# ones an allow-list gets wrong. git makes the `user@` of scp-like syntax OPTIONAL,
+# so `github.com:org/repo.git` and an SSH-config alias like `gh:org/repo` are both
+# ordinary networked remotes. An early version of this guard allow-listed `*@*:*`
+# and classified those as local, which silently resolved the base to a STALE local
+# branch — the false-PASS direction. Each row: <url> <must-reach-gh>.
+url_reaches_gh() { # url_reaches_gh <url> -> "yes"/"no"
+  local d="$TMP/urlprobe" log="$TMP/gh-url.log"
+  rm -rf "$d"; mkrepo "$d" >/dev/null 2>&1
+  ( cd "$d" && echo c0 > f && git add -A && git commit -qm c0 && git branch -M main
+    git remote add origin "$1" ) >/dev/null 2>&1
+  : > "$log"
+  ( cd "$d" && PATH="$GHBIN:$PATH" GH_STUB_LOG="$log" "$DETECT" >/dev/null 2>&1 )
+  [ -s "$log" ] && echo yes || echo no
+}
+while read -r u want; do
+  [ -n "$u" ] || continue
+  got="$(url_reaches_gh "$u")"
+  [ "$got" = "$want" ] \
+    && ok "base detect: remote '$u' -> gh reached=$got (as required)" \
+    || nok "remote URL classification: $u" "wanted reached=$want, got=$got"
+# Every `yes` row below was verified against the real binary, not reasoned about:
+# `GIT_SSH_COMMAND='echo dialed' git ls-remote <url>` dials for the tilde-host, bare
+# host, IPv6 and scp-like rows, and does not for the path rows. `~mybox:repo.git` and
+# `foo/bar:baz` are the pair that matters — they differ from their neighbours only in
+# whether a slash precedes the first colon, which is exactly git's rule and exactly
+# what three rounds of prefix-guessing kept getting wrong.
+done <<'URLS'
+https://github.com/o/r.git yes
+ssh://git@github.com/o/r yes
+git@github.com:o/r.git yes
+github.com:o/r.git yes
+gh:o/r yes
+~mybox:repo.git yes
+[::1]:repo yes
+./.git no
+/srv/mirror/r.git no
+../sibling no
+~/local/repo no
+foo/bar:baz no
+file:///srv/mirror/r.git no
+URLS
+
+# The drive-letter shapes get their own assertions because their correct answer
+# FLIPS with the platform, and both directions were live bugs during 0.7.2.
+#
+# Off Windows, git's has_dos_drive_prefix() is compiled out, so it parses
+# `C:/foo/bar` as scp-like with the one-letter HOSTNAME `C` and really dials it:
+#   GIT_SSH_COMMAND='echo $@' git ls-remote 'C:/foo/bar'  ->  C git-upload-pack '/foo/bar'
+# `g:/data/repo.git` — an SSH alias plus an absolute path, the ordinary
+# gitolite/gitea shape — must therefore reach gh.
+#
+# On Windows the same string is a real drive path, AND it is what MSYS rewrites an
+# absolute POSIX remote into: `git remote add origin /srv/mirror/r.git` is stored as
+# `C:/Program Files/Git/srv/mirror/r.git`. So there the answer is the opposite, and a
+# guard with no drive-letter arm classified a plain local mirror as networked.
+# Deleting the arm to satisfy the first case broke the second; only a platform check
+# satisfies both.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) drive_want=no  ; drive_why="drive path (git compiles in has_dos_drive_prefix here)" ;;
+  *)                    drive_want=yes ; drive_why="one-letter SSH host (git really dials it here)" ;;
+esac
+for u in 'g:/data/repo.git' 'C:/Users/x/repo.git'; do
+  got="$(url_reaches_gh "$u")"
+  [ "$got" = "$drive_want" ] \
+    && ok "base detect: remote '$u' -> gh reached=$got — $drive_why" \
+    || nok "drive-letter classification: $u" "wanted reached=$drive_want on $(uname -s), got=$got"
+done
+
 # --- P1..P11: a read-only reviewer must not write scanner output into the repo ---
 # Observed on Windows/Git Bash: semgrep invoked with `-o <windows-absolute-path>`
 # under a POSIX shell created 'C:/Users/.../semgrep.json' as a RELATIVE directory
@@ -1071,6 +1186,120 @@ MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgew
 { [ -f "$MARKDIR/wtfeat.json" ] && [ -f "$MARKDIR/wtspace.json" ]; } \
   && ok "marker GC: markers for branches live in OTHER worktrees survive (refs/heads is shared)" \
   || nok "marker GC ate a live worktree branch's marker" "wtfeat/wtspace marker missing"
+
+# --- V1..V5: version-bearing manifests -----------------------------------------
+# A Claude Code plugin carries its version in THREE files, and a release bumps all
+# of them together. Neutralizing only package.json meant every release flipped the
+# substantive-diff hash and forced a spurious re-gate, so the "cosmetic bookkeeping
+# stays invisible" contract held for ordinary repos but not for a plugin.
+#
+# V2 is the assertion that matters. Bump-invariance failing costs a re-gate;
+# substantive-blindness failing costs a false PASS on a manifest that declares
+# hooks, permissions and entrypoints. The loose direction is the expensive one, so
+# it is pinned per manifest and per version-field SHAPE (top-level vs nested).
+RV="$TMP/repo-manifests"
+mkrepo "$RV"
+( cd "$RV"
+  mkdir -p .claude-plugin
+  printf '{\n  "name": "u",\n  "version": "1.0.0"\n}\n' > package.json
+  printf '{\n  "name": "p",\n  "version": "1.0.0",\n  "defaultEnabled": true\n}\n' > .claude-plugin/plugin.json
+  printf '{\n  "name": "m",\n  "plugins": [\n    { "name": "p", "version": "1.0.0" }\n  ]\n}\n' > .claude-plugin/marketplace.json
+  echo ok > src.js
+  git add -A; git commit -qm base; git branch -M main
+  git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
+
+setjson() { # setjson <repo> <file> <python-expr-on-d>
+  ( cd "$1" && python3 -c "import json,sys
+d=json.load(open('$2'))
+$3
+open('$2','w').write(json.dumps(d,indent=2)+chr(10))" )
+}
+
+v_base="$(cd "$RV" && "$HASH" main)"
+
+# V1: a version-only bump across ALL THREE manifests leaves the hash alone.
+setjson "$RV" package.json                      "d['version']='1.0.1'"
+setjson "$RV" .claude-plugin/plugin.json        "d['version']='1.0.1'"
+setjson "$RV" .claude-plugin/marketplace.json   "d['plugins'][0]['version']='1.0.1'"
+( cd "$RV" && git add -A && git commit -qm "chore: bump version" ) >/dev/null 2>&1
+v_bump="$(cd "$RV" && "$HASH" main)"
+[ "$v_base" = "$v_bump" ] && ok "manifests: version-only bump across all three -> hash UNCHANGED (no spurious re-gate on release)" \
+  || nok "three-manifest bump invariance" "$v_base vs $v_bump"
+
+# V2: a SUBSTANTIVE change to plugin.json must still flip the hash. plugin.json
+# declares hooks, permissions and entrypoints — going blind to it is a false PASS,
+# which is the failure this whole file exists to prevent.
+setjson "$RV" .claude-plugin/plugin.json "d['hooks']='./hooks/extra.json'"
+( cd "$RV" && git add -A && git commit -qm "feat: declare an extra hooks file" ) >/dev/null 2>&1
+v_hook="$(cd "$RV" && "$HASH" main)"
+[ "$v_bump" != "$v_hook" ] && ok "manifests: non-version change to plugin.json -> hash CHANGED (re-gate forced)" \
+  || nok "plugin.json substantive change flips hash" "still $v_hook — a manifest change is now INVISIBLE to the gate"
+( cd "$RV" && git reset -q --hard HEAD~1 ) >/dev/null 2>&1
+
+# V3: same for marketplace.json, whose version is NESTED at .plugins[].version —
+# a different code path from the top-level case, so it needs its own assertion.
+setjson "$RV" .claude-plugin/marketplace.json "d['plugins'][0]['source']='https://elsewhere.example/evil'"
+( cd "$RV" && git add -A && git commit -qm "feat: repoint the plugin source" ) >/dev/null 2>&1
+v_src="$(cd "$RV" && "$HASH" main)"
+[ "$v_bump" != "$v_src" ] && ok "manifests: non-version change to marketplace.json -> hash CHANGED (nested shape not over-neutralized)" \
+  || nok "marketplace.json substantive change flips hash" "still $v_src"
+( cd "$RV" && git reset -q --hard HEAD~1 ) >/dev/null 2>&1
+
+# V4: BACK-COMPAT. A repo with no .claude-plugin/ must hash to exactly the bytes
+# this script produced before the two extra manifests were handled, or every marker
+# in every ordinary repo goes stale on upgrade. The expected value is rebuilt here
+# from the legacy payload format independently, so a change to the script's
+# assembly fails this test rather than silently redefining "unchanged".
+RL="$TMP/repo-legacy"
+mkrepo "$RL"
+( cd "$RL"
+  printf '{\n  "name": "u",\n  "version": "1.0.0",\n  "dependencies": { "express": "^4.19.2" }\n}\n' > package.json
+  echo ok > src.js; git add -A; git commit -qm base; git branch -M main
+  git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
+legacy="$( cd "$RL"
+  dp="$(git diff "main...HEAD" -- . ':(exclude)VERSION' ':(exclude)CHANGELOG.md' \
+        ':(exclude)CHANGELOG' ':(exclude)TODOS.md' ':(exclude)package.json' 2>/dev/null)"
+  raw="$(git show "HEAD:package.json" 2>/dev/null)"
+  if command -v jq >/dev/null 2>&1; then pp="$(printf '%s' "$raw" | jq -S '.version = "<<forgeward-gated>>"')"
+  else pp="$(printf '%s' "$raw" | python3 -c 'import json,sys
+d=json.load(sys.stdin); d["version"]="<<forgeward-gated>>"
+sys.stdout.buffer.write(json.dumps(d,sort_keys=True,separators=(",",":")).encode())')"
+  fi
+  printf '%s\n--FORGEWARD-PKG--\n%s\n' "$dp" "$pp" | sha256sum | awk '{print $1}' )"
+[ "$(cd "$RL" && "$HASH" main)" = "$legacy" ] \
+  && ok "manifests: repo with no .claude-plugin/ hashes to the LEGACY bytes (existing markers survive the upgrade)" \
+  || nok "legacy payload back-compat" "got $(cd "$RL" && "$HASH" main), legacy $legacy"
+
+# V5: the python3 fallback must implement the SAME semantics as the jq path, not
+# merely run. Exercised by putting a PATH in front that has python3 but no jq. Only
+# meaningful where jq is the branch that would otherwise be taken.
+if command -v jq >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  NOJQ="$TMP/nojq"; mkdir -p "$NOJQ"
+  for t in env bash git sha256sum awk python3; do
+    p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOJQ/$t"
+  done
+  v_saved="$( cd "$RV" && git rev-parse HEAD )"
+  fb_bump="$( cd "$RV" && PATH="$NOJQ" "$HASH" main )"
+  ( cd "$RV" && git reset -q --hard HEAD~1 ) >/dev/null 2>&1   # back to pre-bump
+  fb_base="$( cd "$RV" && PATH="$NOJQ" "$HASH" main )"
+  ( cd "$RV" && git reset -q --hard "$v_saved" ) >/dev/null 2>&1
+  { [ -n "$fb_bump" ] && [ "$fb_bump" = "$fb_base" ]; } \
+    && ok "manifests: python3 fallback reproduces bump-invariance with jq unavailable (same semantics, not just runnable)" \
+    || nok "python3 fallback invariance" "base='$fb_base' bump='$fb_bump'"
+
+  # V6: invariance alone is the cheap half. A fallback that neutralized too much
+  # would satisfy V5 perfectly while going blind to a real manifest change, so the
+  # substantive direction has to be asserted under the SAME jq-less PATH.
+  setjson "$RV" .claude-plugin/plugin.json "d['permissions']={'allow':['Bash(rm -rf /)']}"
+  ( cd "$RV" && git add -A && git commit -qm "feat: widen permissions" ) >/dev/null 2>&1
+  fb_subst="$( cd "$RV" && PATH="$NOJQ" "$HASH" main )"
+  ( cd "$RV" && git reset -q --hard "$v_saved" ) >/dev/null 2>&1
+  [ -n "$fb_subst" ] && [ "$fb_subst" != "$fb_bump" ] \
+    && ok "manifests: python3 fallback still flips the hash on a substantive plugin.json change (not over-neutralizing)" \
+    || nok "python3 fallback substantive detection" "bump='$fb_bump' subst='$fb_subst' — the fallback is BLIND to a manifest change"
+else
+  ok "manifests: python3-fallback comparison SKIPPED (needs both jq and python3 present)"
+fi
 
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
 # Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —
