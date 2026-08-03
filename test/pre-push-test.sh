@@ -41,7 +41,10 @@ pp "$R" "refs/heads/g $SHA_G refs/heads/g $RSHA"$'\n'
 
 # P2: ungated ref -> blocked, and the message names it
 pp "$R" "refs/heads/bad $SHA_BAD refs/heads/bad $RSHA"$'\n'
-{ [ "$RC" = 1 ] && printf '%s' "$OUT" | grep -q 'bad'; } \
+# `case`, not `printf | grep -q`: with the `set -o pipefail` above, grep -q exits on
+# first match and printf takes SIGPIPE, so the pipeline reports failure on input it
+# just matched. Same defect this suite's sibling carried; see denies() in gate-test.sh.
+{ [ "$RC" = 1 ] && case "$OUT" in *bad*) true ;; *) false ;; esac; } \
   && ok "ungated ref -> push BLOCKED (exit 1, names the ref)" || nok "ungated blocked" "rc=$RC out=$OUT"
 
 # P3: multi-ref, one ungated -> the whole push is blocked (git enumerates the refs for us)

@@ -10,39 +10,26 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Gate — test suite
 
-- **`test/gate-test.sh` assertion "dep add re-gate denied" (S7, `test/gate-test.sh:398`)
-  intermittently FAILS OPEN — it allowed a push that should have been denied.** Seen
-  twice inside one ~5-minute window while building 0.7.2, then not once in 22+
-  consecutive runs since. The failure direction is what makes this worth a P1: the
-  companion assertion on the same line pair (`dependency added -> hash CHANGED`)
-  passed both times, so the hash genuinely changed and the hook allowed the push
-  anyway. If that reflects real hook behaviour rather than a test artifact, it is a
-  false PASS — the exact class the pre-push hook exists to prevent.
-
-  Not attributed, and deliberately not claimed as pre-existing. What was ruled out:
-  the assertion and its fixture are untouched by 0.7.2 and run before every line this
-  release adds; `forgeward-gate-check.sh` never invokes `forgeward-detect-base.sh`, so
-  half the release cannot reach it; an isolated replay of the exact S5→S7 sequence was
-  clean 15/15; the suite was clean 6/6 with the 0.7.1 `diff-hash` swapped in and 6/6
-  with the 0.7.2 one, i.e. the swap did not move it; and 4 suites run concurrently were
-  clean 4/4, so it is not the obvious load sensitivity.
-
-  Master was then run 17 times and was clean 17/17. Read that carefully rather than as
-  an acquittal: at the observed ~8% rate, 17 clean runs still has a ~24% chance of
-  happening anyway, so it lowers the odds that master shares the flake without
-  excluding it. Against that, the mechanism argues the other way — in the `S7` fixture
-  repo there is no `.claude-plugin/`, so 0.7.2's `diff-hash` change is provably a
-  no-op there (V4 pins byte-identical output), and a fail-OPEN requires the recomputed
-  hash to MATCH a stale marker, which nothing in this release can produce. Two data
-  points, wide error bars, and a mechanism that does not fit. Unresolved on purpose.
-
-  Next step for whoever picks this up: instrument S7 to dump the marker, both hashes
-  and the raw hook output on failure, and leave the suite looping. An instrumented
-  copy must live inside the repo tree or set `PLUGIN` explicitly — the suite derives
-  `PLUGIN` from `BASH_SOURCE`, so a copy in /tmp silently reviews the wrong scripts.
-  (surfaced while building 0.7.2, 2026-08-03) **Priority:** P1
+- **`marker_get` discards jq's exit status the same way `json_get` used to.** A failed
+  jq yields an empty `base`/`diff_hash`, `is_fresh()` returns 1, and the branch reads as
+  ungated. That direction is fail-CLOSED — a spurious re-gate, never a missed one — so
+  it is not the bug `json_get` was, and it is deliberately left alone rather than
+  widening a security-relevant diff. Worth aligning for consistency: same three-line
+  fallback to python3. (found while fixing the P1 fail-open, 2026-08-03) **Priority:** P3
 
 ## Gate — publish matcher
+
+- **`strip_quoted`'s `st==2` backslash branch does `i += 2` with no bounds check**, so a
+  dangling backslash at the true end of an unterminated double-quoted string emits two
+  characters for one (`echo "\` → 8 out of 7). Found by fuzzing the awk during the 0.7.3
+  security review (600k+ trials across gawk/mawk/busybox). NOT fixed, deliberately, and
+  the reasons are worth keeping: the deviation is only ever in the LONGER direction so
+  the residue-length guard is not defeated by it; the only input that reaches it is
+  already a bash syntax error that executes nothing, a shape the matcher's own header
+  already classifies as "NOT a gap"; and `DECISIONS.md` records three separate desyncs
+  caused by editing this scanner, so a cosmetic correctness fix here is a poor trade
+  against that history. Revisit only if the length arithmetic ever needs to be exact
+  rather than one-sided. (0.7.3 security review, 2026-08-03) **Priority:** P3
 
 - **`git push origin --delete <branch>` is denied when the current branch has no
   marker.** Deleting a ref is still a push, and the matcher deliberately does not
@@ -168,6 +155,98 @@ write-once and effectively gone after merge, which is why they live here now.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P1: the intermittent "fail-open" reproduces from a false negative in the test
+  harness's own `denies()` helper, not from the gate.** Fixed 2026-08-03.
+
+  Scope of the claim, stated precisely because the whole item was a lesson in this:
+  the harness defect is PROVEN and it produces exactly the observed symptom. The two
+  original 0.7.2 sightings were not instrumented, so they cannot be retroactively
+  attributed with certainty — what can be said is that every detail recorded about
+  them fits this mechanism, and no evidence now points at the gate. The S7 forensics
+  block stays in the suite precisely so a genuine gate fail-open, if one ever occurs,
+  is identified in one run instead of costing another investigation.
+
+  `denies()` was `printf '%s' "$1" | grep -q '...'` under this suite's `set -o
+  pipefail`. `grep -q` exits the instant it matches, closing the read end while printf
+  may still be writing; printf takes SIGPIPE and exits 141; pipefail promotes that to
+  the pipeline's status. The helper reports NO-DENY on output it just matched. Every
+  deny assertion in the file ran through it, so a scheduling hiccup surfaced as an
+  intermittent GATE fail-open — which is why staring at the gate never explained it.
+
+  Observed, not inferred: `PIPESTATUS=(141 0)` (printf killed, grep MATCHED) 7 times in
+  20000 under fork pressure and 0 times on a quiet box — `test/denies-race-probe.sh`.
+  A 3000-iteration run of `test/matcher-flake-probe.sh --load 16` reproduced 4 "fail
+  opens" whose captured hook output was a perfectly well-formed DENY; that captured
+  output is what redirected the investigation away from the gate.
+
+  It fits every recorded data point: the fail direction; two sightings inside one
+  ~5-minute window (a load spike); the isolated S5→S7 replay clean 15/15 on a quiet
+  box; 17/17 and 22+ clean runs likewise; and the companion `dependency added -> hash
+  CHANGED` assertion passing both times, because that one is a pure bash string
+  comparison with no pipe in it. The earlier estimate of a "~8% rate" was measuring
+  machine load, not the gate.
+
+  Fix: `case` glob, which forks nothing and so can neither lose the race nor fail to
+  exec. Applied to `denies()` in `test/gate-test.sh`, the same shape in the P2
+  assertion of `test/pre-push-test.sh`, and both new probes. (References here are by
+  symbol, not by line: the `test/gate-test.sh:398` in the original entry was stale
+  before it was ever acted on.) A repo-wide sweep found no other
+  instance; product code's one `grep -q` reads a FILE, not a pipe. The general rule:
+  only an EARLY-EXIT reader (`grep -q`, `head`) can orphan its writer — `jq` and
+  `python3` drain to EOF, so those pipelines are unaffected.
+
+  Verification: the replacement measured 0 misses in 20000 under the same load that
+  produced 7 with the old form. The full suite then ran 40 times under 12 fork-pressure
+  workers (sustained loadavg ~20, ~4900 assertions) with zero failures — a harsher
+  condition than the one that produced the single pre-fix failure, which landed on a
+  comparatively quiet box. Record the load, not just the run count: a clean sweep on an
+  idle machine is the weak version of this experiment, which is why
+  `test/s7-flake-loop.sh` now takes `FORGEWARD_S7_LOAD`. (2026-08-03)
+
+- **The gate DID have a real fail-open, found while chasing the above, and it is not
+  the one that was being chased.** Two silent `exit 0` paths in
+  `forgeward-gate-check.sh`, both deterministic under a helper that FAILS AT RUNTIME:
+
+  1. `json_get` ran `jq -r ... 2>/dev/null` with stderr AND exit status discarded, so
+     "jq failed to run" and "the field is absent" were the same observation. The empty
+     command died at the pre-filter and the hook exited 0 without ever reading a
+     marker. `command -v jq` still succeeded, so the python3 branch was never reached:
+     being INSTALLED was treated as being FUNCTIONAL. Now the status is checked and a
+     failed jq falls through to python3.
+  2. The `strip_quoted` residue guard rescued only a COMPLETELY EMPTY result, so a
+     TRUNCATED one was scanned as though whole and the verb could fall off the end of
+     it. A7 pins awk MISSING (exit 127 → empty → rescued); nothing pinned awk
+     truncating. Now the residue is trusted only if it is at least as long as the
+     input, which the one-for-one substitution in `strip_quoted` guarantees.
+
+  Never observed in the wild — found by reading, then demonstrated deterministically
+  with `test/helper-failure-probe.sh` (three shapes, all ALLOW before, all DENY after).
+  Pinned by A13/A14/A15.
+
+  The length guard in (2) carries its own risk in the opposite direction: if
+  `strip_quoted` ever stops substituting one-for-one, the fallback fires on ordinary
+  commands and merely-MENTIONED verbs start denying. A16 pins that, covering the
+  multi-line and trailing-newline shapes most likely to break the assumption and not
+  covered anywhere else. A trailing newline survives the round trip only because the
+  command substitution that EXTRACTS the command strips it too, so both sides shorten
+  together — asserted rather than reasoned about, since that symmetry could quietly
+  change.
+
+  A16 was mutation-tested rather than merely observed passing: relaxing the guard to
+  `-le` (always fall back to raw text) turns it red along with A2/A4/A5/A10/A11/A12,
+  so the invariant is pinned from several directions and the new test is not vacuous.
+
+  The guard's comment originally claimed `strip_quoted` "substitutes one-for-one,
+  nothing is ever dropped". The 0.7.3 security review fuzzed that (600k+ trials,
+  gawk/mawk/busybox) and FALSIFIED it: two shapes return a LONGER residue — a dangling
+  backslash ending an unterminated double-quote, and multi-byte UTF-8 inside quotes
+  under a byte-oriented awk (17 out of 15). Nothing returns a SHORTER one except real
+  awk failure. The guard only ever needed NEVER-SHORTER, so it stands; the comment now
+  states that property instead of the false stronger one, and A17 pins the
+  byte-oriented-awk behaviour (skipped when neither mawk nor busybox is installed, so
+  the suite's "no extra test runtime" footprint is unchanged).
+  Suite 125/125, pre-push 14/14. (2026-08-03)
 
 - **`forgeward-detect-base.sh` paid a `gh repo view` network call on every run.**
   Fixed in 0.7.2: step 1 is guarded on a remote carrying a network URL, so scratch

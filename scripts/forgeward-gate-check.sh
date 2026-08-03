@@ -39,18 +39,36 @@ _HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
 # boundary — it made the line-continuation join (below) a no-op on Git Bash while passing
 # on WSL, which is the kind of difference only running both platforms catches. jq does
 # not do this, so the bug only ever appeared on a machine without jq.
+#
+# jq's EXIT STATUS is checked, and that is load-bearing. `jq -r '.x // empty'` prints
+# nothing for an absent field and exits 0, so discarding the status made "jq failed to
+# run" and "the field is not there" the same observation. A failed jq therefore handed
+# back an empty command, which died at the pre-filter below, and the hook exited 0
+# without ever looking at a marker — a silent fail-OPEN on a real publish. `command -v
+# jq` still succeeded, so the python3 branch was never reached: being INSTALLED was
+# treated as being FUNCTIONAL. Deterministic under a jq that exits 1 or 127 (tests
+# A13/A14), and the failure this layer's header says it must never take.
+#
+# The pipe itself is safe here even under pipefail, unlike the one that used to be in
+# the test harness's denies(): jq and python3 both drain stdin to EOF, so the writer is
+# never orphaned. Only an EARLY-EXIT reader (`grep -q`, `head`) can SIGPIPE its writer.
 json_get() {
+  local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null
-  else
-    printf '%s' "$input" | python3 -c 'import json,sys
+    if _out="$(printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null)"; then
+      printf '%s' "$_out"
+      return 0
+    fi
+    : # jq is installed but did not run — fall through and let python3 answer
+  fi
+  [ "$_HAVE_PY" = 1 ] || return 1
+  printf '%s' "$input" | python3 -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(sys.stdin)
     for k in path: d=d[k]
     sys.stdout.buffer.write((d if isinstance(d,str) else "").encode("utf-8","surrogateescape"))
 except Exception: pass' "$1"
-  fi
 }
 
 # Writes bytes for the same reason as json_get above. The values here are single-line, so
@@ -392,7 +410,34 @@ _pub_re='(^|[^A-Za-z0-9_-])(git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+crea
 case "$_cmd_j" in
   *'$('*|*'${'[[:space:]]*|*'${|'*|*'`'*) _scan="$_cmd_j" ;;
   *) _scan="$(strip_quoted "$_cmd_j")"
-     [ -n "$_cmd_j" ] && [ -z "$_scan" ] && _scan="$_cmd_j" ;;
+     # Trust the residue only if it is AT LEAST AS LONG as what went in. The property
+     # relied on is NEVER-SHORTER, and only that. An earlier version of this comment
+     # said "one-for-one, nothing is ever dropped" — that is FALSE, and a fuzz of the
+     # awk (600k+ trials, gawk/mawk/busybox) found two shapes where the residue comes
+     # back LONGER:
+     #   - a dangling backslash at the true end of an unterminated double-quoted string
+     #     (the st==2 branch does `i += 2` with no bounds check), e.g. `echo "\` → 8
+     #     chars out of 7 in;
+     #   - multi-byte UTF-8 inside quotes under a BYTE-oriented awk (mawk, busybox),
+     #     where one character is blanked into several spaces while bash counts
+     #     characters, e.g. 17 out of 15.
+     # Longer is harmless here — the guard does not fire and the residue is used, which
+     # is the intended path. Nothing found produced a SHORTER residue except genuine awk
+     # failure, truncation, or absence, which is exactly what this guard exists to catch.
+     #
+     # A SHORTER residue therefore means awk truncated: it died mid-write, or something
+     # on PATH answered that does not implement the program. The previous guard rescued
+     # only a COMPLETELY empty residue, so a partial one was scanned as though it were
+     # whole and the verb could fall off the end of it. That is a silent fail-OPEN, and
+     # it is deterministic under a truncating awk (test A15). Falling back to raw text
+     # over-denies at worst, which is the direction this layer requires.
+     #
+     # This subsumes the empty case (0 is shorter than any non-empty input) and is a
+     # no-op for empty input. If a future edit makes the residue shorter for ordinary
+     # input, every command starts taking the raw-text path and the quoted-mention ALLOW
+     # assertions (A2/A4/A16) go red — so the property is pinned from the other side,
+     # not merely asserted in this comment.
+     [ "${#_scan}" -lt "${#_cmd_j}" ] && _scan="$_cmd_j" ;;
 esac
 
 # Case-insensitively, because the PROGRAM name resolves case-insensitively on an
