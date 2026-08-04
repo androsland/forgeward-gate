@@ -26,7 +26,24 @@ pretool() { # pretool <repo> <command>  -> stdout = hook decision JSON (or empty
 expansion() { # expansion <repo>  -> exit code (0 allow, 2 block)
   printf '{"cwd":"%s"}' "$1" | "$CHECK" expansion >/dev/null 2>&1; echo $?
 }
-denies()  { printf '%s' "$1" | grep -q '"permissionDecision": "deny"'; }
+# Fork-free ON PURPOSE — this is a correctness fix, not a speed one.
+#
+# This was `printf '%s' "$1" | grep -q '...'` under the `set -o pipefail` above, and
+# that combination silently inverts the answer. `grep -q` exits the instant it
+# matches, closing the read end while printf may still be writing; printf then takes
+# SIGPIPE and exits 141; pipefail promotes that to the pipeline's status. The helper
+# reports NO-DENY on output it just successfully matched.
+#
+# Observed, not theorised: PIPESTATUS=(141 0) — printf killed, grep matched — 7 times
+# in 20000 under fork pressure and 0 times on a quiet box (test/denies-race-probe.sh).
+# Every deny assertion in this file ran through here, so a scheduling hiccup surfaced
+# as an intermittent GATE fail-open that no amount of staring at the gate could
+# explain. That is the P1 in TODOS.md, and it was never in the gate at all.
+#
+# A `case` glob forks nothing, so it can neither lose that race nor fail to exec.
+# Only an EARLY-EXIT reader can orphan its writer this way, which is why `jq` and
+# `python3` pipelines elsewhere (they drain to EOF) are not affected.
+denies()  { case "$1" in *'"permissionDecision": "deny"'*) return 0 ;; *) return 1 ;; esac; }
 
 # --- scratch repo on the same shape as the demo (main + feature) ---
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forgeward-test.XXXXXX")"
@@ -375,6 +392,135 @@ else
       "issued=$(denies "$noawk_issued" && echo deny || echo allow) mention=$(denies "$noawk_mention" && echo deny || echo allow) other=${noawk_other:-empty}"
 fi
 
+# A13/A14/A15: a helper that FAILS AT RUNTIME must not open the gate.
+#
+# A7 above covers awk MISSING — exit 127, empty output, rescued by the raw-text
+# fallback. It does not cover the two neighbouring shapes, and both were observed
+# failing OPEN when probed directly (test/helper-failure-probe.sh):
+#
+#   - jq PRESENT but exiting non-zero. json_get discards stderr AND exit status, so
+#     "jq failed to run" and "the field is absent" are the same observation. The
+#     resulting empty command dies at the pre-filter and the hook exits 0 without
+#     ever looking at a marker. `command -v jq` still succeeds, so the python3
+#     branch is never reached — being installed is treated as being functional.
+#   - awk returning TRUNCATED but non-empty output. The existing guard rescues only
+#     EMPTY output (`[ -z "$_scan" ]`), so a partial residue is scanned as if it were
+#     the whole command and the verb can fall off the end of it.
+#
+# The direction is the entire point: both are UNDER-denial, which this file's own
+# header calls the one failure this layer must never take ("a reworded command costs
+# a retry, a missed gate does not announce itself"). Runs here, before S5 writes a
+# marker, so a correct match is observable as a deny.
+#
+# Why runtime failure rather than absence is worth pinning separately: absence is
+# stable and gets noticed, while a transient failure under fork or memory pressure
+# is silent, self-healing, and looks exactly like a flaky test.
+shadow_of() { # shadow_of <name> <script-body-file>  -> dir to prepend to PATH
+  local d="$TMP/shadow-$1"; mkdir -p "$d"
+  cp "$2" "$d/$1"; chmod +x "$d/$1"; printf '%s' "$d"
+}
+hook_with() { # hook_with <path-prefix> <cmd> -> hook stdout
+  printf '{"cwd":"%s","tool_input":{"command":"%s"}}' "$R" "$2" | PATH="$1:$PATH" "$CHECK" pretooluse
+}
+
+printf '#!/bin/sh\nexit 1\n' > "$TMP/_jqfail"
+JQ_FAIL="$(shadow_of jq "$TMP/_jqfail")"
+out_jqfail="$(hook_with "$JQ_FAIL" "git push")"
+denies "$out_jqfail" \
+  && ok "A13: jq present but exiting 1 -> still DENIED (a failed helper is not read as an absent field)" \
+  || nok "A13: publish matcher fails OPEN when jq is present but fails at runtime" \
+         "got: ${out_jqfail:-<empty — silent allow>}"
+
+printf '#!/bin/sh\nexit 127\n' > "$TMP/_jq127"
+JQ_127="$(shadow_of jq "$TMP/_jq127")"
+out_jq127="$(hook_with "$JQ_127" "git push")"
+denies "$out_jq127" \
+  && ok "A14: jq present but exiting 127 -> still DENIED" \
+  || nok "A14: publish matcher fails OPEN when jq exits 127" \
+         "got: ${out_jq127:-<empty — silent allow>}"
+
+# Emits only the first whitespace-delimited token: truncated, non-empty, exit 0 —
+# precisely the residue shape the `[ -z "$_scan" ]` guard cannot see.
+cat > "$TMP/_awkpart" <<'AWKPART'
+#!/bin/sh
+read -r line
+printf '%s\n' "${line%% *}"
+AWKPART
+AWK_PART="$(shadow_of awk "$TMP/_awkpart")"
+out_awkpart="$(hook_with "$AWK_PART" "git push")"
+denies "$out_awkpart" \
+  && ok "A15: awk returning TRUNCATED non-empty output -> still DENIED (partial residue is not trusted)" \
+  || nok "A15: publish matcher fails OPEN when awk truncates its output" \
+         "got: ${out_awkpart:-<empty — silent allow>}"
+
+# A16: the residue-length guard added for A15 must not OVER-deny.
+#
+# That guard falls back to raw text whenever the stripped residue is shorter than the
+# input, which is safe only because strip_quoted substitutes one-for-one. If that ever
+# stops holding for some real shape, the fallback fires on ordinary commands and a
+# merely-MENTIONED verb starts denying — the exact over-denial the quoting design was
+# built to remove. MULTI-LINE input is the shape most likely to break the assumption,
+# since awk works per line and `$( )` strips trailing newlines; those cases are the
+# point of this block, and they are not covered anywhere above.
+#
+# (A trailing newline survives the round trip because the command substitution that
+# EXTRACTS the command strips it too, so both sides shorten together. Asserted rather
+# than reasoned about, because that symmetry is not obvious and could quietly change.)
+matrix "residue-length guard OVER-denies (strip_quoted may have stopped preserving length)" \
+  "publish matcher: the residue-length guard leaves quoted mentions allowed, including across multiple lines, while still denying an issued publish" <<'CASES'
+allow|echo 'the docs say git push first'
+allow|echo hello\necho 'then git push'
+allow|echo 'a git push'\necho 'b git push'
+allow|echo 'see git push'\n
+allow|echo \"it's git push\"
+allow|echo one\necho two
+deny|git push
+deny|echo hi\ngit push
+deny|echo 'about git push'\ngit push
+CASES
+
+# A17: the residue-length guard under a BYTE-oriented awk.
+#
+# The guard compares ${#_scan} with ${#_cmd_j}, both measured by BASH, which counts
+# characters in a UTF-8 locale. mawk and busybox awk are byte-oriented regardless of
+# locale, so a multi-byte character inside quotes is blanked into SEVERAL spaces and
+# the residue comes back LONGER than the input (measured: 17 vs 15). Longer is the
+# safe direction — the guard does not fire — but that is a fact about the awk, not
+# something the guard enforces, so it is asserted rather than assumed.
+#
+# The file header's "identical verdicts under gawk, mawk, and busybox awk" claim
+# predates this guard and covered only the VERDICTS, never the length arithmetic the
+# guard now depends on. Hence a separate case.
+#
+# Skipped when neither alternative awk is installed, so this adds no required tool —
+# the suite still needs only bash, git, sha256sum and jq-or-python3.
+_alt_awks=""
+command -v mawk    >/dev/null 2>&1 && _alt_awks="$_alt_awks mawk"
+command -v busybox >/dev/null 2>&1 && _alt_awks="$_alt_awks busybox"
+if [ -n "$_alt_awks" ]; then
+  _a17_bad=""
+  for _impl in $_alt_awks; do
+    _d="$TMP/awkimpl-$_impl"; mkdir -p "$_d"
+    case "$_impl" in
+      busybox) printf '#!/bin/sh\nexec %s awk "$@"\n' "$(command -v busybox)" > "$_d/awk" ;;
+      *)       printf '#!/bin/sh\nexec %s "$@"\n'     "$(command -v "$_impl")" > "$_d/awk" ;;
+    esac
+    chmod +x "$_d/awk"
+    # A quoted mention carrying multi-byte text must still be ALLOWED (the residue is
+    # longer, the guard stays quiet, the quoted span is blanked as normal)...
+    _m="$(hook_with "$_d" "echo 'the gate — git push — is next'")"
+    [ -z "$_m" ] || _a17_bad="$_a17_bad [$_impl over-denied a multi-byte quoted mention]"
+    # ...and an issued publish alongside multi-byte text must still be DENIED.
+    _i="$(hook_with "$_d" "echo 'note — about git push'\ngit push")"
+    denies "$_i" || _a17_bad="$_a17_bad [$_impl allowed an issued publish]"
+  done
+  [ -z "$_a17_bad" ] \
+    && ok "A17: residue-length guard behaves under byte-oriented awk (${_alt_awks# }) — multi-byte quoted mentions still allowed, issued publishes still denied" \
+    || nok "A17: residue-length guard misbehaves under a byte-oriented awk" "$_a17_bad"
+else
+  ok "A17: byte-oriented awk comparison SKIPPED (needs mawk or busybox present)"
+fi
+
 # S5: PASS marker written -> publish allowed
 "$WRITE" main "privacy" >/dev/null
 out="$(pretool "$R" "git push -u origin feature")"
@@ -390,12 +536,121 @@ h_after="$("$HASH" main)"
 out="$(pretool "$R" "git push")"
 [ -z "$out" ] && ok "after version bump -> git push still ALLOWED (marker survives)" || nok "version bump still allowed" "got: $out"
 
+# --- S7 fail-open forensics (runs ONLY when the assertion below fails) --------
+#
+# HISTORY, so nobody re-chases this: the intermittent S7 "fail-open" that motivated
+# this block was NOT a gate bug. It was denies() above returning a false negative —
+# SIGPIPE plus pipefail — on a hook output that was a perfectly good deny. Fixed at
+# the helper; see TODOS.md "Completed". This block is kept anyway, because a real
+# fail-open is still possible and, if one ever happens, it should not cost another
+# investigation to find out WHICH path allowed the push.
+#
+# forgeward-gate-check.sh has THREE silent-allow exits and only the last is a hash.
+# Named by construct rather than by line number ON PURPOSE — the line numbers in the
+# first draft of this comment were stale within one commit, which is the same way the
+# ":398" in TODOS went stale:
+#
+#   REGEX  `[ "$_pub_hit" = 0 ] || exit 0`
+#          The publish regex missed. Reachable when strip_quoted's awk returns output
+#          that is GARBLED but non-empty. A7 covers only awk exiting 127 (empty ->
+#          raw-text fallback), so that shape is unguarded.
+#   REPO   `git rev-parse --git-dir >/dev/null 2>&1 || exit 0`
+#          stderr is swallowed, so a transient failure fails open with no trace at all.
+#   FRESH  `is_fresh "$b" "HEAD" && exit 0`
+#          The hash-equality path everyone assumed.
+#
+# Every other branch in is_fresh() returns 1 (deny), so FRESH is its only fail-open.
+# The evidence recorded in TODOS argues AGAINST FRESH: the companion assertion on the
+# line above saw the hash genuinely CHANGE on both observed failures. Nobody had
+# instrumented REGEX or REPO. So this dump exists to tell the three apart on the next
+# occurrence, and to say whether the state repeats or the moment was transient.
+s7d() { printf '  # %s\n' "$*"; }
+s7_forensics() { # s7_forensics <hook-stdout> <hook-stderr-file>
+  local out="$1" errf="$2" mdir mfile base stored cur repeat=0 i ln
+  local tracef="$TMP/s7-trace.txt"
+  s7d "===== S7 FAIL-OPEN FORENSICS ====="
+  s7d "when=$(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(uname -sr)"
+  s7d "load=$(cat /proc/loadavg 2>/dev/null || echo n/a)"
+  # squashed to one line: a genuine fail-open gives empty stdout, but anything else
+  # arriving here must not break the `#`-prefixed line format the logs are read with
+  s7d "hook stdout (a deny was expected): $( [ -n "$out" ] && printf '%s' "$out" | tr '\n' ' ' || echo '<EMPTY -- silent allow>' )"
+  s7d "hook stderr: $( [ -s "$errf" ] && tr '\n' ' ' < "$errf" || echo '<empty>' )"
+
+  # --- marker, read the same two ways the hook can read it (P2: jq and python3
+  # canonicalise differently, so a divergence here is itself a finding) ---
+  mdir="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  mfile="$mdir/forgeward-gate-markers/$(git -C "$R" rev-parse --abbrev-ref HEAD 2>/dev/null).json"
+  s7d "marker path: $mfile (exists=$( [ -f "$mfile" ] && echo yes || echo NO ))"
+  if [ -f "$mfile" ]; then
+    while IFS= read -r ln; do s7d "  marker| $ln"; done < "$mfile"
+    if command -v jq >/dev/null 2>&1; then
+      s7d "jq      base=$(jq -r '.base // empty' "$mfile" 2>/dev/null) diff_hash=$(jq -r '.diff_hash // empty' "$mfile" 2>/dev/null)"
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+      s7d "python3 base=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("base",""))' "$mfile" 2>/dev/null) diff_hash=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("diff_hash",""))' "$mfile" 2>/dev/null)"
+    fi
+    base="$(jq -r '.base // empty' "$mfile" 2>/dev/null)"
+    stored="$(jq -r '.diff_hash // empty' "$mfile" 2>/dev/null)"
+    [ -n "$base" ] || base="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("base",""))' "$mfile" 2>/dev/null)"
+    [ -n "$stored" ] || stored="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("diff_hash",""))' "$mfile" 2>/dev/null)"
+  fi
+
+  # --- the discriminator: did the hook's own freshness comparison actually match? ---
+  cur="$("$HASH" "${base:-main}" HEAD 2>&1)"
+  s7d "test-side  h_before=$h_before"
+  s7d "test-side  h_dep   =$h_dep"
+  s7d "marker     stored  =${stored:-<none>}"
+  s7d "recomputed cur     =$cur   (base=${base:-main} tip=HEAD)"
+  if [ -n "$stored" ] && [ "$stored" = "$cur" ]; then
+    s7d "VERDICT: stored == recomputed -> this IS the FRESH (is_fresh) path"
+  else
+    s7d "VERDICT: stored != recomputed -> is_fresh could NOT have returned true;"
+    s7d "         the allow came from REGEX (publish regex missed) or REPO (rev-parse failed)"
+  fi
+
+  # --- git state, in case the repo itself is what went sideways (the REPO exit) ---
+  s7d "branch=$(git -C "$R" rev-parse --abbrev-ref HEAD 2>&1) head=$(git -C "$R" rev-parse --short HEAD 2>&1)"
+  s7d "git-dir=$(git -C "$R" rev-parse --git-dir 2>&1) common=$(git -C "$R" rev-parse --git-common-dir 2>&1)"
+  s7d "status: $(git -C "$R" status --porcelain 2>&1 | tr '\n' ';')"
+  while IFS= read -r ln; do s7d "  log| $ln"; done < <(git -C "$R" log --oneline -3 2>&1)
+
+  # --- transient or sticky? the single most useful bit for the next reader ---
+  for i in 1 2 3 4 5; do
+    denies "$(pretool "$R" "git push")" && repeat=$((repeat+1))
+  done
+  s7d "immediate re-runs: $repeat/5 denied  (5/5 => one-shot transient; 0/5 => sticky state)"
+
+  # --- traced re-run. /usr/bin/env bash on purpose: that is what the hook's shebang
+  # resolves to (linuxbrew 5.3 here, NOT /bin/bash 5.1), and tracing the wrong
+  # interpreter answers a question about a different program. ---
+  printf '{"cwd":"%s","tool_input":{"command":"%s"}}' "$R" "git push" \
+    | /usr/bin/env bash -x "$CHECK" pretooluse >/dev/null 2>"$tracef"
+  s7d "--- traced re-run, last 40 xtrace lines (shows the exact exit line) ---"
+  while IFS= read -r ln; do s7d "  x| $ln"; done < <(tail -40 "$tracef" 2>/dev/null)
+
+  s7d "toolchain: awk=$(command -v awk 2>/dev/null || echo MISSING) [$(awk --version 2>&1 | head -1)]"
+  s7d "toolchain: jq=$(command -v jq 2>/dev/null || echo absent) python3=$(command -v python3 2>/dev/null || echo absent)"
+  s7d "toolchain: env bash=$(/usr/bin/env bash --version 2>/dev/null | head -1)"
+  s7d "awk liveness on the real input: '$(printf '%s' 'git push' | awk '{print}' 2>&1)'"
+  s7d "===== END FORENSICS ====="
+}
+
 # S7: dependency added -> hash flips -> denied (re-gate forced)
 python3 -c "import json;d=json.load(open('package.json'));d['dependencies']['expresss']='^4.0.0';open('package.json','w').write(json.dumps(d,indent=2)+chr(10))"
 git add -A; git commit -qm "feat: add expresss dep"
 h_dep="$("$HASH" main)"
 [ "$h_before" != "$h_dep" ] && ok "dependency added -> hash CHANGED" || nok "dep add hash changed" "still $h_dep"
-denies "$(pretool "$R" "git push")" && ok "dependency added after PASS -> git push DENIED (re-gate)" || nok "dep add re-gate denied"
+# The call itself stays byte-for-byte what pretool() does, minus a stderr redirect —
+# the flake is timing-shaped, so the observed invocation must not be perturbed. All
+# tracing happens in the failure branch, after the fact.
+s7_err="$TMP/s7-hook.err"
+s7_out="$(printf '{"cwd":"%s","tool_input":{"command":"%s"}}' "$R" "git push" | "$CHECK" pretooluse 2>"$s7_err")"
+if denies "$s7_out"; then
+  ok "dependency added after PASS -> git push DENIED (re-gate)"
+else
+  nok "dep add re-gate denied" "FAIL-OPEN reproduced — forensics follow"
+  s7_forensics "$s7_out" "$s7_err"
+fi
 
 # S8: new source code after marker -> stale -> denied
 git checkout -q -- . 2>/dev/null; git reset -q --hard HEAD~1   # drop the dep commit, back to PASS state
