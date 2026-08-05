@@ -299,6 +299,143 @@ commits ago is invisible.
 
 ---
 
+## Later findings (same session, after the Q1/Q2 answer above)
+
+These came out of pushing on the Q2 recommendation and are recorded here rather than
+folded into the sections above, because they arrived later and one of them is a live
+coverage gap in shipped code rather than a proposal.
+
+### 1. Mutual deferral — the axis each side believes the other owns
+
+Grepping specialist skip reasons across the fleet log turned up this, on commit `04a04fb`:
+
+```
+"maintainability": { "dispatched": false, "reason": "covered-by-forgeward-and-coverage-audit" }
+"security":        { "dispatched": false, "reason": "covered-by-forgeward" }
+"data-migration":  { "dispatched": false, "reason": "covered-by-forgeward-security" }
+```
+
+gstack's review skipped maintainability **because it believed forgeward covered it**.
+forgeward's README skips code-quality **because it believes `/review` covers it**. Both
+sides deferred to the other by name, in writing, on a real diff — and the axis ran
+nowhere. That is the `/cso` shape exactly: not "the tool lacks the axis" but "each side
+assumed the other owned it," ending in a green result.
+
+**Scope this honestly: 2 of 22 review entries.** It is an existence proof of the failure
+mode, not a measured rate. Full reason tally across the fleet: `scope` ×18,
+`small-diff` ×2, `covered-by-forgeward*` ×3, `covered-by-coverage-audit` ×1.
+
+### 2. `/review` does not bump VERSION — a cheaper handoff than `/ship` exists
+
+Verified by full grep of `review/SKILL.md`: every `VERSION` occurrence is a read or a
+display string — install detection at 121, unrelated `gbrain --version` at 482, and the
+advisory queue check at 1130–1146 reading via `git show HEAD:VERSION` and
+`git show origin/$BASE:VERSION`. The one helper the grep could not see,
+`bin/gstack-next-version`, writes only to `process.stdout` (line 506). **No write path.**
+
+This matters because version bumping is the whole reason forgeward refuses the `/ship`
+handoff (see [[forgeward-no-ship-handoff]] — `/ship` would re-bump). That objection does
+**not** apply to `/review`. The handoff this repo rejected is available in a cheaper form.
+
+Constraint on using it: `/review` holds `Edit`/`Write` and runs Fix-First auto-fix, so it
+cannot run *inside* the read-only gate — the workspace guard would flag it, correctly.
+Correct order is **`/review` first, then gate**, so the marker pins the post-fix state and
+nothing goes stale.
+
+### 3. forgeward's standalone posture (no gstack installed)
+
+The plugin is *defined* as a delta against gstack — README line 7 ("a conformance gate
+for gstack"), and the reviewer table's third column is literally "Why it's here (not
+redundant with gstack)". **Scoping by delta means every deferral becomes a hole when the
+other side is absent.** Shipped today:
+
+- **`supply-chain-reviewer` explicitly declines CVE coverage.** Verbatim: *"gstack's
+  `/cso` Phase 3 already covers dependency CVEs, install-scripts, and lockfile integrity
+  — do NOT re-do those."* No gstack → **nobody checks dependency CVEs**, and the reviewer
+  returns PASS. Most severe of these: CVE scanning is table stakes and the user has been
+  told the axis is handled.
+- **README line 45** claims code quality is covered by `/review`. It is not.
+- **README line 336** advises running `/cso` for the deep audit — a no-op.
+- **The gate's Step 3 hands off to `/ship`.** Whether that degrades gracefully or
+  hard-fails without gstack is **untested** — flagged as likely-broken, not confirmed.
+
+Gate mechanics themselves carry **no** gstack dependency (verified): `hooks/` and
+`scripts/` reference gstack only in comments and accommodations —
+`forgeward-diff-hash.sh` excludes `VERSION`/`CHANGELOG`/`TODOS.md` so gstack's post-gate
+bookkeeping cannot invalidate a marker, and the expansion-mode message names `/ship`.
+Nothing invokes gstack; nothing fails without it. Those exclusions stay inert standalone.
+
+**The fork:**
+
+- **Option A — declare gstack a hard dependency.** Honest, zero new branches, matches the
+  README's existing framing. Cost: forecloses adoption by anyone who wants only the six
+  reviewers, which do work standalone.
+- **Option B — conditional deferral.** Every "gstack covers this" becomes "gstack covers
+  this *when present*." One extra branch per deferral. **Recommended**, because the
+  gate's value genuinely does not require gstack. A is legitimate if the branches are
+  unattractive to maintain; what is not acceptable is leaving it implicit.
+
+**Tiers after B:**
+
+| Tier | What | Standalone? |
+| --- | --- | --- |
+| Core | 6 reviewers, conditional firing, posture classification, workspace guard, marker, pre-push enforcement | Unconditional — zero gstack dependency |
+| Falls back | dependency CVEs / install scripts / lockfile integrity — deferred to `/cso` when present, done by `supply-chain-reviewer` when not | Yes — the point of B |
+| Needs a partner tool | code quality; deep whole-repo audit | **No** — forgeward does not own these |
+| Needs gstack specifically | the one-motion `/ship` handoff on all-PASS | No — push and PR by hand |
+
+So after B the honest statement is **not** "not fully operational." It is: *the gate is
+fully operational standalone; one axis (quality) and one convenience (the handoff) come
+from a partner tool.* Note the bottom row is already how this repo runs — the standalone
+experience and the maintainer's own path are the same.
+
+**Two shapes detection must serve:** (a) a plain Claude Code user with no gstack who
+installed forgeward on its own; (b) gstack present but skills renamed — README line 57
+notes custom `--prefix` install variants, so detection must handle prefixed names, not a
+literal `/cso`.
+
+**Non-goal — must NOT fire on:** a repo covering the axis another way (Dependabot/Snyk
+for CVEs, a CI SAST job, a different review tool). If config names a substitute, stay
+silent. A disclosure that repeats after being answered is nagging, and nagging gets gates
+disabled.
+
+**Structural blind spot:** it detects the *tool*, never whether the tool is *configured
+to run*. gstack installed with Codex reviews disabled, or `/cso` never once invoked,
+looks identical to gstack actively covering the axis. Presence, not diligence — the same
+limit as the review-ran check, and it must be stated in both.
+
+### 4. Option B's cost: make the marker self-describing
+
+B makes coverage **environment-dependent** — the same plugin at the same version checks
+different things on two machines. For most gates that is tolerable; here it is sharper,
+because the marker *is* the product, and under B a PASS means something slightly
+different depending on what was installed when it was written.
+
+Fix, and it belongs inside B rather than after it: **record the detected environment in
+the marker.** It already carries `fired`; adding what the gate could and could not see
+makes "why did this PASS when that one FAILed" answerable from the artifact instead of
+from memory, and turns the coverage variance from invisible into auditable. Same
+principle as the rest of this document, moved from the README into the thing that
+outlives the run.
+
+### 5. The review-ran check (design, if built)
+
+Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
+it mechanically possible: entries carry `commit`, per-specialist `dispatched` + `reason`,
+`quality_score`, and per-finding `fingerprint`/`severity`/`action`.
+
+- Match on `skill:"review"` + `commit` + quality specialists dispatched. **Treat a
+  missing `via` as standalone**, never as malformed.
+- **Warn, do not block, on a first version** — its input is a skippable prompt step, so
+  blocking manufactures false FAILs against people who did review.
+- Key off a *configured* artifact in `.forgeward/config.yml`, not gstack specifically.
+  Absent config: disclose once, then stay silent.
+
+Why it beats a quality reviewer: remediation is bounded and always achievable ("run
+`/review`") rather than "refactor this module"; the finding is binary, so no taste; it
+duplicates nothing; and it breaks the circular deferral in finding 1, because forgeward
+stops claiming coverage it does not have.
+
 ## Scope of the evidence vs scope of the fix
 
 Stated explicitly, because a fix that undershoots its own evidence reads as full coverage.
@@ -367,8 +504,23 @@ rules into `security-reviewer` Step 3 remains a legitimate answer.
   failure-handling sliver. If the reviewer is not built, at minimum say the delegation is
   conditional on taking the `/ship` handoff.
 
+### Urgent — a live gap in shipped code, not a proposal
+
+- **`supply-chain-reviewer` returns PASS without checking CVEs when gstack is absent.**
+  Make the deferral conditional. This is the one item here that is a coverage hole in
+  something already installed on other people's machines, and it should move ahead of
+  both proposed axes.
+
 ### TODOS.md
 
+- **Standalone posture (Option B).** Detect gstack at gate time; when absent, disclose in
+  the firing decision exactly which axes are unowned as a consequence. Correct README
+  lines 45 and 336. Test whether Step 3's `/ship` handoff degrades or hard-fails without
+  gstack — currently unknown.
+- **Record the detected environment in the pass marker**, so coverage variance under B is
+  auditable from the artifact.
+- **The review-ran check**, warn-only, keyed off a configured artifact — design in
+  [Later findings §5](#5-the-review-ran-check-design-if-built).
 - **`error-path-reviewer`, pending a base-rate measurement.** Carry the incident
   (`json_get`, fixed in #11, live across PRs #2–#10 on green markers), the four rules,
   and the decision rule: **≥1 true High per 5 PRs → build it blocking; below that → fold

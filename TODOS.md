@@ -114,6 +114,97 @@ write-once and effectively gone after merge, which is why they live here now.
   would not close it — a spoofed binary can print anything. In the script header as
   a blind spot. (PR #6, sixth security pass, 2026-08-01) **Priority:** —
 
+## Standalone posture (no gstack installed)
+
+Full analysis in `docs/axis-proposals.md` → "Later findings" §3.
+
+- **`supply-chain-reviewer` returns PASS without ever checking dependency CVEs when
+  gstack is absent.** The agent defers by name — *"gstack's `/cso` Phase 3 already covers
+  dependency CVEs, install-scripts, and lockfile integrity — do NOT re-do those"* — so
+  with no `/cso` present nobody checks them and the reviewer passes clean. This is a live
+  coverage hole in shipped code affecting installs on machines we never see, not a
+  proposal. Fix: make the deferral conditional on `/cso` being detected. **Priority:** P1
+- **forgeward is scoped as a delta against gstack, so every deferral is a hole when
+  gstack is absent.** README line 7 defines it as "a gate for gstack" and the reviewer
+  table's third column is "why it's here (not redundant with gstack)". Decide Option A
+  (declare gstack a hard dependency) or Option B (conditional deferral — recommended,
+  because the six reviewers do work standalone). What is not acceptable is leaving it
+  implicit. Gate mechanics themselves are verified gstack-free: `hooks/` and `scripts/`
+  reference it only in comments and in `forgeward-diff-hash.sh`'s cosmetic-file
+  exclusions, which stay inert standalone. (2026-08-05) **Priority:** P2
+- **README makes two coverage claims that are false without gstack.** Line 45 ("a
+  code-quality reviewer — gstack's `/review` covers it") and line 336 ("run gstack's
+  `/cso` for a deep whole-repo audit"). An unstated limit reads as a claim of coverage,
+  and this audience is exactly the people who are not us. **Priority:** P2
+- **Under Option B, detect gstack at gate time and disclose — do not fail.** Name the
+  unowned axes in the firing decision. Detection must handle custom `--prefix` install
+  variants (README line 57), must stay silent when `.forgeward/config.yml` names a
+  substitute (Dependabot/Snyk/CI SAST), and structurally cannot tell a configured tool
+  from an installed-but-never-run one. **Priority:** P2
+- **Record the detected environment in the pass marker.** Option B makes coverage
+  environment-dependent, so the same plugin version means different things on two
+  machines. The marker already carries `fired`; recording what the gate could and could
+  not see makes that variance auditable from the artifact rather than invisible.
+  **Priority:** P3
+- **Untested: does the gate's Step 3 `/ship` handoff degrade or hard-fail with no
+  gstack?** Flagged as likely-broken, not confirmed. **Priority:** P2
+
+## Quality axis
+
+Full analysis and decision rules in `docs/axis-proposals.md`.
+
+- **gstack's `/review` and forgeward defer the quality axis to each other, and it runs
+  nowhere.** On commit `04a04fb` the review log records `maintainability` skipped with
+  `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
+  `"covered-by-forgeward"`, while forgeward's README skips code-quality because
+  `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
+  an existence proof, not a measured rate. (2026-08-05) **Priority:** P2
+- **`error-path-reviewer` — build blocking, pending a base-rate measurement.** Owns one
+  question: *when this code fails, does anything notice?* Four rules (discarded failure
+  signal, dead/unreachable error path, unchecked conditional-write result, resource leak
+  on the error path), each needing a stated consequence to reach High. Decision rule:
+  **≥1 true High per 5 PRs → build it blocking; below that → fold rules 1 and 3 into
+  `security-reviewer` Step 3 instead.** Measure by applying the checklist by hand to the
+  last 5 gated diffs across two repos. Must not fire on deliberate best-effort cleanup;
+  structurally cannot see a *wrong* handler, only a missing one. **Priority:** P2
+- **`marker_get` discarding jq's exit status is the third instance of the error-path
+  class** (after `json_get` and `strip_quoted`, both fixed in #11) and is the reviewer's
+  first fixture. Tracked separately below. (2026-08-05) **Priority:** —
+- **The review-ran check — warn-only, never blocking on a first version.** Gate on
+  whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
+  `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
+  standalone `/review` logs from `review/SKILL.md:1805` with no `via` key, while `/ship`
+  logs from `ship/sections/review-army.md:395` with `"via":"ship"`. Keying on
+  `via:"ship"` would fail exactly the people who ran `/review` correctly. Cannot block,
+  because both call sites are model-executed prompt steps: a review that happened can
+  leave no entry, which under-counts a measurement but manufactures false FAILs in an
+  enforcement. **Priority:** P3
+- **`/review` never writes `VERSION`, which reopens a cheaper handoff than `/ship`.**
+  Every occurrence in `review/SKILL.md` is a read or a display string, and
+  `bin/gstack-next-version` writes only to stdout. Version bumping is the sole reason
+  this repo refuses the `/ship` handoff, and it does not apply to `/review`. Constraint:
+  `/review` holds Edit/Write and auto-fixes, so it cannot run inside the read-only gate —
+  correct order is `/review` first, then gate. (2026-08-05) **Priority:** P3
+- **Gate-run logging.** Append the fired reviewer set plus verdict rather than
+  overwriting/pruning, so "gate ran, `/ship` didn't" becomes measured instead of inferred
+  from marker file counts. **Priority:** P3
+- **A `DECISIONS.md` entry either way on the quality axis.** "Delegate quality to
+  `/review`" is a recorded decision; the work above either reverses it or re-affirms it
+  on a **new** basis (embedded-in-`/ship`, not standalone). The `/cso` reversal set that
+  precedent. **Priority:** P3
+
+## Property-based testing
+
+- **Build `/forgeward:properties` as an on-demand skill, never a 7th reviewer.** Shaped
+  like `ci-gate` (`disable-model-invocation: true`, writes files, outside the enforced
+  gate). A "no property test" finding is a claim about test style with no stated
+  consequence — it would be the first forgeward FAIL that is not falsifiable — and its
+  remediation is a dependency change that trips `supply-chain-reviewer`. Durable output
+  is each shrunk counterexample committed as a deterministic regression test; measure
+  success in those, and delete the skill if there are none after a month. Must not fire
+  on orchestration/glue diffs. Structurally cannot see that a stated invariant is itself
+  wrong. (`docs/axis-proposals.md` → Q1, 2026-08-05) **Priority:** P3
+
 ## ci-gate
 
 - **The end-to-end gated-e2e chain is not proven in one continuous run.** All three
