@@ -128,10 +128,33 @@ apply here.
 | …mentioning a pre-landing review, review army, or quality score | **0** |
 
 The instrumentation predates the window — `gstack-review-log` exists since 2026-03-19,
-`"via":"ship"` since 2026-03-26 — so a missing entry is not a missing feature. It can
-still be a skipped prompt step, which biases the count in one direction only: it makes
-review look *rarer* than it was. Treat the ship/review ratio as a floor, not a
-measurement. The marker count is not a logging artifact and needs no such caveat.
+`"via":"ship"` since 2026-03-26 — so a missing entry is not a missing feature. The marker
+count is not a logging artifact and needs no such caveat.
+
+**How the two shapes are distinguished** (verified, because the standalone count depends
+entirely on it — an earlier draft asserted it without checking):
+
+- `review/SKILL.md:1805` — Step 5.8, unconditional. This is what a **standalone**
+  `/review` emits. Its payload has **no `via` key**; the string `via` appears nowhere in
+  that file.
+- `ship/sections/review-army.md:395` — `/ship`'s embedded review. Payload carries
+  `"via":"ship"`, with that file's own comment: *"The `via:"ship"` distinguishes from
+  standalone `/review` runs."*
+
+So a standalone run does log, distinguishably, and "0 entries lacking `via`" is a sound
+reading of "0 standalone runs."
+
+**The limit that survives, and it constrains the enforcement design.** Both call sites
+are model-executed prompt instructions, not enforced code. A review that completes and
+skips its final step leaves no entry at all. For the *measurement* this under-counts —
+review looks rarer than it was, so treat the ship/review ratio as a floor. For any
+*enforcement* built on the log it inverts, producing a **false FAIL against someone who
+did review**. Same root cause, opposite consequence.
+
+Two consequences for the proposed review-ran check: it must match on `skill:"review"` +
+`commit` + specialists-dispatched and treat a **missing `via` as standalone** (keying on
+`via:"ship"` would fail exactly the people who ran `/review` correctly); and because its
+input can be absent for a run that happened, it cannot block on a first version.
 
 **The finding is therefore not "/review is being skipped."** It is:
 
@@ -275,6 +298,43 @@ Plus the gate-wide blind spot: it is diff-scoped, so a caller that stopped check
 commits ago is invisible.
 
 ---
+
+## Scope of the evidence vs scope of the fix
+
+Stated explicitly, because a fix that undershoots its own evidence reads as full coverage.
+
+**What the evidence supports:** across 22 logged review runs, the broad quality pass ran
+only inside `/ship`, never standalone, and in 2 entries its specialists were skipped by
+explicit deferral to forgeward.
+
+**What the proposed fixes cover:**
+
+- `error-path-reviewer` — one correctness sliver of one specialist's territory.
+  **Undershoots the proposition substantially.** It is a correctness axis, not the
+  quality axis, and must never be described as covering quality.
+- The review-ran check — matches the proposition, but requires a partner tool to be
+  present, so for a repo without one it covers **nothing**.
+
+Neither fix, nor both together, restores the quality axis for a standalone user. That
+population is left uncovered on this axis by design; see the standalone-posture work in
+`TODOS.md`.
+
+## Re-proving the rejected option
+
+The general code-quality reviewer was rejected above because quality has no external
+anchor, so its verdict is not reproducible, which breaks the marker's meaning. Tested
+against the options that survived:
+
+- **The review-ran check** is binary, but its input is a log entry written by a skippable
+  prompt step — the same diff can yield different verdicts. **The reason applies.**
+- **`error-path-reviewer`** is syntactically anchored for "discarded failure signal," but
+  "was this deliberate?" is a judgment about intent with no external anchor.
+  **Partially applies.**
+
+The reason does not cleanly acquit either survivor, so it was carrying less weight than
+claimed. **The rejection stands on narrower ground: bounded remediation plus a stated
+consequence.** "Run `/review`" and "this swallowed error means the caller believes a write
+succeeded" have both; "this module is too complex" has neither.
 
 ## Strongest argument against each
 
