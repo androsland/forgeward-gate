@@ -66,7 +66,19 @@ case "$skill" in
     ;;
 esac
 
-claude_dir="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+# With CLAUDE_CONFIG_DIR unset AND HOME unset or empty, the obvious one-liner
+# (`${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}`) collapses to `/.claude` and sends this
+# probing the filesystem root. Leave it empty instead, so that root is skipped and the
+# git and plugin-cache roots still apply. Deliberately not pinned by a test: proving the
+# difference needs a readable `/.claude/skills`, and a test that passes either way would
+# be vacuous, which this suite treats as worse than absent.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  claude_dir="$CLAUDE_CONFIG_DIR"
+elif [ -n "${HOME:-}" ]; then
+  claude_dir="$HOME/.claude"
+else
+  claude_dir=""
+fi
 
 # Does this SKILL.md's FRONTMATTER carry the marker? Scoped to the frontmatter on
 # purpose: a skill body may quote "(gstack)" while describing an integration, and the
