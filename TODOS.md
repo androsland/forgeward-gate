@@ -400,6 +400,16 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 - **Orphaned marker `fix/publish-matcher-quoting.json` pruned by hand.** `gc_markers`
   runs only on the marker-*write* path, so an orphan on a clean `master` never
   self-clears — there is no gate run to trigger it. (2026-08-03)
+
+  What was completed here was the *instance*, not the condition, and the condition
+  recurred on 2026-08-05 with `fix/supply-chain-cve-deferral.json` — costing a second
+  investigation that ended at the same diagnosis. The behaviour is intended and stays:
+  the orphan is harmless, self-clears on the next gate of any branch, and the
+  alternative (sweeping from `gate-check` or `pre-push`) means deleting files during a
+  push on a path that must fail open. What was missing was a statement of it where a
+  reader would hit it, so it is now the fifth entry in the `BLIND SPOTS` list above
+  `gc_markers()` in `scripts/forgeward-write-marker.sh`. Expect orphans; do not debug
+  the sweep. (2026-08-05)
 - **Two stale remote branches deleted** — `feat/route-posture-classification` and
   `feat/security-reviewer-redefinition-toctou`. Both squash-merged (as #5 and #4),
   patch-ids identical to their master twins, zero unique content. Deleted via
