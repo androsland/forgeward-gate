@@ -1571,6 +1571,118 @@ case "$hooks_ref" in
   *)            ok "manifest does not re-reference the auto-loaded hooks/hooks.json (no duplicate-load)" ;;
 esac
 
+# D1-D12: gstack skill detection, which decides whether supply-chain-reviewer audits
+# dependency CVEs or defers them to `/cso`. The deferral used to be unconditional, so on
+# a machine without gstack nobody checked CVEs and the reviewer returned PASS clean.
+#
+# EVERY assertion here pins a DIRECTION, not just a result. A false negative costs the
+# reviewer duplicated work; a false positive is a silently skipped check — the original
+# bug. So the interesting cases below are the ones that must come back "not installed",
+# and a future edit that makes detection more eager has to turn one of them red.
+#
+# CLAUDE_CONFIG_DIR is set on every call. Without it these would read the developer's
+# REAL ~/.claude — where gstack is very likely installed — and D3 would pass by finding
+# somebody's actual /cso.
+DET="$PLUGIN/scripts/forgeward-detect-gstack-skill.sh"
+det() { # det <config-dir> <skill> -> exit code
+  ( CLAUDE_CONFIG_DIR="$1" "$DET" "$2" >/dev/null 2>&1 ); echo $?
+}
+mkskill() { # mkskill <dir> <description-line>
+  mkdir -p "$1"
+  printf -- '---\nname: cso\nversion: 2.0.0\n%s\n---\n\nBody of the skill.\n' "$2" > "$1/SKILL.md"
+}
+MARKER='description: Chief Security Officer mode. (gstack)'
+
+# D1: the --no-prefix install shape.
+D1="$TMP/det1"; mkskill "$D1/skills/cso" "$MARKER"
+[ "$(det "$D1" cso)" = 0 ] \
+  && ok "detect: bare skill dir with the (gstack) marker is INSTALLED" \
+  || nok "detect D1" "expected 0"
+
+# D2: the DEFAULT install shape. gstack's setup ships SKILL_PREFIX=1, so the skills-dir
+# entry is named after the patched `name:` field — `gstack-cso`. A literal `cso` match
+# misses this, which fails closed but does so for everyone who took the default.
+D2="$TMP/det2"; mkskill "$D2/skills/gstack-cso" "$MARKER"
+[ "$(det "$D2" cso)" = 0 ] \
+  && ok "detect: gstack- PREFIXED dir is INSTALLED (the default setup shape)" \
+  || nok "detect D2" "expected 0"
+
+# D3: the case the whole change exists for — no gstack at all.
+D3="$TMP/det3"; mkdir -p "$D3/skills"
+[ "$(det "$D3" cso)" = 1 ] \
+  && ok "detect: empty skills dir is NOT installed (the standalone case)" \
+  || nok "detect D3" "expected 1 — a false positive here re-opens the CVE hole"
+
+# D4: a skill genuinely named `cso` that is not gstack's. The name alone must not be
+# enough, or an unrelated skill silently switches the reviewer into DEFERRED mode.
+D4="$TMP/det4"; mkskill "$D4/skills/cso" 'description: Some other vendor CSO helper.'
+[ "$(det "$D4" cso)" = 1 ] \
+  && ok "detect: same-named skill WITHOUT the marker is NOT installed (name alone is not enough)" \
+  || nok "detect D4" "expected 1 — an unrelated skill was read as gstack's"
+
+# D5: a directory with no SKILL.md is not a skill.
+D5="$TMP/det5"; mkdir -p "$D5/skills/cso"
+[ "$(det "$D5" cso)" = 1 ] \
+  && ok "detect: directory with no SKILL.md is NOT installed" \
+  || nok "detect D5" "expected 1"
+
+# D6: THE REAL INSTALL SHAPE. link_claude_skill_dirs drops SYMLINKS into the skills dir,
+# so a check that refuses to follow links (find -type d, or an lstat copied from the
+# hardening in forgeward-scan.sh, where refusing IS correct) reports every real gstack
+# install as absent.
+D6="$TMP/det6"; mkskill "$TMP/det6-src/cso" "$MARKER"; mkdir -p "$D6/skills"
+ln -s "$TMP/det6-src/cso" "$D6/skills/cso"
+[ "$(det "$D6" cso)" = 0 ] \
+  && ok "detect: SYMLINKED skill dir is INSTALLED (how gstack actually installs)" \
+  || nok "detect D6" "expected 0 — link-following broke, so every real install reads as absent"
+
+# D7: the prefix is constrained to the same shape the ship matcher accepts
+# ([A-Za-z0-9_]+-), so a name that merely ENDS in -cso does not qualify.
+D7="$TMP/det7"; mkskill "$D7/skills/not-really-cso" "$MARKER"
+[ "$(det "$D7" cso)" = 1 ] \
+  && ok "detect: a dir merely ENDING in -cso does not qualify as a prefixed install" \
+  || nok "detect D7" "expected 1"
+
+# D8: gstack can arrive as a plugin instead, one marketplace and one plugin deep.
+D8="$TMP/det8"; mkskill "$D8/plugins/cache/some-marketplace/gstack/skills/cso" "$MARKER"
+[ "$(det "$D8" cso)" = 0 ] \
+  && ok "detect: plugin-cache install is INSTALLED" \
+  || nok "detect D8" "expected 0"
+
+# D9: the marker is looked for in the FRONTMATTER only. A body may quote "(gstack)"
+# while describing an integration, and the body is the larger, far more quotable surface.
+D9="$TMP/det9"; mkdir -p "$D9/skills/cso"
+printf -- '---\nname: cso\ndescription: Some other helper.\n---\n\nWorks well with (gstack).\n' \
+  > "$D9/skills/cso/SKILL.md"
+[ "$(det "$D9" cso)" = 1 ] \
+  && ok "detect: marker in the BODY does not count (frontmatter only)" \
+  || nok "detect D9" "expected 1"
+
+# D10: a folded or quoted description still carries the marker. This is why the check
+# scans the frontmatter BLOCK rather than matching a `description:` line — gstack's own
+# skills use all three forms (plain, quoted, folded).
+D10="$TMP/det10"; mkdir -p "$D10/skills/cso"
+printf -- '---\nname: cso\ndescription: |\n  Chief Security Officer mode. Infrastructure-first\n  security audit and threat modeling. (gstack)\n---\n\nBody.\n' \
+  > "$D10/skills/cso/SKILL.md"
+[ "$(det "$D10" cso)" = 0 ] \
+  && ok "detect: FOLDED multi-line description still carries the marker" \
+  || nok "detect D10" "expected 0"
+
+# D11: a project-local skill counts — it is installed for anyone working in this repo.
+D11="$TMP/det11"; mkdir -p "$D11/skills"
+mkskill "$R/.claude/skills/cso" "$MARKER"
+[ "$( ( cd "$R" && CLAUDE_CONFIG_DIR="$D11" "$DET" cso >/dev/null 2>&1 ); echo $? )" = 0 ] \
+  && ok "detect: project-local .claude/skills counts as INSTALLED" \
+  || nok "detect D11" "expected 0"
+rm -rf "$R/.claude"
+
+# D12: a malformed argument is a usage error (2), not a silent "installed". Any non-zero
+# is FULL mode for the caller, so this direction is safe either way — asserted so the
+# distinction between "absent" and "you called it wrong" does not quietly disappear.
+[ "$(det "$D1" 'cso/../../etc')" = 2 ] \
+  && ok "detect: a path-shaped argument is a usage error, never a match" \
+  || nok "detect D12" "expected 2"
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -29,7 +29,7 @@ Six read-only reviewers, each firing **only** when the diff touches its surface:
 | `accessibility-reviewer` | UI | gstack's design reviews are taste/AI-slop, not WCAG 2.1 AA conformance |
 | `ai-output-reviewer` | an LLM / paid-AI call | gstack covers prompt-injection for *its* browser, not *your* LLM output reliability/cost |
 | `seo-reviewer` | public, indexable pages | no SEO/crawlability/metadata coverage anywhere in gstack |
-| `supply-chain-reviewer` | a dependency manifest | gstack's `/cso` Phase 3 covers CVEs/install-scripts/lockfiles but **not** typosquatted/hallucinated packages or copyleft-license conflicts |
+| `supply-chain-reviewer` | a dependency manifest | typosquatted/hallucinated packages and copyleft-license conflicts, which gstack's `/cso` does not cover — **plus** CVEs/install-scripts/lockfiles itself when `/cso` is not installed |
 | `security-reviewer` | executable code (queries, handlers, auth, file/shell/network I/O, `.sql`) | gstack's `/cso` covers this axis but is **opt-in and manual** — see below |
 
 **Why a security reviewer now (this reversed a prior decision).** forgeward used to delegate the
@@ -41,6 +41,18 @@ on the same diff). `security-reviewer` closes that — it fires automatically in
 diff-scoped, running a bundled framework-aware SAST rulepack plus injection/authz reasoning. It
 does **not** replace `/cso` for a deep whole-repo audit, and one reviewer won't match a commercial
 SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real scanners into CI.
+
+**Deferrals to gstack are conditional, not assumed.** The table's third column is a *delta* — it
+says what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a
+hole when the other side is absent, and one of them shipped that way: `supply-chain-reviewer` was
+told unconditionally that `/cso` Phase 3 covers dependency CVEs, so on a machine with no gstack
+nobody checked them and the reviewer returned PASS clean. It now detects `/cso`
+(`scripts/forgeward-detect-gstack-skill.sh`) and audits CVEs, install scripts and lockfile
+integrity itself when it is not there, announcing which mode it ran in. Detection **fails closed**:
+anything ambiguous is treated as "not installed", so the cost of being wrong is a duplicated check
+rather than a skipped one. It sees *presence*, not diligence — it cannot tell gstack-installed-and-
+never-run from gstack-actively-covering-the-axis, and it cannot see that you cover the axis with
+Dependabot or a CI job instead.
 
 **Still not included on purpose:** a code-quality reviewer — gstack's `/review` covers it.
 
@@ -333,8 +345,10 @@ reviews the change, not the whole repo, and one LLM reviewer won't match a dedic
 SAST engine's recall. (One narrow exception: when the diff *redefines* an existing callable it
 reads the prior definition to establish a baseline — but the finding must still land on a changed
 line, and the baseline comes from source/migration history, which is a proxy for the deployed
-definition rather than proof of it.) Run gstack's `/cso` for a deep whole-repo audit, and treat the `ci-gate` CI
-scanners as your unskippable floor. A gate PASS means the reviewed change is clean, not that the
+definition rather than proof of it.) Run gstack's `/cso` for a deep whole-repo audit **if you have
+gstack** — the reviewers do not assume you do, and `supply-chain-reviewer` picks up the CVE axis
+itself when `/cso` is absent. What is *not* yet established standalone is the gate's final `/ship`
+handoff, which is tracked in `TODOS.md`. Treat the `ci-gate` CI scanners as your unskippable floor. A gate PASS means the reviewed change is clean, not that the
 running application is secure.
 
 ## Accepted design gaps (documented, not bugs)
