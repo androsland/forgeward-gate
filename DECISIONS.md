@@ -4,6 +4,71 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — `supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not exist
+
+**Date:** 2026-08-05
+
+**Symptom.** On a machine with no gstack installed, `supply-chain-reviewer` returned
+`SUPPLY-CHAIN VERDICT: PASS` on a diff adding dependencies without anything having checked those
+dependencies for known vulnerabilities. Found by reading, not by a report — which matters, because
+the failure is invisible from the outside: the reviewer fires, produces a clean report on the two
+classes it does own, and passes. There is no error and nothing missing from the output.
+
+**Cause.** The agent carried an unconditional instruction: *"gstack's `/cso` Phase 3 already covers
+dependency CVEs, install-scripts, and lockfile integrity — do NOT re-do those. You own
+typosquatting/hallucination and licensing only."* forgeward is scoped as a delta against gstack —
+the README reviewer table's third column is literally "why it's here (not redundant with gstack)" —
+and scoping by delta means **every deferral becomes a hole when the other side is absent.** The
+instruction was correct on the maintainer's machine and on no machine without gstack, which is the
+entire installed base this plugin does not see.
+
+**Relationship to the 2026-07-13 entry below.** That one reversed "delegate security to `/cso`"
+because `/cso` is opt-in and manual and *was not run*. This is the same family and a rung lower:
+that deferral assumed the user would RUN `/cso`, this one assumed they would HAVE it. The earlier
+fix did not generalize because it was framed as being about the security axis; it was actually
+about the deferral pattern. Anything that defers an axis by naming a tool now has to establish the
+tool exists — which is why the detector is a general script and not an inline check.
+
+**Decision.** Make the deferral conditional. `scripts/forgeward-detect-gstack-skill.sh <skill>`
+answers "is this gstack skill installed here" deterministically; the reviewer runs it first and
+declares its mode. `/cso` present → DEFERRED, unchanged prior behaviour. `/cso` absent → FULL: it
+also audits dependency CVEs, install scripts, and lockfile integrity, and a Critical/High CVE in a
+dependency the diff adds or upgrades is a FAIL.
+
+**Fail-closed, deliberately asymmetric.** Every ambiguous answer is "not installed". A false
+negative costs a duplicated audit; a false positive is a silently skipped check — the bug itself.
+Detection requires both a directory named for the skill (bare, or behind a `[A-Za-z0-9_]+-` prefix,
+since gstack's `setup` defaults to `SKILL_PREFIX=1` and names the skills-dir entry `gstack-cso`) and
+the `(gstack)` marker in that `SKILL.md`'s frontmatter. The two arms are independent:
+`bin/gstack-patch-names` rewrites `name:` only and never touches `description:`, so prefixing does
+not disturb the marker. Both arms are pinned by mutation test — removing either turns a specific
+assertion red (D2, and D4/D9 respectively), as does making the check stop following symlinks (D6),
+which matters because gstack installs its skills as symlinks.
+
+**Stated limits, because an unstated limit reads as a claim of coverage.** (1) It detects
+*presence*, never diligence: gstack installed and never once invoked is indistinguishable from
+gstack actively covering the axis, so exit 0 means "the tool the deferral names is here", not "the
+axis was audited". (2) It cannot see a substitute — a repo covering CVEs with Dependabot, Snyk, or
+a CI SAST job looks identical to one covering them with nothing; deciding what to do about that
+belongs to `.forgeward/config.yml` and is tracked in `TODOS.md`. (3) The marker is a convention, not
+a contract: if gstack ever drops the `(gstack)` suffix, detection reports ABSENT and callers
+duplicate work — the safe direction, and preferred to matching on the bare name.
+
+**Accepted cost.** A PASS now means slightly different things on two machines: the same Critical CVE
+FAILs the gate standalone and is `/cso`'s to find when gstack is present. That variance is real and
+is the price of not shipping the unconditional deferral. It is mitigated here by the mandatory
+`SUPPLY-CHAIN MODE:` line in the reviewer's report, and recording the detected environment in the
+pass marker — so the variance is auditable from the artifact rather than from memory — is tracked
+in `TODOS.md`.
+
+**Scope of this fix vs the evidence behind it.** The evidence is about the *pattern*: any deferral
+naming an absent tool is a hole. The fix closes exactly one instance of it — the CVE deferral,
+which is the only one where an axis actually goes unchecked. `security-reviewer`'s two gstack
+references are positioning prose that skips nothing, and the other four reviewers name gstack zero
+times, so there is no third instance to close today. The remaining gstack coupling is the gate's
+`/ship` handoff, which is a convenience rather than an axis and is untested standalone. Both are in
+`TODOS.md` under "Standalone posture"; this entry does not claim to have resolved them.
+
 ## RESOLVED — the publish matcher denied any command CONTAINING a publish verb
 
 **Date:** 2026-08-02

@@ -118,24 +118,25 @@ write-once and effectively gone after merge, which is why they live here now.
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3.
 
-- **`supply-chain-reviewer` returns PASS without ever checking dependency CVEs when
-  gstack is absent.** The agent defers by name — *"gstack's `/cso` Phase 3 already covers
-  dependency CVEs, install-scripts, and lockfile integrity — do NOT re-do those"* — so
-  with no `/cso` present nobody checks them and the reviewer passes clean. This is a live
-  coverage hole in shipped code affecting installs on machines we never see, not a
-  proposal. Fix: make the deferral conditional on `/cso` being detected. **Priority:** P1
-- **forgeward is scoped as a delta against gstack, so every deferral is a hole when
-  gstack is absent.** README line 7 defines it as "a gate for gstack" and the reviewer
-  table's third column is "why it's here (not redundant with gstack)". Decide Option A
-  (declare gstack a hard dependency) or Option B (conditional deferral — recommended,
-  because the six reviewers do work standalone). What is not acceptable is leaving it
-  implicit. Gate mechanics themselves are verified gstack-free: `hooks/` and `scripts/`
-  reference it only in comments and in `forgeward-diff-hash.sh`'s cosmetic-file
-  exclusions, which stay inert standalone. (2026-08-05) **Priority:** P2
-- **README makes two coverage claims that are false without gstack.** Line 45 ("a
-  code-quality reviewer — gstack's `/review` covers it") and line 336 ("run gstack's
-  `/cso` for a deep whole-repo audit"). An unstated limit reads as a claim of coverage,
-  and this audience is exactly the people who are not us. **Priority:** P2
+- **forgeward is scoped as a delta against gstack, so a deferral is a hole when gstack is
+  absent.** README line 7 defines it as "a gate for gstack" and the reviewer table's third
+  column is "why it's here (not redundant with gstack)". Decide Option A (declare gstack a
+  hard dependency) or Option B (conditional deferral — recommended, because the six
+  reviewers do work standalone). What is not acceptable is leaving it implicit. Two things
+  now bound this, both enumerated rather than sampled: the only *behavioral* deferral was
+  `supply-chain-reviewer`'s, fixed in 0.7.4 below — `security-reviewer`'s two gstack
+  references are positioning prose that skips nothing, and the other four reviewers name
+  gstack zero times. And gate mechanics are verified gstack-free: `hooks/` and `scripts/`
+  reference it only in comments and in `forgeward-diff-hash.sh`'s cosmetic-file exclusions,
+  which stay inert standalone. So what remains for Option B is the posture *statement* and
+  the `/ship` handoff, not another unchecked axis. (2026-08-05) **Priority:** P2
+- **README line 45 still claims code quality is covered by gstack's `/review`.** That is
+  false without gstack, and per the quality-axis findings below it is shaky even with it —
+  `/review` has 0 standalone runs in the log and runs inside `/ship`, which this repo's own
+  workflow skips. Left alone deliberately in 0.7.4, which scoped itself to the CVE axis;
+  fixing it means deciding the quality axis first. The `/cso` claim on line 336 was
+  corrected there. An unstated limit reads as a claim of coverage, and this audience is
+  exactly the people who are not us. **Priority:** P2
 - **Under Option B, detect gstack at gate time and disclose — do not fail.** Name the
   unowned axes in the firing decision. Detection must handle custom `--prefix` install
   variants (README line 57), must stay silent when `.forgeward/config.yml` names a
@@ -246,6 +247,35 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P1: `supply-chain-reviewer` returned PASS without ever checking dependency CVEs when
+  gstack was absent.** Fixed 2026-08-05, shipped in 0.7.4.
+
+  The agent deferred by name — *"gstack's `/cso` Phase 3 already covers dependency CVEs,
+  install-scripts, and lockfile integrity — do NOT re-do those"* — unconditionally, so on
+  a machine with no `/cso` nobody checked them and the reviewer returned clean. Live
+  coverage hole in shipped code, not a proposal.
+
+  Fix: `scripts/forgeward-detect-gstack-skill.sh <skill>` answers "is this gstack skill
+  installed here?" deterministically and fails closed — exit 0 only for a directory named
+  `<skill>` or `<prefix>-<skill>` holding a `SKILL.md` whose *frontmatter* carries the
+  `(gstack)` marker. `supply-chain-reviewer` now runs it before reading the diff and
+  declares `SUPPLY-CHAIN MODE: DEFERRED` or `FULL` on its first output line; FULL adds
+  CVEs, install/lifecycle scripts, and lockfile integrity, scoped to dependencies the
+  diff adds or version-changes. A script rather than a prompt instruction because an LLM
+  judging "is gstack installed?" per run fails silently in the permissive direction —
+  the exact fail-open shape `json_get`, `strip_quoted` and `marker_get` were each burned
+  by. Pinned by D1–D12 in `test/gate-test.sh` (137 pass), and the three arms were
+  mutation-tested: dropping the marker check reddens D4/D9, dropping the prefix arm
+  reddens D2, refusing symlinks reddens D6.
+
+  What this did NOT fix, stated because the evidence is broader than the remedy: the
+  evidence is about the *deferral pattern*, the fix closes exactly one instance of it.
+  The Option B posture statement and the untested standalone `/ship` handoff are still
+  open above. Detection sees presence, never diligence — gstack installed and never
+  invoked is indistinguishable from gstack covering the axis — and it cannot see a
+  substitute such as Dependabot or a CI SAST job. Accepted cost: the same diff can FAIL
+  standalone and PASS with gstack present.
 
 - **P1: the intermittent "fail-open" reproduces from a false negative in the test
   harness's own `denies()` helper, not from the gate.** Fixed 2026-08-03.
