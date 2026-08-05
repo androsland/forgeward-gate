@@ -85,6 +85,16 @@ EOF
 #     push-time check re-validates the substantive-diff hash independently. Left
 #     unfixed deliberately — locking a cleanup pass to close a window this narrow buys
 #     less than the failure modes a lock introduces.
+#   - it runs ONLY on the marker-write path, so nothing sweeps a repo that is not
+#     gating anything. A branch merged and deleted leaves its marker behind, and on a
+#     clean master there is no event left to prune it — the next gate of any branch
+#     reaps it. Note a run can never reap its OWN receipt either: the branch is live
+#     and explicitly skipped below, so a marker is only ever cleaned by a later,
+#     unrelated gate. Harmless (GC only deletes, and the marker names a ref that no
+#     longer resolves) but it has twice been mistaken for a broken sweep, which is the
+#     actual cost. Deliberate: see "prune on write rather than behind a flag" above,
+#     and the alternative — sweeping from gate-check or pre-push — means deleting
+#     files during a push, on a path that must fail open so it never wedges one.
 gc_markers() {
   local dir="$common_dir/forgeward-gate-markers" f name live
   [ -d "$dir" ] || return 0
