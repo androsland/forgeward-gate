@@ -397,6 +397,19 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   prevent both are spelling a control byte as `\u0000` and never as itself, and reaching for
   `/usr/bin/grep` explicitly when the answer matters. (security review rounds 3 and 5,
   2026-08-07) **Priority:** P3
+- **Nothing else in this repo that reads a repo-relative path has been audited for symlink
+  following, and round 7 says that is the wrong state to leave it in.** The CI check now reads
+  manifests out of the object store; `scripts/forgeward-gate-check.sh`,
+  `scripts/forgeward-pre-push.sh`, `scripts/forgeward-diff-hash.sh` and the marker machinery all
+  still open paths off the filesystem. **The threat model is genuinely different and that is the
+  reason this is P3 and not P2:** those run on the user's own machine against the user's own
+  checkout, where an attacker who can plant a symlink can also edit the file directly, forge a
+  marker, or pass `--no-verify` — all of which this file already documents as defeating the local
+  gate. The CI check was the escalation because a *fork* author can commit a symlink and has no
+  other access. So this is a sweep for consistency and for the day one of those scripts moves
+  into CI, not a live bypass. Whoever does it should check the marker path too: a marker file
+  replaced by a symlink is the shape most likely to matter. (security review round 7, 2026-08-07)
+  **Priority:** P3
 - **Four shipped `python3 -c` sites outside this branch have the same CWD-on-`sys.path`
   exposure that round 6 closed in the CI check, and none of them carries `-I`.**
   `scripts/forgeward-diff-hash.sh:100`, `scripts/forgeward-gate-check.sh:75` and `:119`, and
@@ -425,7 +438,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 39) and every one of them is run by hand before a release. The new
+  version-check 47) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -452,7 +465,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R22d, 39 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R24c, 47 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -532,8 +545,21 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   patching one channel at a time is exactly how rounds 2 through 5 went. R22/R22b/R22c pin one
   channel each; R22d is the positive control.
 
-  Six rounds, six defects, each in the layer the previous round had just hardened — the
-  operative lesson is that **an adversarial reader found all six and the test suite found none
+  Round 7 went out one layer instead of down: the head side read each manifest off the
+  **filesystem** (`read_version "$f" < "$f"` — a plain `open(2)`, which follows symlinks) while
+  the base side read it out of the **object store** via `git show`, which returns a symlink's
+  target text and never dereferences it. Git tracks symlinks as mode `120000`, so a fork PR
+  author commits the three manifests as links to a file outside the checkout and gets
+  `ok: version 13.37.0, not behind master (3 manifest(s) compared, all three agree)`, exit 0 —
+  a pass asserted about a commit containing no version field at all. The asymmetry was written
+  down in the script's own header as a neutral implementation detail. Both sides now go through
+  one `require_blob` and one object-store read, so the bytes parsed are the blob in the commit
+  by construction; reading HEAD rather than the worktree also means a hand-run ignores
+  uncommitted edits, which is stated as blind spot 10 and mitigated by a stderr note naming the
+  files (R24b).
+
+  Seven rounds, seven defects, each in the layer the previous round had just hardened — the
+  operative lesson is that **an adversarial reader found all seven and the test suite found none
   of them**, which is an argument about how much review a comparator is worth, not about the
   tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
   status, because two of them failed closed for an unrelated reason and would have passed an

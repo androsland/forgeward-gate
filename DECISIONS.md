@@ -181,7 +181,7 @@ on this machine. The comment above it was **rewritten to say exactly that** rath
 carrying its original justification. A line that reads as load-bearing for a reason that has
 since expired is the precise failure round 3 recorded, one round after recording it.
 
-**Verification.** `test/version-check-test.sh`, 39 assertions, wired into `npm test`. Of the
+**Verification.** `test/version-check-test.sh`, 47 assertions, wired into `npm test`. Of the
 twenty-one mutations written through round 4, twenty
 reddened exactly the assertions naming them and nothing else — including
 every one added by the review rounds: reverting the counter to `grep -c` reddens R8b alone,
@@ -374,6 +374,49 @@ first three by channel, the fourth because with the flag gone the planted module
 preference for `-I` over the narrower fix is measured rather than argued: mutating `-I` into
 `sys.path.pop(0)` and nothing else (`M27`) reddens **R22c alone** — the CWD channel closes and
 `PYTHONPATH` stays open. That is the round-2-to-5 failure mode caught in advance, on a stopwatch.
+
+**Round 7 found a High one layer out again, and it was visible in this file's own header the
+whole time.** The head side read each manifest off the filesystem — `[ -f "$f" ]`, then
+`read_version "$f" < "$f"` — while the base side read it out of the object store with
+`git show`. A `<` redirect is a plain `open(2)`, and `open(2)` follows symlinks; git tracks
+symlinks natively as mode `120000`. So a fork PR author commits `package.json` as a link to any
+absolute path on the runner and the check parses a file that is not in the commit. Reproduced:
+all three manifests committed as symlinks to a file outside the checkout, base at `9.0.0`, and
+the check printed `ok: version 13.37.0, not behind master (3 manifest(s) compared, all three
+agree)` and exited 0 — a **PASS asserted about a commit that contains no version field at all**,
+on the strength of a file that is not in the repository and never will be. Pointed at any
+JSON-shaped file that merely exists on the runner, it also reflects a fragment of it into a
+world-readable job log.
+
+The asymmetry was described in this file and in the script's header — "reads base-side manifests
+via `git show`, head-side from the worktree" — as a neutral implementation detail. It was the
+bug, written down. `git show` returns a symlink's **blob**, the literal target string, and never
+dereferences it, so the base side was never exposed; only the filesystem answers questions about
+things outside the repository. Both sides now go through one `require_blob` helper and one
+object-store read, so "the file in the commit" and "the bytes we parsed" are the same object by
+construction. The explicit mode check on top is not redundant: a symlink's target text fails the
+JSON parse anyway, so without it the refusal arrives one step later as `could not read a version`
+— blaming the parser for something the tree entry decided, which sends the next reader to the
+wrong layer. That is also why R23's assertions read the **message**: pre-fix, the in-repo variant
+exited non-zero too, and an exit-status assertion could not tell the fix from the accident.
+
+**Reading HEAD is the more correct question, not merely the safer one.** What merges is the
+commit, and the workflow checks out `pull_request.head.sha` precisely so HEAD *is* the thing under
+review. The cost is real and is paid explicitly: a hand-run no longer sees uncommitted edits, so
+the check now prints a stderr note naming the manifests it ignored. It is a note, never a verdict
+— the answer about the commit is right either way — and R24b pins it, because six rounds of
+comments describing behaviour the code did not have is the failure mode this repo actually has.
+Blind spot 10 states it. A side effect worth keeping: with `--full-tree` and a `:/` pathspec the
+whole check is repo-root-relative and now works from a subdirectory, which the cwd-relative
+worktree read did not (R24c).
+
+Round 7 verification: 47 assertions; gate 171/171 and pre-push 15/15 re-run green. Seven mutations
+redden exactly what names them — restoring the worktree read reddens R23/R23b/R23c/R24/R24c,
+deleting the symlink arm or folding `120000` into the accepted modes reddens all four R23 symlink
+cases, reverting the base side to `cat-file -e` reddens R23d alone, inverting the dirty-note
+condition reddens R24b (plus three assertions that then see a spurious note — an artifact of the
+mutant printing when clean, not extra coverage), dropping `--full-tree` reddens R24c alone, and
+round 6's `-I` regression check still reddens R22–R22d.
 
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 

@@ -93,6 +93,12 @@
 #      make blind spot 6 moot, which is the tempting conclusion: editing the checker is
 #      conspicuous in a diff, and a stray `json.py` at the repo root is not. The whole
 #      value of that fix is that it forces the attack into the reviewable direction.
+#  10. It reads the COMMITTED tree, never the working tree, so uncommitted edits to a
+#      manifest are not considered -- see the note above the head-side loop for why that
+#      is the correct reading and not merely the safe one. A hand-run against a dirty
+#      worktree prints a note naming the files it ignored, because a check that silently
+#      answers about a different version of the file than the one on your screen is a
+#      debugging trap. The note is stderr-only and never changes the verdict.
 set -uo pipefail
 
 # Script-wide and exported. Be honest about what this is worth NOW, because its original
@@ -124,6 +130,37 @@ BASE="${1:-origin/master}"
 MANIFESTS="package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json"
 
 die() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+
+# The git mode of a path at a ref, empty when the path is not there. `--full-tree` so the
+# pathspec resolves against the repo ROOT regardless of the caller's cwd, which is how
+# the `<ref>:<path>` syntax used to fetch the content resolves too -- the two must not
+# disagree about what `$f` names, or the file whose mode was approved is not the file
+# that gets parsed. As a side effect the whole check now works from a subdirectory, which
+# the worktree read it replaces did not.
+tree_mode() { # tree_mode <ref> <path>
+  local line mode
+  line="$(git ls-tree --full-tree "$1" -- "$2" 2>/dev/null)"
+  read -r mode _ <<<"$line"
+  printf '%s' "${mode:-}"
+}
+
+# 0 when <path> is a regular file at <ref>, 1 when it is absent, and a hard exit for
+# anything else. Round 7 of the security review, and the reason it refuses rather than
+# tolerates: git tracks exactly four kinds of entry, and only one of them is a manifest.
+# A symlink (mode 120000) is the dangerous one -- see the note above the head-side loop.
+# A gitlink and a tree are not attacks, just nonsense in this position, and guessing at
+# nonsense is how a check reports a pass it did not establish.
+require_blob() { # require_blob <ref> <path> <label>
+  local m
+  m="$(tree_mode "$1" "$2")"
+  case "$m" in
+    100644|100755) return 0 ;;
+    '')            return 1 ;;
+    120000) die "$3 is a symlink, not a file -- refusing to read through it (blind spot 10)" ;;
+    160000) die "$3 is a submodule gitlink, not a manifest -- refusing to guess what it means" ;;
+    *)      die "$3 has git mode $m, which is not a regular file -- refusing to guess what it means" ;;
+  esac
+}
 
 # A REAL JSON PARSER, and the reason is that text-matching this field lost four times.
 #
@@ -345,10 +382,40 @@ git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1 \
   || die "base ref '$BASE' does not resolve -- CI needs a full-history checkout (fetch-depth: 0)"
 
 # --- head side: all three manifests must agree with each other --------------------
+# READ FROM THE OBJECT STORE, NOT THE WORKING TREE, and this is round 7's fix rather than
+# a tidiness preference. The loop used to be `[ -f "$f" ]` then `read_version "$f" < "$f"`.
+# A `<` redirect is a plain open(2), and open(2) FOLLOWS SYMLINKS -- while git natively
+# tracks symlinks as mode 120000, so a fork PR author can commit `package.json` as a link
+# to any absolute path on the CI runner and the check will dutifully parse whatever is
+# there. Reproduced end to end: three manifests committed as symlinks to a file OUTSIDE
+# the checkout, base at 9.0.0, and the check printed `ok: version 13.37.0, not behind
+# master (3 manifest(s) compared, all three agree)` and exited 0 -- a PASS asserted about
+# a commit that contains no version field anywhere, on the strength of a file that is not
+# in the commit and never will be. Pointed at a file that merely EXISTS on the runner it
+# also reflects a fragment of it into a world-readable job log.
+#
+# The tell was an asymmetry the file's own header described without noticing: the base
+# side reads through `git show`, which returns a symlink's BLOB -- the literal target
+# string -- and never dereferences it, so the base side was never exposed. One side asked
+# git and one side asked the filesystem, and only the filesystem answers questions about
+# things outside the repository. Both sides now ask git, so "the file in the commit" and
+# "the bytes we parsed" are the same object by construction; the explicit mode check on
+# top exists so the refusal NAMES the symlink rather than arriving as a confusing
+# "could not read a version" when the target text fails to parse as JSON.
+#
+# Reading HEAD rather than the worktree is also the more correct question, not merely the
+# safer one: what merges is the commit, and the workflow checks out
+# `pull_request.head.sha` precisely so that HEAD *is* the thing under review. The cost is
+# that a hand-run no longer sees uncommitted edits, which is a real footgun and is why
+# the dirty-manifest note below exists. It is a note and not a failure -- the verdict
+# about the commit is correct either way.
+git rev-parse --verify --quiet HEAD >/dev/null 2>&1 \
+  || die "HEAD does not resolve -- this must run inside a checkout with at least one commit"
+
 head_version=""
 for f in $MANIFESTS; do
-  [ -f "$f" ] || die "$f is missing from the working tree"
-  v="$(read_version "$f" < "$f")" || die "could not read a version from $f"
+  require_blob HEAD "$f" "$f" || die "$f does not exist at HEAD"
+  v="$(git show "HEAD:$f" | read_version "$f")" || die "could not read a version from $f"
   if [ -z "$head_version" ]; then
     head_version="$v"
   elif [ "$v" != "$head_version" ]; then
@@ -356,15 +423,32 @@ for f in $MANIFESTS; do
   fi
 done
 
+# Say what was NOT read. Reading HEAD is right, and a check that quietly answers about a
+# different version of the file than the one open in your editor is still a trap; naming
+# the files costs four lines and removes the whole class of confused hand-run. `:/` keeps
+# the pathspec repo-root-relative, matching `tree_mode`. stderr, and never a verdict.
+dirty=""
+for f in $MANIFESTS; do
+  git diff --quiet HEAD -- ":/$f" 2>/dev/null || dirty="$dirty $f"
+done
+[ -z "$dirty" ] \
+  || printf 'note: uncommitted edits to%s were NOT considered -- this check reads the committed tree (blind spot 10)\n' "$dirty" >&2
+
 # --- base side: no manifest may go backward ----------------------------------------
 compared=0
 for f in $MANIFESTS; do
   # Existence is asked separately from content so the blob can be PIPED into the reader.
   # It used to be `blob="$(git show ...)" || continue`, which conflated the two answers
   # and, worse, routed the bytes through a shell variable -- the same lossy path (NUL
-  # dropped, trailing newlines eaten) the head side was just moved off. `cat-file -e`
-  # answers only "does this path exist at this ref".
-  git cat-file -e "$BASE:$f" 2>/dev/null || {
+  # dropped, trailing newlines eaten) the head side was just moved off.
+  #
+  # `require_blob` rather than the `git cat-file -e` this used to be, so both sides run
+  # the SAME existence-and-kind check. The base side was never exposed to round 7's
+  # symlink bypass -- `git show` returns the target string rather than following it -- so
+  # this arm is symmetry, not a fix. It is worth having anyway: a symlink here would have
+  # died one step later with "could not read a version", blaming the parser for something
+  # the tree entry decided, and the next person would debug the wrong layer.
+  require_blob "$BASE" "$f" "$BASE:$f" || {
     printf 'note: %s does not exist on %s -- no prior version to compare (blind spot 4)\n' "$f" "$BASE"
     continue
   }

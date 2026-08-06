@@ -546,6 +546,127 @@ case "$out" in
   *) nok "R22d shadow positive control" "st=$st out=$out" ;;
 esac
 
+# --- R23: a manifest committed as a SYMLINK must be refused, not followed ----------
+# Round 7 of the security review. `read_version "$f" < "$f"` was a plain open(2), which
+# follows symlinks, while git tracks symlinks natively as mode 120000 -- so a fork PR
+# author could commit `package.json` as a link to any absolute path on the CI runner and
+# have the check parse a file that is not in the commit. R23 is the forged-PASS case and
+# it is the one that matters: with all three manifests linked to an out-of-repo file, the
+# pre-fix script printed `ok: version 13.37.0 ... all three agree` and exited 0 for a
+# commit containing no version field at all.
+#
+# These assert the MESSAGE, not just the exit status -- for the standing reason (every
+# assertion from round 3 on does) and for a sharper one here: a symlink's target text
+# fails the JSON parse anyway, so the pre-fix script would ALSO have exited non-zero on
+# the in-repo variant, for the wrong reason and blaming the wrong layer. An exit-status
+# assertion could not tell the fix from the accident.
+mklink() { # mklink <name> <target> <manifests...>   -> repo path, head committed
+  local name="$1" target="$2"
+  shift 2
+  local r m
+  r="$(mkfixture "$name" 9.0.0 9.0.0 9.0.0)"
+  for m in "$@"; do
+    rm -f "$r/$m"
+    ln -s "$target" "$r/$m"
+  done
+  commit_head "$r"
+  printf '%s' "$r"
+}
+
+OUTSIDE="$TMP/outside-the-repo.json"
+printf '{"version":"13.37.0"}\n' > "$OUTSIDE"
+
+R="$(mklink link-all "$OUTSIDE" package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json)"
+run "$R"
+case "$out" in
+  *'package.json is a symlink'*) ok "R23 three manifests linked outside the repo are refused (was a forged PASS)" ;;
+  *) nok "R23 out-of-repo symlink refused" "st=$st out=$out" ;;
+esac
+
+R="$(mklink link-one "$OUTSIDE" .claude-plugin/plugin.json)"
+run "$R"
+case "$out" in
+  *'plugin.json is a symlink'*) ok "R23b a single linked manifest is named, not silently skipped" ;;
+  *) nok "R23b single symlink named" "st=$st out=$out" ;;
+esac
+
+# In-repo target: proves the refusal is about the ENTRY KIND, not about where the target
+# happens to point. A fix that only rejected absolute or escaping targets would pass R23
+# and fail here, and it would be the wrong fix -- the property wanted is "the bytes we
+# parse are the blob in the commit", which an in-repo link breaks just as thoroughly.
+R="$(mkfixture link-inside 9.0.0 9.0.0 9.0.0)"
+printf '{"version":"13.37.0"}\n' > "$R/decoy.json"
+rm -f "$R/package.json"; ln -s decoy.json "$R/package.json"
+commit_head "$R"
+run "$R"
+case "$out" in
+  *'package.json is a symlink'*) ok "R23c an IN-repo symlink is refused too (it is the entry kind, not the target)" ;;
+  *) nok "R23c in-repo symlink refused" "st=$st out=$out" ;;
+esac
+
+# Base side. Never exposed -- `git show` returns a symlink's target text rather than
+# following it -- so this pins the SYMMETRY: both sides run the same kind check, and the
+# refusal names the tree entry instead of arriving as a parser error one step later.
+R="$(mkfixture link-base 9.0.0 9.0.0 9.0.0)"
+( cd "$R" && git checkout -q master && rm -f package.json && ln -s "$OUTSIDE" package.json \
+   && git add -A && git commit -qm relink && git checkout -q feature ) >/dev/null 2>&1
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+run "$R"
+case "$out" in
+  *'master:package.json is a symlink'*) ok "R23d a symlink on the BASE side is refused by name (symmetry)" ;;
+  *) nok "R23d base-side symlink named" "st=$st out=$out" ;;
+esac
+
+# Positive control. Same builder, no link: an ordinary forward bump must still pass, or
+# every assertion above is satisfied by a script that refuses everything.
+R="$(mkfixture link-control 9.0.0 9.0.0 9.0.0)"
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+run "$R"
+case "$out" in
+  ok:*9.1.0*) ok "R23e a forward bump with no symlink still passes (positive control)" ;;
+  *) nok "R23e symlink positive control" "st=$st out=$out" ;;
+esac
+
+# --- R24: reading HEAD, and saying so when the worktree disagrees ------------------
+# Reading the committed tree is what closes R23, and it costs something real: a hand-run
+# no longer sees uncommitted edits. R24 pins the behaviour (the verdict is about HEAD)
+# and R24b pins the mitigation (the ignored files are NAMED). Without R24b the check
+# would answer about a file other than the one on the author's screen and say nothing,
+# which is a debugging trap rather than a security hole -- and untested mitigations are
+# how the previous six rounds' comments ended up describing behaviour the code lacked.
+R="$(mkfixture dirty-head 9.0.0 9.0.0 9.0.0)"
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+setv "$R" 1.0.0 1.0.0 1.0.0        # a backward move left UNCOMMITTED
+run "$R"
+# NOT `ok:*` -- `run` folds stderr into $out and the dirty note is printed first, so the
+# anchored form every other assertion here uses would fail on the note rather than on the
+# verdict. Matching the whole summary line keeps it just as specific.
+case "$out" in
+  *'ok: version 9.1.0, not behind'*) ok "R24 an uncommitted backward edit does not change the verdict (HEAD is what merges)" ;;
+  *) nok "R24 verdict follows HEAD" "st=$st out=$out" ;;
+esac
+case "$out" in
+  *'uncommitted edits to'*'package.json'*) ok "R24b the ignored worktree edits are named in a note" ;;
+  *) nok "R24b dirty note names the files" "st=$st out=$out" ;;
+esac
+
+# Runs from a SUBDIRECTORY. The worktree read this replaces was cwd-relative and would
+# have died "missing from the working tree"; `--full-tree` and the `:/` pathspec make the
+# whole check root-relative. Cheap to assert, and it is the kind of property that gets
+# quietly broken by someone "simplifying" the mode lookup later.
+R="$(mkfixture subdir-cwd 9.0.0 9.0.0 9.0.0)"
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+mkdir -p "$R/.claude-plugin"
+out="$( cd "$R/.claude-plugin" && bash "$CHK" master 2>&1 )"; st=$?
+case "$out" in
+  ok:*9.1.0*) ok "R24c the check works from a subdirectory (paths resolve against the repo root)" ;;
+  *) nok "R24c subdirectory cwd" "st=$st out=$out" ;;
+esac
+
 # R21: EVERY tracked file in this repo must be plain text -- NUL-free and valid UTF-8.
 # Not a behaviour of the check; a property of the repo, and it is here because it went
 # wrong repeatedly while rounds 5 and 6 were being written -- in this script's subject
