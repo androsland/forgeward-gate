@@ -372,7 +372,10 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   failure from the check and no prior warning. Also worth deciding once rather than per-script:
   whether python3 is now an accepted repo-wide dependency for **CI-only** code while
   user-machine scripts stay tool-free — that split is the actual rule being followed, and it is
-  currently implicit. (CI version check round 4, 2026-08-07) **Priority:** P3
+  currently implicit. Round 6 narrowed the dependency slightly: the call is now `python3 -I`, so
+  the floor is Python 3.4 (2014). An interpreter too old to accept the flag fails closed with
+  its own error plus `returned no usable answer` — verified against a PATH shim that rejects
+  `-I`, not assumed. (CI version check rounds 4 and 6, 2026-08-07) **Priority:** P3
 - **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
   investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
   ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
@@ -394,6 +397,23 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   prevent both are spelling a control byte as `\u0000` and never as itself, and reaching for
   `/usr/bin/grep` explicitly when the answer matters. (security review rounds 3 and 5,
   2026-08-07) **Priority:** P3
+- **Four shipped `python3 -c` sites outside this branch have the same CWD-on-`sys.path`
+  exposure that round 6 closed in the CI check, and none of them carries `-I`.**
+  `scripts/forgeward-diff-hash.sh:100`, `scripts/forgeward-gate-check.sh:75` and `:119`, and
+  `scripts/forgeward-pre-push.sh:72` all run `python3 -c` with an `import json` from whatever
+  directory the user's repo happens to be. A `json.py` at that repo's root is then the module
+  parsing forgeward's own state. **Their exposure is genuinely smaller than the CI check's, and
+  the difference is worth stating rather than assuming:** the python arm in each is only reached
+  when `jq` is absent or broken (verified by reading `json_get`'s arm ordering, not inferred),
+  and reaching it at all requires write access to the user's checkout — which `TODOS.md` already
+  discloses as defeating the local gate outright via marker forgery or `--no-verify`. The CI
+  check was the real escalation because a **fork** PR author has no other access and needs none.
+  So this is a hardening item, not a live bypass. The fix is one flag per site and is trivial;
+  it is filed rather than done because the round-6 branch is scoped to the CI check and a
+  drive-by edit to four hook scripts would ship untested under a version-monotonicity PR. Do it
+  as its own change with its own gate run, and add an assertion per site — the precedent from
+  rounds 2–6 is that an unpinned fix is a fix that quietly comes back out.
+  (security review round 6, 2026-08-07) **Priority:** P2
 - **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
@@ -405,7 +425,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 35) and every one of them is run by hand before a release. The new
+  version-check 39) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -432,7 +452,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R21, 35 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R22d, 39 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -500,8 +520,20 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   single trailing newline and the anchored form would have rebuilt half the bypass inside its own
   fix. A `RecursionError` escaping `except ValueError` was the same round's Low.
 
-  Five rounds, five defects, each in the layer the previous round had just hardened — the
-  operative lesson is that **an adversarial reader found all five and the test suite found none
+  Round 6 went one layer below all of that: `python3 -c` puts the **current working directory**
+  on `sys.path`, and this script runs from the root of the checkout it is judging — so
+  `import json` resolved against repo content, and a fork author's five-line `json.py` at the
+  repo root made `json.loads` return whatever they liked. Reproduced with base `9.0.0` and head
+  manifests genuinely `1.0.0`: `ok: version 999.999.999, not behind master`, exit 0. Rounds 2–5
+  hardened how the manifest is *parsed*; this replaced the *parser*, so every earlier guard was
+  intact and irrelevant. Fixed with `python3 -I`, chosen over a `sys.path` edit because the CWD
+  entry is one of four channels the audited repo has into the interpreter — `-I` also implies
+  `-E` (PYTHONPATH and friends) and `-s` (user site-packages, hence `usercustomize`) — and
+  patching one channel at a time is exactly how rounds 2 through 5 went. R22/R22b/R22c pin one
+  channel each; R22d is the positive control.
+
+  Six rounds, six defects, each in the layer the previous round had just hardened — the
+  operative lesson is that **an adversarial reader found all six and the test suite found none
   of them**, which is an argument about how much review a comparator is worth, not about the
   tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
   status, because two of them failed closed for an unrelated reason and would have passed an

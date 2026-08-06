@@ -181,7 +181,7 @@ on this machine. The comment above it was **rewritten to say exactly that** rath
 carrying its original justification. A line that reads as load-bearing for a reason that has
 since expired is the precise failure round 3 recorded, one round after recording it.
 
-**Verification.** `test/version-check-test.sh`, 35 assertions, wired into `npm test`. Of the
+**Verification.** `test/version-check-test.sh`, 39 assertions, wired into `npm test`. Of the
 twenty-one mutations written through round 4, twenty
 reddened exactly the assertions naming them and nothing else — including
 every one added by the review rounds: reverting the counter to `grep -c` reddens R8b alone,
@@ -324,9 +324,56 @@ rather than printing. All five measured an empty string and a zero status. R19d 
 control, asserting a clean version still passes — would have been **vacuously green** under an
 exit-status-only check, and it was the message assertion that caught it.
 
-Round 5 verification: 35 assertions; all four new mutations redden exactly the assertions naming
-them (`M22`→R7/R19/R19b/R19b2/R19e/R19c, `M23`→R19b, `M24`→R20, `M25`→R19e), and every earlier
+Round 5 verification: all four new mutations redden exactly the assertions naming them
+(`M22`→R7/R19/R19b/R19b2/R19e/R19c, `M23`→R19b, `M24`→R20, `M25`→R19e), and every earlier
 round's proof-of-concept still fails closed.
+
+**Round 6 found a Critical, and it is the one that got closest to shipping: the repo under
+test was configuring the interpreter judging it.** `python3 -c` sets `sys.path[0]` to `''`,
+which resolves to the current working directory — and this script runs from the root of the
+checkout it is auditing. So `import json` was resolved against **repo content**. A fork PR
+author commits a five-line `json.py` at the repo root beside a genuine backward bump, and
+`json.loads` returns whatever they like. Reproduced end to end: base `9.0.0`, head manifests
+genuinely `1.0.0` — a drastic backward move, the exact hazard this file exists to stop — output
+`ok: version 999.999.999, not behind master (3 manifest(s) compared, all three agree)`, exit 0.
+Every guard added in rounds 1–5 was intact and irrelevant: the forged value is a well-formed
+`X.Y.Z` string, so the bash-side regex, the duplicate-key hook, the `fullmatch` and the
+NUL-proof channel all pass it through. Rounds 2–5 hardened *how the manifest is parsed*; this
+one substituted *the parser*.
+
+**The fix is `python3 -I`, and the choice of `-I` over a `sys.path` edit is the whole lesson of
+the previous four rounds applied in advance.** The CWD entry is one of four channels by which
+the audited repo configures the interpreter — `sys.path[0]`, `PYTHONPATH`, the other `PYTHON*`
+variables, and user site-packages (which also carries `usercustomize`). Patching `sys.path[0]`
+inside `READ_VERSION_PY` would have closed exactly one and left the neighbours, which is the
+shape of every round from 2 to 5: fix the instance, get defeated by a sibling mechanism next
+round. `-I` closes the set in one token — it drops the CWD/script-dir entry and implies `-E`
+and `-s` — and it has been available since Python 3.4. All three reachable channels were
+verified closed against the live fixture, and R22/R22b/R22c pin one each so that "the flag is
+still there" is observable rather than assumed. A python too old for `-I` fails closed with the
+interpreter's own error plus `returned no usable answer` — verified, not assumed.
+
+**Blind spot 6 was not merely incomplete, it was false, and that is the more useful finding.**
+It read "reads the manifests with the stdlib `json` module" — an assumption stated as a
+property, when nothing in the code established it. It now says the claim has to be earned and
+that `-I` is what earns it. A disclosed limit is fine; a disclosed limit that quietly asserts a
+guarantee the code does not provide is worse than no comment, because it answers the question a
+reader would otherwise go and check.
+
+**Blind spot 9 is new and is the honest boundary.** Under `pull_request`, this script and its
+workflow are both read from the PR head, so an author who wants the check gone can edit the
+check. That is inherent to any repo-content-driven required check; the mitigations are branch
+protection on workflow files and a human reading the diff. It does **not** make the round-6 fix
+moot, which is the tempting conclusion: editing the checker is conspicuous in a diff and a
+stray `json.py` at the repo root is not. The fix's value is that it forces the attack into the
+reviewable direction.
+
+Round 6 verification: 39 assertions. Reverting `-I` reddens R22, R22b, R22c and R22d — the
+first three by channel, the fourth because with the flag gone the planted module forges the
+*forward* case too, which is the positive control doing its job from the other side. The
+preference for `-I` over the narrower fix is measured rather than argued: mutating `-I` into
+`sys.path.pop(0)` and nothing else (`M27`) reddens **R22c alone** — the CWD channel closes and
+`PYTHONPATH` stays open. That is the round-2-to-5 failure mode caught in advance, on a stopwatch.
 
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 

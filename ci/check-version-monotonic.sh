@@ -66,6 +66,14 @@
 #      is a real external dependency and the only one -- see the note above read_version
 #      for why a textual reader could not be made correct and why there is no second arm.
 #      A box without python3 gets a named FAIL, never a quiet skip.
+#      Read "the stdlib `json` module" as a claim that has to be EARNED, not a given:
+#      this script runs from the root of the checkout it is judging, and an interpreter
+#      takes part of its configuration from its environment and its CWD. Until round 6
+#      that sentence was simply false -- `python3 -c` puts the CWD on `sys.path`, so a
+#      `json.py` committed by the PR author was the module doing the parsing. `-I` at the
+#      call site is what makes the sentence true; do not remove it. Pinned by R22/R22b/R22c.
+#      A python too old for `-I` (pre-3.4) fails closed with the interpreter's own error
+#      plus `returned no usable answer` -- verified, not assumed.
 #   7. It validates the version FIELD, not the manifest. `json.load` will reject a file
 #      that is not well-formed JSON or not valid UTF-8, so those two classes are covered
 #      as a side effect, but nothing here checks that the rest of the document means
@@ -77,6 +85,14 @@
 #      value validated on the SHELL side is not necessarily the value in the file. The
 #      shape check now runs inside the parser for that reason. Any future field read out
 #      of a manifest has the same problem and needs the same treatment.
+#   9. Under `pull_request` this script and its workflow are both read from the PR head,
+#      so an author who wants the check gone can edit THIS FILE. That is inherent to any
+#      repo-content-driven required check and is not fixable here -- the mitigations are
+#      branch protection on workflow files and a human reading the diff. It is listed so
+#      the check is not mistaken for an authority it does not have. Note this does NOT
+#      make blind spot 6 moot, which is the tempting conclusion: editing the checker is
+#      conspicuous in a diff, and a stray `json.py` at the repo root is not. The whole
+#      value of that fix is that it forces the attack into the reviewable direction.
 set -uo pipefail
 
 # Script-wide and exported. Be honest about what this is worth NOW, because its original
@@ -236,7 +252,22 @@ say("ok:" + v)
 # is neither `ok:` nor `err:` is therefore itself a refusal, not a pass.
 read_version() { # read_version <label>   [JSON on stdin]
   local out v
-  out="$(python3 -c "$READ_VERSION_PY")"
+  # `-I`, and it is load-bearing. Round 6 of the security review: `python3 -c` sets
+  # `sys.path[0]` to `''`, which resolves to the CURRENT WORKING DIRECTORY -- and this
+  # script runs from the root of the very checkout it is judging. So `import json` was
+  # resolved against repo content. A fork PR author drops a five-line `json.py` at the
+  # repo root beside a genuine backward bump and `json.loads` returns whatever they
+  # like. Reproduced end to end: base 9.0.0, head manifests genuinely 1.0.0, output
+  # `ok: version 999.999.999, not behind master`, exit 0. The bash regex below cannot
+  # see it -- the forged value is a perfectly well-formed X.Y.Z string.
+  #
+  # `-I` rather than a `sys.path` edit inside READ_VERSION_PY, because the CWD entry is
+  # one of FOUR channels by which the repo under test configures the interpreter judging
+  # it, and patching one is how rounds 2-4 went. `-I` closes the set: it drops the
+  # CWD/script-dir entry, implies `-E` (ignore PYTHONPATH and the other PYTHON* vars)
+  # and `-s` (ignore user site-packages, which also disables `usercustomize`). Available
+  # since Python 3.4. Anything reading a manifest here must keep it.
+  out="$(python3 -I -c "$READ_VERSION_PY")"
   case "$out" in
     ok:*)  v="${out#ok:}" ;;
     err:*) printf '%s in %s\n' "${out#err:}" "$1" >&2; return 1 ;;

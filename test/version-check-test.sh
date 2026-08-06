@@ -472,9 +472,86 @@ run "$R" master
   && ok "R20 a too-deeply-nested manifest is refused by name, not by traceback" \
   || nok "R20 deep nesting named" "st=$st out=$out"
 
+# --- R22: the repo under test must not be able to configure the interpreter judging it -
+# Round 6 of the security review, and it is the one that got closest to shipping. The
+# check runs from the root of the checkout it is judging, and `python3 -c` puts the CWD
+# on `sys.path` -- so `import json` was resolved against REPO CONTENT. A fork PR author
+# commits a five-line `json.py` next to a genuine backward bump and `json.loads` returns
+# whatever they want. Verified before the fix: base 9.0.0, head manifests genuinely
+# 1.0.0, output `ok: version 999.999.999, not behind master`, exit 0.
+#
+# Three channels are asserted because `-I` closes three and a `sys.path` edit would have
+# closed one. The shape of the previous four rounds was: patch the instance, get defeated
+# by a sibling mechanism next round. A test per channel is what makes "the flag is still
+# there" observable rather than assumed.
+#
+# Each case asserts the BACKWARD message, not just a non-zero exit. A shadowed module can
+# also make python crash, which fails closed for an unrelated reason and would satisfy an
+# exit-status assertion while the version was never actually compared.
+mkshadow() { # mkshadow <name> <filename> <python-source>
+  local name="$1"
+  local fname="$2"
+  local src="$3"
+  local r
+  r="$(mkfixture "$name" 9.0.0 9.0.0 9.0.0)"
+  setv "$r" 1.0.0 1.0.0 1.0.0          # a genuine, drastic BACKWARD move
+  printf '%s\n' "$src" > "$r/$fname"
+  commit_head "$r"
+  printf '%s' "$r"
+}
+
+SHADOW_JSON='def loads(*a, **k): return {"version": "999.999.999"}
+def dumps(o, *a, **k): return chr(34) + str(o) + chr(34)'
+SHADOW_RE='def fullmatch(*a, **k): return True
+def match(*a, **k): return True'
+
+R="$(mkshadow shadow-json json.py "$SHADOW_JSON")"
+run "$R"
+case "$out" in
+  *'would go BACKWARD'*) ok "R22 a repo-root json.py cannot forge the version (module shadowing)" ;;
+  *) nok "R22 json.py shadow refused" "st=$st out=$out" ;;
+esac
+
+R="$(mkshadow shadow-re re.py "$SHADOW_RE")"
+run "$R"
+case "$out" in
+  *'would go BACKWARD'*) ok "R22b a repo-root re.py cannot disable the shape check" ;;
+  *) nok "R22b re.py shadow refused" "st=$st out=$out" ;;
+esac
+
+# PYTHONPATH is the same class arriving by a different door, and it is the channel a
+# `sys.path[0]` fix would leave wide open. The module lives OUTSIDE the fixture so this
+# cannot pass for the R22 reason.
+R="$(mkfixture shadow-env 9.0.0 9.0.0 9.0.0)"
+setv "$R" 1.0.0 1.0.0 1.0.0
+commit_head "$R"
+mkdir -p "$TMP/ppath" && printf '%s\n' "$SHADOW_JSON" > "$TMP/ppath/json.py"
+out="$( cd "$R" && PYTHONPATH="$TMP/ppath" bash "$CHK" master 2>&1 )"; st=$?
+case "$out" in
+  *'would go BACKWARD'*) ok "R22c PYTHONPATH cannot inject a json module (-I implies -E)" ;;
+  *) nok "R22c PYTHONPATH shadow refused" "st=$st out=$out" ;;
+esac
+
+# Positive control, and it is not optional. Every assertion above is satisfied by a check
+# that has simply stopped working -- a python that cannot start refuses everything. This
+# one proves the shadow FIXTURE is the thing being neutralized and not the interpreter:
+# same builder, same planted json.py, a genuinely FORWARD version, must still pass.
+R="$(mkfixture shadow-ok 9.0.0 9.0.0 9.0.0)"
+setv "$R" 9.1.0 9.1.0 9.1.0
+printf '%s\n' "$SHADOW_JSON" > "$R/json.py"
+commit_head "$R"
+run "$R"
+case "$out" in
+  ok:*9.1.0*) ok "R22d a forward bump still passes with json.py present (positive control)" ;;
+  *) nok "R22d shadow positive control" "st=$st out=$out" ;;
+esac
+
 # R21: EVERY tracked file in this repo must be plain text -- NUL-free and valid UTF-8.
 # Not a behaviour of the check; a property of the repo, and it is here because it went
-# wrong five times while round 5 was being written, across four files. Documenting a NUL
+# wrong repeatedly while rounds 5 and 6 were being written -- in this script's subject
+# (`ci/check-version-monotonic.sh`), in this suite, in `DECISIONS.md`, in `TODOS.md`, in a
+# heredoc for a commit message, and in a PR-body draft. No count is given because the
+# honest answer is "more times than were counted at the time". Documenting a NUL
 # byte is one keystroke away from EMBEDDING one, and a single NUL makes GNU grep answer
 # `binary file matches` instead of the matching lines and makes git treat the file as
 # binary in a diff. Worse on this machine: the interactive `grep` shims to ugrep, which
