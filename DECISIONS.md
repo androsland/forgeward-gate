@@ -4,6 +4,82 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
+
+**Date:** 2026-08-06 · **Version:** 0.9.0
+
+**Symptom.** A repo pins `seo.posture: private-shareable` in `.forgeward/config.yml`, exactly
+as `skills/gate/SKILL.md` and `agents/seo-reviewer.md` describe. Nothing reads it. The gate
+classifies by detection and never says the pin was ignored. Separately, a user who writes
+`substitutes: [quality]` or `- "quality"` — both ordinary, valid YAML — keeps getting the
+`NOT COVERED` disclosure they thought they had silenced, with nothing anywhere explaining why.
+
+**Why this got worse before it got better.** The config file was pure prose until 0.8.0: three
+keys documented, zero parsed, uniformly. 0.8.0 gave it its first reader — for
+`standalone.substitutes` only — and a file where *one* key genuinely works is a stronger claim
+that the others do than a file where none do. The gap was the same size and much better hidden.
+
+**Decision 1 — extend the single awk reader; do NOT add a python3 YAML arm.** The obvious fix,
+and the one this repo's own TODOS proposed, was `yaml` when python3 is present with awk as the
+fallback, copying the jq/python3 two-arm pattern in the hooks. Declined on a fact that proposal
+assumed away: **PyYAML is not in the standard library** (verified — no `yaml` in
+`sys.stdlib_module_names`), so `python3` being installed says nothing about `import yaml`
+succeeding. Arm selection would then turn on whether a third-party package happens to be
+present, and the two arms would parse *different shapes* — which is precisely the divergence
+0.7.5 shipped between `jq` and `python3` and V7 now exists to catch. One arm everybody gets
+beats a better arm some people get. Flow sequences and simply-quoted scalars were added to the
+awk instead: both funnel through the same charset, 64-char and 32-item validation, so the
+security envelope is unchanged and the caps are shared rather than per-spelling (E25).
+
+Verified across `gawk`, `mawk` and `busybox awk` rather than reasoned about, following A17.
+The apostrophe is passed in as `awk -v sq="'"` — writing it inside the single-quoted program
+would end the quote, and the usual workaround `"\047"` leans on octal string escapes not every
+awk implements.
+
+**Decision 2 — wire `seo.posture`, and state plainly that `seo.routes` is not honoured.** The
+posture is a bare scalar from a six-value enum: cheap to read, and validated by whole-string
+comparison rather than a charset so an unrecognised value reads as *not pinned* and returns the
+reviewer to detection, instead of reaching a reviewer that has no ruleset for it. `seo.routes`
+is a mapping with glob keys, documented in flow style; parsing it means the YAML parser
+Decision 1 just declined. It is now called out as unread in all three places it appears —
+README, skill, agent — because the failure mode of the alternative is the one this whole entry
+is about: a pin that looks honoured and is not. A partially-honoured key is worse than an
+openly unhonoured one.
+
+**Decision 3 — the probe's two config values ride one line separated by `|`, and awk's exit
+status is not trusted alone.** The END block always prints the separator, so output without one
+means something other than this program produced it; that reads `unreadable` (disclose), never
+present-with-an-empty-list. Same "it ran" vs "it worked" distinction that cost 0.7.3 and 0.7.6,
+pinned by E27 with a shimmed awk that exits 0 and prints nothing usable. Neither value can carry
+a `|` — the substitute charset excludes it, the posture is enum-compared — so config content
+cannot shift the split (E24).
+
+**Marker: schema 4.** `_env_ok` in `forgeward-write-marker.sh` gained the `seo_posture` field in
+the same commit, which is the standing obligation that coupling creates. It is matched there as
+a CHARSET (`[a-z-]*`), not as the six-value enum, and the asymmetry with the fields above it is
+deliberate: the enum is enforced at the source, and a second copy here would drift while buying
+no additional structural constraint, since `[a-z-]` already excludes every character a
+duplicate-key splice needs.
+
+**The trap this sprung, worth more than the feature.** E17 pins that the marker's shape match is
+anchored at *both* ends, by feeding it the probe's genuine output plus an appendix. Adding a
+field to the probe silently invalidates its hardcoded prefix — the payload then fails on the
+prefix instead, and dropping the trailing `$` no longer turns it red. Verified in both
+directions: with the field added to E17's string, dropping `$` reddens E17; with the stale
+string, the whole suite stays green. **Any future probe field must be added to E17's payload as
+well as to `_env_ok`**, or a security assertion silently stops asserting. Noted in the test.
+
+**Not fixed, stated so the limit is not mistaken for coverage.** Nothing validates the config or
+warns on unknown keys, so a typo'd `substitutes:` or an invalid posture is indistinguishable
+from an absent one — both read as "not configured", which is the fail-open direction but still a
+silent one. `seo.routes` remains unread. An unterminated flow sequence (`[a, b`) reads as nothing
+configured rather than as an error. All three are in `TODOS.md`.
+
+Suites: gate 171/171, pre-push 15/15. Eight mutations run against the new assertions (flow rule
+disabled, `unquote` neutered, posture rule disabled, enum → charset, `|` allowed into the
+charset, `_env_ok` anchor dropped, CRLF-tolerant strip tightened, output shape check removed);
+each reddens exactly the assertions that name it and nothing else.
+
 ## RESOLVED — the gate reported a handoff it never performed when gstack was absent
 
 **Date:** 2026-08-06 · **Version:** 0.8.0
@@ -70,6 +146,10 @@ instances, 0.8.0 makes the environment a first-class input:
   turns into a redundant paragraph rather than a hidden gap. The file was pure prose before this
   (documented in two agent files, parsed by nothing); this is its first parser, and it is
   deliberately narrow rather than the beginning of a YAML dependency.
+
+  *Superseded by 0.9.0, which kept the reader-not-a-parser posture but widened the shapes
+  (flow sequences and simply-quoted scalars now parse) and added `seo.posture`. The marker is
+  schema 4 from that version. See the entry above; this paragraph records 0.8.0 as shipped.*
 
 **Also corrected here — three places the repo already described behaviour it did not have,**
 which is how the gap survived this long:

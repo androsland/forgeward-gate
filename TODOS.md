@@ -102,33 +102,33 @@ write-once and effectively gone after merge, which is why they live here now.
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
 0.8.0** — see `## Completed`. What follows is what it did *not* close.
 
-- **`.forgeward/config.yml` now has a parser for exactly one key, and two documented keys
-  still have none.** 0.8.0 gave it its first reader, for `standalone.substitutes`. But
-  `seo.posture` and `seo.routes` are still pure prose — promised to users in
-  `skills/gate/SKILL.md:117` and `agents/seo-reviewer.md:71-73`, parsed by nothing, so a
-  repo that pins its posture there is silently ignored today. The asymmetry is *worse* now
-  than before this lane: one key genuinely works, which makes the other two look like they
-  do. Either wire them to the same reader or say in both files that the pin is not yet
-  honoured. (0.8.0, 2026-08-06) **Priority:** P2
-- **The config reader is a one-shape reader, not a YAML parser, and the shapes it refuses
-  are the ones a real user is most likely to write.** `[a, b]` flow sequences and quoted
-  scalars (`- "quality"`) both read as "nothing configured", so a user who silences an axis
-  in perfectly valid YAML keeps getting the disclosure and has no way to tell why. Failing
-  toward disclosure is the right direction, but a *silently* ignored config is still a bad
-  experience. Cheapest real fix is to use python3's YAML when present and keep the awk
-  reader as the fallback — the hooks already have a jq/python3 two-arm pattern to copy.
-  Note what will not surface this: nothing validates the file or warns on unknown keys, so
-  a typo'd `substitutes:` is indistinguishable from an absent one. (0.8.0, 2026-08-06)
-  **Priority:** P2
-- **The marker's `schema` field is written by nothing-reads-it, and now so is
-  `environment`.** Grepped: outside its own write site and its comment, the only reader of
-  `schema` anywhere is E10 — a test asserting it equals 3. No freshness check consults it,
-  no hook refuses a push over it, and before 0.8.0 nothing read it at all. So the 2 → 3
-  bump is provenance, not a compatibility mechanism,
-  and it cannot protect a future reader from an old marker. If a marker format change ever
+- **Nothing validates `.forgeward/config.yml` or warns on an unknown key, so a typo is
+  indistinguishable from an absent key.** `substitues:`, `postures:`, an invalid posture
+  value, an unterminated flow sequence (`[a, b`) — every one reads as "not configured" and
+  produces exactly the output of a repo with no config at all. The direction is right (a
+  refused shape costs a disclosure you already answered, never a skipped check) but the
+  silence is not: the user has no way to tell a config that was read and understood from one
+  that was read and discarded. The cheap version is a `config_warnings` count in the probe's
+  JSON that the gate renders as one line; the expensive version is a real schema. Note the
+  probe emits JSON with no channel for prose, so this is a shape change, not a `printf`.
+  (0.9.0, 2026-08-06) **Priority:** P2
+- **`seo.routes` is documented and unread, now deliberately and in writing.** 0.9.0 wired
+  `seo.posture` and declined the per-route mapping: glob keys in a flow mapping need the YAML
+  parser the reader exists to avoid. All three mentions (README, `skills/gate/SKILL.md`,
+  `agents/seo-reviewer.md`) now say it has no effect, so this is a disclosed gap rather than
+  a broken promise — but a repo with a marketing site and an app on one origin genuinely
+  wants it, which is the case the whole posture-per-route-group design is built around.
+  Reopening it means taking a YAML dependency outright, not growing the awk.
+  (0.9.0, 2026-08-06) **Priority:** P3
+- **The marker's `schema` field is written by nothing-reads-it, and so is `environment`.**
+  Grepped: outside its own write site and its comment, the only reader of `schema` anywhere
+  is E10 — a test asserting it equals the current number. No freshness check consults it,
+  no hook refuses a push over it, and before 0.8.0 nothing read it at all. So the 2 → 3 → 4
+  bumps are provenance, not a compatibility mechanism,
+  and they cannot protect a future reader from an old marker. If a marker format change ever
   *does* need to be enforced, the version field has to start being read first — and the
   fail-safe direction is already available for free (an unrecognised schema should read as
-  stale, which costs one re-gate). (0.8.0, 2026-08-06) **Priority:** P3
+  stale, which costs one re-gate). (0.8.0, restated 0.9.0 2026-08-06) **Priority:** P3
 - **The probe and the marker writer are now coupled, and the coupling is a standing
   maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
   its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
@@ -141,6 +141,16 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   above `_env_ok` first. Revisit if the probe grows past a handful of fields: at that point the
   regex stops being readable and taking the parser dependency becomes the better trade.
   (security review, 2026-08-06) **Priority:** P2
+
+  **A second obligation was found the first time this was exercised** (0.9.0 added
+  `seo_posture`): **E17's hardcoded payload must be updated in the same commit too.** That
+  assertion pins the shape match's *trailing* anchor by feeding it the probe's genuine output
+  plus an appendix — which only tests the anchor while the opening bytes are a shape `_env_ok`
+  would otherwise accept. A stale payload is rejected on its prefix instead, and dropping the
+  `$` stops turning it red. Verified in both directions by mutation. So a new probe field is
+  now a **three**-file edit, and the third is the one whose omission is silent: `_env_ok`
+  failing loses provenance and reddens E10, while a stale E17 reddens nothing at all and
+  quietly retires a security assertion. (0.9.0, 2026-08-06)
 - **The `awk` call is not locale-pinned, while the `wc -c` three lines above it is.**
   `forgeward-detect-environment.sh:103` runs `LC_ALL=C wc -c`; line 112 runs a bare `awk`.
   Nothing explains the asymmetry, in a file where every other asymmetry is documented. It
@@ -167,15 +177,14 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   means opening the file once and working from that handle — not worth the portability cost
   today. (security review, 2026-08-06) **Priority:** P4
 - **The symlink refusal knowingly breaks a legitimate configuration.** A monorepo that
-  symlinks `.forgeward/config.yml` to a shared config elsewhere in the tree is now ignored
-  (reads `unreadable`, so the disclosure still fires) and must use a regular file. This is
-  documented in the script and in `DECISIONS.md` but **not in any user-facing doc** — the
-  README never mentions the config file's constraints at all, so the first person to hit this
-  will debug it from behavior. Fix is one sentence in the README next to the
-  `standalone.substitutes` mention. Note the containment alternative was declined on
-  portability (`readlink -f` is absent from the bash 3.2/macOS environments this repo targets),
-  not on principle; a portable resolver would reopen it. (security review, 2026-08-06)
-  **Priority:** P3
+  symlinks `.forgeward/config.yml` to a shared config elsewhere in the tree is ignored (reads
+  `unreadable`, so the disclosure still fires) and must use a regular file. The containment
+  alternative was declined on portability (`readlink -f` is absent from the bash 3.2/macOS
+  environments this repo targets), not on principle; a portable resolver would reopen it.
+  **The documentation half is closed** — 0.9.0 added a `.forgeward/config.yml` section to the
+  README stating the refusal, the honoured keys, and the shape limits, so this is no longer
+  discovered from behaviour. The broken configuration itself stands.
+  (security review, 2026-08-06; documented 0.9.0) **Priority:** P4
 - **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E18
   pin the *probe*; the decision to print `NOT COVERED: quality` lives in
   `skills/gate/SKILL.md` Step 1c and is executed by a model. The same is true of every
@@ -320,6 +329,35 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
+  shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
+  `DECISIONS.md`.
+
+  0.8.0 gave `.forgeward/config.yml` its first reader, for `standalone.substitutes` alone —
+  which made the gap *harder* to see, not smaller: a file where one key genuinely works is a
+  stronger claim that the others do than a file where none do.
+
+  Shipped: flow sequences (`[a, b]`) and simply-quoted scalars now parse in both list forms;
+  `seo.posture` is read and validated against the six postures by whole-string comparison, so
+  an unrecognised value returns the reviewer to detection rather than reaching it; marker
+  schema 4 carries `seo_posture`; README gained a `.forgeward/config.yml` section naming the
+  honoured keys and the limits.
+
+  **The python3-YAML arm this file previously recommended was declined, and the reason
+  overturns the recommendation rather than deferring it:** PyYAML is not in the standard
+  library (verified — no `yaml` in `sys.stdlib_module_names`), so `python3` present says
+  nothing about `import yaml` working. That arm would be selected by what happens to be
+  installed and would parse *different shapes* from the fallback — the 0.7.5 divergence, which
+  V7 exists to catch. Extended the single awk instead, verified identical under gawk, mawk and
+  busybox awk.
+
+  E19–E27, all eight mutation-tested. E27 is the one worth remembering: it pins that an awk
+  which *exits 0* while printing nothing usable reads `unreadable` rather than
+  present-with-an-empty-list, and its second clause is a positive control, because
+  `unreadable` is also what a genuinely broken fixture produces. E17 had to be updated in the
+  same commit or it would have silently become vacuous — see the coupling item above, which
+  that discovery extended.
 
 - **P2: the gate reported a `/ship` handoff it never performed when gstack was absent.**
   Fixed 2026-08-06, shipped in 0.8.0. Closes the Option B decision, the README quality
