@@ -4,6 +4,69 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## DECISION — version monotonicity is enforced in CI, because the gate structurally cannot see it
+
+**Date:** 2026-08-06 · **Version:** unchanged (0.9.0 — this touches no shipped file)
+
+**Hazard.** The plugin version lives in three manifests (`package.json`,
+`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) and nothing checked that a
+merge moved it forward, so **merge ORDER was load-bearing** whenever two version-bumping PRs
+were open at once. On 2026-08-06 #17 bumped to 0.7.5 and #18 to 0.7.6; merging #17 second
+would have taken the marketplace manifest 0.7.6 → 0.7.5, and most plugin-manager update logic
+reads a backward version as no-op-or-worse rather than as an upgrade. That instance was
+avoided **by hand**, by merging #17 first. The hazard was never fixed, only dodged.
+
+**Decision 1 — CI, not the gate, and this is structural rather than a preference.** V1–V3
+deliberately neutralize a version-only bump in the substantive-diff hash so a release does not
+force a spurious re-gate — and that neutralization is **direction-blind**. A backward bump is
+exactly as invisible to the hash as a forward one, so nothing downstream of the hash can see
+this class at all. Catching it needs a comparison of two refs, which is what CI has and a
+local pre-push hook does not. `.github/workflows/version-check.yml` is the repo's first CI
+workflow; `ci/check-version-monotonic.sh` is the check, runnable by hand with the same
+arguments.
+
+**Decision 2 — the rule is "never backward", not "always bump".** Equality passes. Most PRs
+here are docs or fixes that leave the version alone (#21 is one, and so is this one), and a
+check demanding a bump on every branch would be red on the common case — which is how a
+required check gets switched off rather than fixed. Only a strict decrease is refused. Pinned
+from both sides by R1/R2: a comparator that refuses everything is as broken as one that
+refuses nothing, and only the paired assertions can tell them apart.
+
+**Decision 3 — refuse what it cannot order; never guess.** A prerelease (`0.10.0-rc1`) has an
+ordering this script does not implement, and a manifest carrying two `"version"` fields has no
+unambiguous answer. Both exit 1 with the reason named. That is the opposite of the direction
+the gate hook takes and deliberately so: this runs in CI, where a false red costs one human
+glance, while the hook fires on every Bash tool call and a false red wedges the session.
+
+**Decision 4 — zero comparisons is a refusal, not a pass.** If the base ref does not resolve
+(a shallow checkout) or carries none of the manifests, the script exits 1 rather than printing
+`ok`. Cost: the one-time bootstrap PR that first introduces the manifests goes red and needs a
+human to wave it through. Accepted — it happens once per repo, and the alternative is a check
+that is silently inert exactly where it has never run before.
+
+**Two things this took with it.**
+
+The obvious comparator is wrong. `major*1000000 + minor*1000 + patch` silently **ties**
+`1.0.1000` with `1.1.0`, so a backward merge across that boundary passes clean; the comparison
+is component-wise, which has no place-value ceiling. Pinned by R6/R6b. A plain string
+comparison is wrong in a nearer way — it calls `0.10.0` *behind* `0.9.0`, which this repo will
+hit on its next minor. Pinned by R5/R5b.
+
+The version validator's first draft was `printf | grep -qx`, which is **the P1 defect this
+repo already paid for once**: `grep -q` exits on match and can SIGPIPE the `printf` still
+writing to it, and `set -o pipefail` then promotes 141 to the pipeline status, so the test
+reports NO-MATCH on input it just matched. Replaced with a bash `[[ =~ ]]`, which forks
+nothing. `grep -c` and `grep -o` in the same function drain to EOF and are unaffected — only
+an early-exit reader can orphan its writer. The comment at that line says so, because the
+tempting edit is to put `grep -q` back.
+
+**Verification.** `test/version-check-test.sh`, 15 assertions, wired into `npm test`. All ten
+mutations reddened exactly the assertions naming them and nothing else — and mutation testing
+**earned its place here**: the zero-comparison floor (Decision 4) reddened *nothing* until R12
+was written for it, so that guard was unpinned and would have read as covered. The live
+direction was proven on this repo rather than only in fixtures: the three manifests were
+edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1.
+
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 
 **Date:** 2026-08-06 · **Version:** 0.9.0

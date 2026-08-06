@@ -321,26 +321,56 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
   awk-based design. Decide whether to keep it as an archaeological record or drop
   it. (PR #8, 2026-08-01) **Priority:** P4
-- **Nothing checks that a merge moves the version FORWARD, so merge order is load-bearing
-  whenever two version-bumping PRs are open.** Raised by the supply-chain reviewer on the
-  0.7.6 branch: #17 bumped to 0.7.5 and #18 to 0.7.6, so #17 merging *second* would have
-  taken the marketplace manifest 0.7.6 → 0.7.5, and most plugin-manager update logic reads a
-  backward version as no-op-or-worse rather than as an upgrade. **That instance was avoided
-  by merging #17 first (2026-08-06), by hand — the hazard is not fixed, only dodged.** The
-  version lives in three manifests and the only thing keeping them monotonic is whoever is
-  paying attention at merge time. A CI assertion that `plugin.json`'s version is strictly
-  greater than the base branch's would catch it without anyone having to remember. Note what
-  will NOT catch it: V1–V3 deliberately neutralize a version-only bump in the diff hash so a
-  release does not force a spurious re-gate, and that neutralization is direction-blind — a
-  backward bump is just as invisible to the hash as a forward one. The gate is structurally
-  the wrong layer for this; it belongs in CI. (0.7.6 supply-chain review, 2026-08-06)
-  **Priority:** P2
+- **`actions/checkout` is pinned to the `v4` tag, not a commit SHA.** A SHA pin is the
+  stricter supply-chain posture for a third-party action and is the right end state. Not
+  done at authoring time because no SHA had been verified, and an unverified SHA typed from
+  memory is strictly worse than a tag from the first-party publisher — the fix is to look
+  one up and pin it, in a commit that says which release it corresponds to. Note the pin
+  also needs a refresh policy, or it becomes a stale-action problem instead.
+  (CI version check, 2026-08-06) **Priority:** P3
+- **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
+  version-check 15) and every one of them is run by hand before a release. The new
+  `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
+  documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
+  because that sensitivity was measured, not guessed — and a flaky *required* check is worse
+  than no check, because the first red teaches everyone to re-run rather than to read. Wiring
+  them in means first establishing they are green on a shared runner under CI's own load, not
+  just on this machine. Until then "the suite passed" rests on the author remembering.
+  (CI version check, 2026-08-06) **Priority:** P2
 - **The three merged PR bodies #1, #2 and #3 carry a `🤖 Generated with Claude Code`
   byline.** Cosmetic and historical; noted only so it is a deliberate choice to
   leave them rather than an oversight. Newer PRs do not carry it.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P2: nothing checked that a merge moved the version FORWARD, so merge order was
+  load-bearing whenever two version-bumping PRs were open.** Fixed 2026-08-06. Full
+  reasoning in `DECISIONS.md`.
+
+  The live instance — #17 to 0.7.5 and #18 to 0.7.6, where merging #17 second walks the
+  marketplace manifest backward — was avoided by merging #17 first, by hand. Nothing was
+  keeping three manifests monotonic except whoever was paying attention at merge time.
+
+  Shipped: `ci/check-version-monotonic.sh` (never-backward across all three manifests, plus
+  a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
+  repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
+  checked, so the comparison would be against itself and green vacuously), and
+  `test/version-check-test.sh` (R1–R12, wired into `npm test`).
+
+  Two comparator traps are pinned rather than merely avoided. `major*1000000 +
+  minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
+  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b). And the version
+  validator's first draft was `printf | grep -qx` — the P1 SIGPIPE/pipefail defect already
+  paid for once here — now a fork-free `[[ =~ ]]` with a comment at the line saying why the
+  tempting edit is wrong.
+
+  **Mutation testing earned its place and should not be skipped on the next one like it:**
+  the zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that
+  read as covered was in fact unpinned. Nine of the ten mutations reddened exactly the
+  assertions naming them; the tenth was a harness-escaping artifact and reddens R11 correctly
+  when applied properly — which is its own reminder that a mutation reporting "vacuous" is a
+  claim to verify, not a finding to accept.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
