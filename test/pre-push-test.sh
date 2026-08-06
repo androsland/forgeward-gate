@@ -107,6 +107,54 @@ pp "$R" "HEAD $SHA_G refs/heads/main $RSHA"$'\n'
 pp "$R" "HEAD $SHA_BAD refs/heads/main $RSHA"$'\n'
 [ "$RC" = 1 ] && ok "HEAD source of an ungated commit -> BLOCKED" || nok "HEAD-source ungated blocked" "rc=$RC out=$OUT"
 
+# P14: marker_get must trust jq's EXIT STATUS, not just its output.
+#
+# This copy of marker_get had drifted from gate-check.sh's in two ways at once: it
+# discarded jq's exit status, and it still used print() instead of sys.stdout.buffer.write
+# (DECISIONS.md recorded that second fix as landed; it had only ever landed next door).
+#
+# The exit-status half is what this pins. `command -v jq` succeeding means jq is
+# INSTALLED, not that it RUNS; while it was installed-and-broken, every marker read came
+# back empty, is_fresh() returned 1, and EVERY push was refused with the python3 fallback
+# sitting one branch away and unreachable. Fail-closed, so nothing shipped ungated — but
+# a hook that blocks every push regardless of the marker is not enforcing anything.
+#
+# The print() half is NOT observable on POSIX: print() appends "\n" and `$( )` strips it,
+# so both forms produce identical bytes here. It only diverges on Windows, where Python
+# translates that "\n" to "\r\n" in text mode and `$( )` strips only the LF — the stray
+# CR then rides on `base`, fails to resolve as a ref, and a fresh marker reads as stale.
+# Stated rather than asserted, because faking a CRLF stdout would test the fake. What
+# catches it instead is A19 in gate-test.sh, which pins the two copies byte-identical.
+#
+# Own repo, deliberately WITHOUT any version-bearing manifest: forgeward-diff-hash.sh
+# consults jq only to canonicalize those, so this leaves marker_get as the one jq
+# consumer on the path and a red result has one cause.
+R3="$TMP/repo-markerget"; git init -q "$R3"
+( cd "$R3"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  git config forgeward.gate enabled
+  echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
+  git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
+  "$WRITE" main "privacy" ) >/dev/null 2>&1
+SHA_MG="$(git -C "$R3" rev-parse refs/heads/gated)"
+SHA_MGU="$(git -C "$R3" rev-parse refs/heads/ungated)"
+
+JQFAIL="$TMP/shadow-jq"; mkdir -p "$JQFAIL"
+printf '#!/bin/sh\nexit 1\n' > "$JQFAIL/jq"; chmod +x "$JQFAIL/jq"
+ppjq() { OUT="$( cd "$1" && printf '%s' "$2" | PATH="$JQFAIL:$PATH" "$PREPUSH" origin /nonexistent.git 2>&1 )"; RC=$?; }
+
+pp   "$R3" "refs/heads/gated $SHA_MG refs/heads/gated $RSHA"$'\n';   RC_HEALTHY=$RC
+ppjq "$R3" "refs/heads/gated $SHA_MG refs/heads/gated $RSHA"$'\n';   RC_BROKEN=$RC
+# The control that makes this non-vacuous: exit 0 also means "the hook bailed early"
+# (missing tooling and a non-git cwd both fail OPEN by design). Under the SAME broken jq
+# an ungated ref must still be BLOCKED, which proves the enforcer actually ran.
+ppjq "$R3" "refs/heads/ungated $SHA_MGU refs/heads/ungated $RSHA"$'\n'; RC_CONTROL=$RC
+
+{ [ "$RC_HEALTHY" = 0 ] && [ "$RC_BROKEN" = 0 ] && [ "$RC_CONTROL" = 1 ]; } \
+  && ok "jq present but exiting 1 -> a valid marker is still READ (python3 answers; gated ref allowed, ungated still blocked)" \
+  || nok "marker_get discards jq's exit status (a broken jq refuses every push, gated or not)" \
+         "healthy=$RC_HEALTHY broken=$RC_BROKEN control=$RC_CONTROL (want 0/0/1)"
+
 # P10 (opt-in safety): a repo that never enabled the gate is a NO-OP, even for an
 # ungated ref — so a shared/global pre-push hook can't block unrelated repos.
 R2="$TMP/repo2"; git init -q "$R2"

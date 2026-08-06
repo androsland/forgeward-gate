@@ -183,6 +183,16 @@ CASES
 # because an earlier version of the source comment claimed raw-text matching "cannot
 # hide anything", which this falsifies.
 #
+# One case in that group is written `g\"\"it push` rather than `g""it push`, and the
+# escaping is load-bearing: pretool() assembles its JSON with raw printf, so the bare
+# form emits two adjacent strings and the payload is not JSON at all. It passed for
+# years by short-circuiting on an empty command — precisely the hollow "allow" A9 below
+# exists to catch, in the one place A9 does not look. Escaped, the field decodes to
+# `g""it push` and the matcher is actually asked, which is what the line claims to test.
+# (It still allows: the disclosure stands, it is now earned.) Found when the
+# unparseable-input fix at A20 turned this red — the case's verdict had been coming from
+# the harness rather than from the code under test.
+#
 # The QUOTED COMMAND WORD group (`'git' push` and friends) is the uncomfortable one:
 # each really executes. It is here rather than fixed because the only thing separating
 # `git 'push'` from `echo 'the command is git push'` is command position, and any rule
@@ -200,7 +210,7 @@ allow|git -C /some/path push
 allow|'git' push
 allow|git 'push'
 allow|g'i't push
-allow|g""it push
+allow|g\"\"it push
 allow|gh 'pr' create
 allow|git pu''sh
 allow|git${IFS}push
@@ -519,6 +529,187 @@ if [ -n "$_alt_awks" ]; then
     || nok "A17: residue-length guard misbehaves under a byte-oriented awk" "$_a17_bad"
 else
   ok "A17: byte-oriented awk comparison SKIPPED (needs mawk or busybox present)"
+fi
+
+# A18: marker_get must trust jq's EXIT STATUS, not just its output.
+#
+# A13/A14 cover a broken jq at the FRONT of the hook (json_get, reading the tool_input).
+# They cannot see the back of it: with no marker present the hook denies either way, so
+# a marker_get that returns empty on every read is indistinguishable from a correct one.
+# That is exactly why this third instance of the error-path class outlived the round that
+# fixed json_get and strip_quoted — every existing assertion was blind to it.
+#
+# The failure it pins is UNDER-approval, not under-denial: a jq that is installed but
+# fails at runtime made every marker read empty, so every gated branch re-gated forever
+# and the python3 fallback sitting beside it was unreachable. Safe, and still a bug.
+#
+# Its own repo, and deliberately WITHOUT any of the three version-bearing manifests:
+# forgeward-diff-hash.sh consults jq only to canonicalize those, so a manifest-free repo
+# leaves marker_get as the single jq consumer on this path. Shadowing jq then changes
+# exactly one thing, and a red result has exactly one cause.
+_MG="$TMP/repo-markerget"
+git init -q "$_MG"
+( cd "$_MG"
+  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
+  git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
+  "$WRITE" main "privacy" ) >/dev/null 2>&1
+
+_mg_push() { # _mg_push <path-prefix|empty> <branch> -> hook stdout
+  git -C "$_MG" checkout -q "$2"
+  if [ -n "$1" ]; then
+    printf '{"cwd":"%s","tool_input":{"command":"git push"}}' "$_MG" | PATH="$1:$PATH" "$CHECK" pretooluse
+  else
+    printf '{"cwd":"%s","tool_input":{"command":"git push"}}' "$_MG" | "$CHECK" pretooluse
+  fi
+}
+
+_mg_healthy="$(_mg_push ""         gated)"    # control: the marker is good to begin with
+_mg_broken="$( _mg_push "$JQ_FAIL" gated)"    # the assertion: python3 must answer instead
+# The OTHER control, and the one that makes this non-vacuous: an empty hook stdout also
+# means "the hook exited before it looked at anything". Under the same broken jq, a
+# branch with NO marker must still DENY — which proves the front half ran, the matcher
+# fired, and the freshness check was genuinely reached on the line above.
+_mg_control="$(_mg_push "$JQ_FAIL" ungated)"
+
+if [ -z "$_mg_healthy" ] && [ -z "$_mg_broken" ] && denies "$_mg_control"; then
+  ok "A18: jq present but exiting 1 -> a valid marker is still READ (python3 answers; gated branch stays allowed, ungated still denied)"
+else
+  nok "A18: marker_get discards jq's exit status (a broken jq makes every marker read empty)" \
+      "healthy=${_mg_healthy:-allow} broken=${_mg_broken:-allow} control=$(denies "$_mg_control" && echo deny || echo "${_mg_control:-allow}")"
+fi
+
+# A19: the two marker_get implementations must stay byte-identical.
+#
+# gate-check.sh and pre-push.sh each carry their own copy — they are separate entry
+# points with no shared library, which is deliberate (a sourced helper is one more file
+# a hook can fail to find). The cost is drift, and drift is what actually happened:
+# the 0.7.3 fix that gave marker_get sys.stdout.buffer.write instead of print() landed
+# in gate-check.sh only, while DECISIONS.md recorded it as done. For two years' worth of
+# reading, the repo's own record described the intent rather than the state.
+#
+# Comparing the FUNCTION BODIES (the header line is excluded, so each file keeps its own
+# argument comment) makes the duplication self-enforcing: the next person to fix one copy
+# gets a red suite until they fix the other. Guarding on non-empty means a broken
+# extraction fails loudly instead of comparing "" with "".
+_mg_body() { awk '/^marker_get\(\)/{f=1;next} f{print} f&&/^\}$/{exit}' "$1"; }
+_mg_a="$(_mg_body "$PLUGIN/scripts/forgeward-gate-check.sh")"
+_mg_b="$(_mg_body "$PLUGIN/scripts/forgeward-pre-push.sh")"
+if [ -n "$_mg_a" ] && [ "$_mg_a" = "$_mg_b" ]; then
+  ok "A19: marker_get is byte-identical in gate-check.sh and pre-push.sh (the twins cannot drift silently)"
+else
+  nok "A19: marker_get has drifted between gate-check.sh and pre-push.sh" \
+      "$([ -z "$_mg_a" ] && echo 'extraction returned nothing — the function shape changed' || diff <(printf '%s\n' "$_mg_a") <(printf '%s\n' "$_mg_b") | tr '\n' ' ')"
+fi
+
+# A20/A21: input that cannot be PARSED must not read as "there is no command".
+#
+# A13/A14 pin json_get's JQ arm: a jq that runs but fails now falls through instead of
+# returning a bogus empty answer. That fix was NEUTRALIZED one branch down. The python3
+# arm wrapped the json.load and the field traversal in a single `except Exception: pass`,
+# so unparseable input came back empty with status 0 — exactly the observation an absent
+# field produces. `cmd` was empty, the pre-filter saw no verb, and the hook exited 0.
+#
+# So the measured behaviour was: a truncated payload carrying a real publish verb was
+# ALLOWED — with jq present (jq fails, falls through, python3 swallows) AND with jq
+# absent (python3 swallows directly). Two arms, one hole, and the arm that was fixed
+# could not close it alone. That is why this is asserted on BOTH paths below rather than
+# only on the one where the defect was first noticed.
+#
+# A21 is the half that keeps the fix from being worse than the bug. This hook fires on
+# EVERY Bash tool call, so denying on any unreadable payload would wedge the entire
+# session the moment jq or python3 broke. The raw-text check narrows it to payloads whose
+# bytes could plausibly be a publish; everything else is allowed through untouched.
+# A jq-less PATH: the REAL PATH with each jq-bearing directory swapped for a mirror of
+# itself minus jq. Order is preserved, so the only difference from a normal environment
+# is the one under test.
+#
+# Not a hand-written list of the tools the hook uses, which is how the first draft went
+# wrong: it omitted `dirname`, the script died on its second line, emitted nothing, and
+# "no output" is indistinguishable from ALLOW — a green assertion proving nothing. Not a
+# mirror of the WHOLE path either: that was 14882 symlinks and 80 seconds here, and worse
+# on a fatter box. Only the directories that actually carry jq are copied (111 entries).
+_NOJQ20="$TMP/nojq-a20"; mkdir -p "$_NOJQ20"
+_nojq_path=""
+for _d in $(printf '%s' "$PATH" | tr ':' '\n'); do
+  [ -d "$_d" ] || continue
+  if [ -x "$_d/jq" ]; then
+    for _f in "$_d"/*; do
+      _n="${_f##*/}"
+      [ "$_n" = "jq" ] && continue
+      [ -x "$_f" ] && [ ! -e "$_NOJQ20/$_n" ] && ln -s "$_f" "$_NOJQ20/$_n" 2>/dev/null
+    done
+    _rep="$_NOJQ20"
+  else
+    _rep="$_d"
+  fi
+  case ":$_nojq_path:" in *":$_rep:"*) ;; *) _nojq_path="${_nojq_path:+$_nojq_path:}$_rep" ;; esac
+done
+_hook_path() { printf '%s' "$2" | PATH="$1" "$CHECK" pretooluse; }   # $1 = the FULL PATH
+
+_a20_pub="$(printf '{"cwd":"%s","tool_input":{"command":"git push"}}' "$_MG")";  _a20_pub="${_a20_pub%\}\}}"
+_a20_plain="$(printf '{"cwd":"%s","tool_input":{"command":"ls -la"}}' "$_MG")";  _a20_plain="${_a20_plain%\}\}}"
+
+if command -v python3 >/dev/null 2>&1; then
+  # Positive controls first, and they carry the weight: DENY is also what a hook that
+  # dies before doing anything produces once this guard exists, and ALLOW is what one
+  # that dies at line 1 produced before it. Both shim PATHs must therefore be shown to
+  # run the whole script — valid JSON, ungated branch, correct verdict — or A20/A21
+  # below are measuring the shim rather than the fix.
+  git -C "$_MG" checkout -q ungated
+  _a20_valid="$(printf '{"cwd":"%s","tool_input":{"command":"git push"}}' "$_MG")"
+  _a20_setup=""
+  PATH="$_nojq_path" command -v jq >/dev/null 2>&1 && _a20_setup="$_a20_setup [jq still reachable on the jq-less PATH]"
+  denies "$(_hook_path "$JQ_FAIL:$PATH" "$_a20_valid")" || _a20_setup="$_a20_setup [broken-jq shim: hook did not run end to end]"
+  denies "$(_hook_path "$_nojq_path"    "$_a20_valid")" || _a20_setup="$_a20_setup [no-jq shim: hook did not run end to end]"
+  [ -n "$_a20_setup" ] && nok "A20 setup: a shim PATH is not exercising the hook — the arms below prove nothing" "$_a20_setup"
+
+  _a20_bad=""
+  # …with jq installed but failing (json_get falls through to python3)
+  denies "$(_hook_path "$JQ_FAIL:$PATH" "$_a20_pub")"  || _a20_bad="$_a20_bad [broken-jq: allowed an unparseable publish]"
+  # …and with no jq at all (python3 is the only arm)
+  denies "$(_hook_path "$_nojq_path"    "$_a20_pub")"  || _a20_bad="$_a20_bad [no-jq: allowed an unparseable publish]"
+  [ -z "$_a20_bad" ] \
+    && ok "A20: UNPARSEABLE hook input carrying a publish verb -> DENIED on both arms (a payload that cannot be read is not an absent field)" \
+    || nok "A20: unparseable hook input fails OPEN (json_get conflates 'not JSON' with 'field absent')" "$_a20_bad"
+
+  # A22: the SAME unreadable input on the /ship expansion path, where the stakes differ.
+  # There the empty `cwd` means no cd happened, so is_fresh() would answer for whatever
+  # directory the hook process inherited — a fresh marker in an unrelated repo would let
+  # the ship through. Blocked unconditionally, with no raw-text narrowing, because this
+  # path fires only on a typed /ship: a false block costs one retry, not a wedged session.
+  # The gated-branch control proves the block comes from the unreadable flag and not from
+  # the expansion path simply refusing everything.
+  # The hook process is deliberately run FROM the gated repo. That is what makes this
+  # non-vacuous, and it was not obvious: the first draft ran from the harness's own cwd,
+  # which at this point has no marker, so deleting the guard entirely still produced
+  # exit 2 and the assertion stayed green. The mutation test caught it. Run from a repo
+  # whose current branch IS gated and the two verdicts separate — without the guard the
+  # inherited marker satisfies is_fresh() and /ship proceeds for a repo the payload never
+  # named; with it, the halt fires before is_fresh() is ever consulted.
+  git -C "$_MG" checkout -q gated
+  _exp_from() { # _exp_from <cwd> <PATH> <payload> -> exit code
+    ( cd "$1" && printf '%s' "$3" | PATH="$2" "$CHECK" expansion >/dev/null 2>&1 ); echo $?
+  }
+  _a22_valid="$(printf '{"cwd":"%s"}' "$_MG")"
+  _a22_bad_json="${_a22_valid%\}}"
+  _a22_bad=""
+  [ "$(_exp_from "$_MG" "$JQ_FAIL:$PATH" "$_a22_valid")"    = 0 ] || _a22_bad="$_a22_bad [control: a GATED branch was blocked anyway]"
+  [ "$(_exp_from "$_MG" "$JQ_FAIL:$PATH" "$_a22_bad_json")" = 2 ] || _a22_bad="$_a22_bad [broken-jq: unreadable input did NOT halt /ship]"
+  [ "$(_exp_from "$_MG" "$_nojq_path"    "$_a22_bad_json")" = 2 ] || _a22_bad="$_a22_bad [no-jq: unreadable input did NOT halt /ship]"
+  [ -z "$_a22_bad" ] \
+    && ok "A22: UNPARSEABLE input on the /ship expansion path -> HALTED (the repo it applies to is unknown), while a gated branch still ships" \
+    || nok "A22: unreadable input lets /ship proceed against whatever repo the hook inherited" "$_a22_bad"
+
+  _a21_bad=""
+  [ -z "$(_hook_path "$JQ_FAIL:$PATH" "$_a20_plain")" ] || _a21_bad="$_a21_bad [broken-jq: denied ordinary Bash]"
+  [ -z "$(_hook_path "$_nojq_path"    "$_a20_plain")" ] || _a21_bad="$_a21_bad [no-jq: denied ordinary Bash]"
+  [ -z "$_a21_bad" ] \
+    && ok "A21: UNPARSEABLE hook input with no publish verb -> still ALLOWED (a broken JSON tool cannot wedge every Bash call)" \
+    || nok "A21: the unparseable-input guard OVER-denies and would wedge ordinary work" "$_a21_bad"
+else
+  ok "A20/A21: unparseable-input arms SKIPPED (needs python3)"
 fi
 
 # S5: PASS marker written -> publish allowed

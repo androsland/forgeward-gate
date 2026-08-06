@@ -4,6 +4,80 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — the error-path class was fixed one branch at a time, so the fixes cancelled each other out
+
+**Date:** 2026-08-06 · **Version:** 0.7.6
+
+**Symptom.** Three separate defects, all the same shape, all still live after two rounds of
+fixing that shape:
+
+1. A `git push` on a branch with a valid, fresh PASS marker was refused on every attempt, on a
+   box where `jq` is installed but broken. Not intermittent — permanent, and unfixable from the
+   user's side short of repairing jq, because the python3 fallback sitting next to it was
+   unreachable.
+2. `pre-push.sh`'s `marker_get` still used `print()`, so on Windows the marker's `base` came back
+   with a trailing CR, failed to resolve as a ref, and a fresh marker read as stale.
+3. **A hook payload that is not valid JSON, carrying a real publish verb, was ALLOWED** — with
+   jq present and with jq absent. Measured on both paths (`test/gate-test.sh` A20).
+
+**Cause — one class, four instances, two of which were "already fixed".** The class is *an error
+path that returns the same value as a legitimate empty result*, so the caller cannot tell
+"the helper failed" from "there is nothing there". `json_get` (0.7.3) and `strip_quoted` (0.7.3)
+were fixed for it. `marker_get` was not, in either copy.
+
+The third symptom is the one worth remembering, because it shows how a fix can be *undone by the
+code it delegates to*. 0.7.3 made `json_get`'s **jq** arm check its exit status and fall through
+to python3 — correct, and pinned by A13/A14. But python3's arm wrapped `json.load` and the field
+traversal in a single `except Exception: pass`, which returns empty with status 0. So on malformed
+input the sequence was: jq exits non-zero → the new fall-through fires exactly as designed →
+python3 swallows the parse error → empty command → pre-filter sees no verb → `exit 0`. The
+fall-through delivered control to a branch with the same bug, and the tests that pinned the jq arm
+could not see it, because with a broken jq **and** no marker the hook denies for an unrelated reason.
+
+**Why it survived two rounds.** `marker_get` fails CLOSED (an unreadable marker reads as ungated),
+so it was deliberately left alone at 0.7.3 rather than widen a security-relevant diff. That
+reasoning was sound and the conclusion was still wrong twice over: fail-closed here means *every
+push refused*, which is not "safe", it is a hook that has stopped enforcing anything and started
+blocking everything; and the same reasoning did not transfer to `json_get`'s python arm, which
+fails OPEN. "It errs safe" answers whether to hurry, not whether to fix.
+
+**Decision.**
+- `marker_get` captures jq's output, checks its status, and falls through to python3 on failure —
+  in **both** `gate-check.sh` and `pre-push.sh`, byte-identical. It cannot open the gate: python3
+  parses the same file, so a malformed marker fails both arms and still reads as ungated.
+- `json_get`'s python arm splits the parse from the traversal. Parse failure exits 1; an absent
+  field still exits 0 with empty stdout, because that is a legitimate answer.
+- On unreadable input the PreToolUse hook decides from the **raw bytes**: if they contain a publish
+  verb it denies, otherwise it allows. Scoped that way on purpose — this hook fires on every Bash
+  tool call, so denying outright on an unreadable payload would wedge the whole session the moment
+  the JSON tool broke. Same fallback A7 already uses when awk is missing.
+- The **expansion** path halts unconditionally on unreadable input, with no raw-text narrowing. The
+  asymmetry is deliberate: an empty `cwd` means no `cd` happened, so `is_fresh()` would answer for
+  whatever directory the hook process inherited, and a fresh marker in an unrelated repo would let
+  the `/ship` through. That path runs only on a typed `/ship`, so a false halt costs one retry —
+  the reason the pretooluse path cannot afford the same rule. Raised as an informational note by
+  the security review of this branch ("`_unreadable` is computed but unused in expansion mode");
+  it is closed here rather than commented, because the unused flag was the visible half of a real
+  fail-open.
+
+**Accepted cost.** A mangled payload that merely MENTIONS a publish verb now costs a retry. It buys
+back a silent fail-open, and it can only occur in a state where the hook's input is already corrupt.
+
+**The structural fix, and the one that matters most.** A19 asserts the two `marker_get` bodies are
+byte-identical. The scripts duplicate the helper deliberately — separate entry points, no shared
+library, one less file a hook can fail to find — and the cost of that choice is drift. Drift is
+what happened: the 0.7.3 byte-writing fix landed next door and `DECISIONS.md` recorded it as done,
+so for three releases the repo's own record described the intent rather than the state. That
+paragraph is now corrected in place. A test is the only thing that keeps a deliberate duplicate
+honest; a note in a decisions file is not.
+
+**Blind spot, stated so it is not mistaken for coverage.** The `print()` → `sys.stdout.buffer.write`
+half of the `pre-push.sh` fix is **not observable on POSIX**: `print()` appends `\n` and `$( )`
+strips it, so both forms produce identical bytes here. It only diverges on Windows, where Python
+translates that `\n` to `\r\n` in text mode. Faking a CRLF stdout would test the fake. What catches
+it instead is A19's byte-parity assertion — indirectly, and only for as long as the twin stays
+correct.
+
 ## RESOLVED — the same manifest hashed differently under `jq` than under the `python3` fallback
 
 **Date:** 2026-08-06
@@ -287,7 +361,9 @@ that one test and restored, since it also changes `case` semantics and the artif
 above depends on those). The pre-filter deliberately stays case-sensitive: a real publish
 always carries a lowercase `push`/`create`, so the cheap path stays exact. Pinned by A12.
 
-`marker_get` got the same byte-writing treatment as `json_get`. Its values are
+`marker_get` got the same byte-writing treatment as `json_get`. **Correction, 2026-08-06:
+this described the intent, not the state — it landed in `gate-check.sh` only, and the copy in
+`pre-push.sh` kept `print()` for another three releases. See the 0.7.6 entry at the top.** Its values are
 single-line so the continuation bug never applied, but `print()`'s trailing newline still
 becomes CRLF on Windows and `$(...)` strips only the LF — the surviving CR rides along on
 `base`, which is then passed to `forgeward-diff-hash.sh` as a ref, fails to resolve, and

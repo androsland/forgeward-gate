@@ -62,10 +62,23 @@ json_get() {
     : # jq is installed but did not run — fall through and let python3 answer
   fi
   [ "$_HAVE_PY" = 1 ] || return 1
+  # TWO try blocks, not one, and the split is the whole point. A single
+  # `except Exception: pass` around both the load and the traversal made
+  # "the input is not JSON" and "the field is not in it" the same observation —
+  # the identical conflation the jq arm above was fixed for, left live one branch
+  # down, where it silently NEUTRALIZED that fix: on malformed input jq exits
+  # non-zero, control falls through to here, and here it came back empty with
+  # status 0. Measured, not reasoned: with jq present AND with jq absent, a
+  # truncated payload carrying a real publish verb was ALLOWED.
+  #   parse failure  -> exit 1, so the caller can tell it learned nothing
+  #   absent field   -> exit 0 with empty stdout, which is the legitimate answer
   printf '%s' "$input" | python3 -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+try:
     for k in path: d=d[k]
     sys.stdout.buffer.write((d if isinstance(d,str) else "").encode("utf-8","surrogateescape"))
 except Exception: pass' "$1"
@@ -78,18 +91,38 @@ except Exception: pass' "$1"
 # to resolve, the error is swallowed, and a genuinely fresh marker reads as stale. That
 # direction is safe (an extra gate run, never a false PASS) but it is still wrong, and
 # leaving the twin of a just-fixed bug in place two functions away is how it survives.
+#
+# It also discarded jq's EXIT STATUS, the same way `json_get` did above. That is the
+# third instance of this class in this file's history (`json_get`, `strip_quoted`,
+# this), and the reason it survived the round that fixed the other two is worth
+# recording: it fails CLOSED. A failed jq yields an empty `base`/`diff_hash`,
+# `is_fresh()` returns 1, and the branch reads as ungated — a spurious re-gate, never
+# a missed one. It was left alone deliberately at 0.7.3 rather than widen a
+# security-relevant diff with a consistency fix.
+#
+# Aligning it now is still worth doing, and not only for symmetry: `command -v jq`
+# succeeding means jq is INSTALLED, not that it RUNS. On a box where jq is present but
+# broken, every marker read returned empty, so every gate was a re-gate and the python3
+# fallback beside it was never reached. The fall-through makes the fallback mean what
+# its name says. It cannot open the gate: python3 parses the SAME file, so a malformed
+# marker fails both branches and still reads as ungated.
 marker_get() {
+  local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    jq -r "$2 // empty" "$1" 2>/dev/null
-  else
-    python3 -c 'import json,sys
+    if _out="$(jq -r "$2 // empty" "$1" 2>/dev/null)"; then
+      printf '%s' "$_out"
+      return 0
+    fi
+    : # jq is installed but did not run — fall through and let python3 answer
+  fi
+  [ "$_HAVE_PY" = 1 ] || return 1
+  python3 -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))
     for k in path: d=d[k]
     sys.stdout.buffer.write((d if isinstance(d,str) else "").encode("utf-8","surrogateescape"))
 except Exception: pass' "$2" "$1"
-  fi
 }
 
 # absolute path to the COMMON git dir (shared across all linked worktrees)
@@ -149,10 +182,25 @@ honor_cd() {
   [[ "$1" =~ $re ]] && printf '%s' "${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
 }
 
-cwd="$(json_get '.cwd')"
+_unreadable=0
+cwd="$(json_get '.cwd')" || _unreadable=1
 [ -n "$cwd" ] && cd "$cwd" 2>/dev/null || true
 
 if [ "$mode" = "expansion" ]; then
+  # Unreadable input means we do not know WHICH REPO this /ship is for. `cwd` came back
+  # empty, so no cd happened, and is_fresh() would answer for whatever directory the hook
+  # process happened to inherit — a fresh marker in an unrelated repo would let the ship
+  # through. Block instead of guessing.
+  #
+  # Unconditional here, with no raw-text narrowing, because this path is not the one that
+  # fires on every Bash call: it runs only on a typed /ship, so the cost of a false block
+  # is one retry rather than a wedged session. The pretooluse path below has to be
+  # narrower for exactly that reason, and the asymmetry is the point, not an oversight.
+  if [ "$_unreadable" = 1 ]; then
+    echo "forgeward gate: /ship halted — the hook input could not be parsed, so which repo this applies to is unknown." >&2
+    echo "Re-run it; if this repeats, check that jq/python3 work (\`jq --version\`, \`python3 -V\`)." >&2
+    exit 2
+  fi
   git rev-parse --git-dir >/dev/null 2>&1 || exit 0
   if is_fresh "$(current_branch)" "HEAD"; then exit 0; fi
   echo "forgeward gate: /ship halted — the reviewers have not returned VERDICT: PASS on the current code." >&2
@@ -161,7 +209,29 @@ if [ "$mode" = "expansion" ]; then
 fi
 
 # --- pretooluse ---
-cmd="$(json_get '.tool_input.command')"
+cmd="$(json_get '.tool_input.command')" || _unreadable=1
+
+# Input we could not parse. `cmd` is empty here for the same reason it is empty when the
+# tool simply has no command field, and those two must not be treated alike: the second
+# is an ordinary non-Bash call, the first is a publish we cannot see.
+#
+# Deciding from the RAW TEXT is the same fallback A7 already uses when awk is missing —
+# less precise than the scanner, and only ever in the closed direction. It is scoped
+# deliberately: this hook runs on EVERY Bash tool call, so denying outright on an
+# unreadable payload would wedge the whole session the moment the JSON tool broke. A
+# payload with no publish verb anywhere in its bytes cannot be a publish, so it is
+# allowed through untouched and ordinary work keeps running.
+#
+# The cost is over-denial on a mangled payload that merely MENTIONS a verb — a retry,
+# and only in a state where the hook's input is already corrupt. The old behaviour cost
+# an ungated publish, silently.
+if [ "$_unreadable" = 1 ]; then
+  case "$input" in
+    *push*|*create*)
+      deny "forgeward gate: the hook input could not be parsed, and its raw text mentions a publish verb. Refusing rather than guessing. Re-run the command; if this repeats, check that jq/python3 work (\`jq --version\`, \`python3 -V\`)." ;;
+  esac
+  exit 0
+fi
 
 # --- read-only artifact guard -------------------------------------------------
 # Deny a SCANNER invocation whose output flag points at a DRIVE-LETTER path. In a
