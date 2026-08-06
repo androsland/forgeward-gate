@@ -87,14 +87,55 @@ which is how the gap survived this long:
 push is refused over it. Bumping 2 → 3 is therefore free, and must not be mistaken for a
 compatibility mechanism. The same is true of the `environment` object beside it.
 
-**Evidence.** E1–E11 in `test/gate-test.sh`, each mutation-tested. E2 exists specifically as
+**Evidence.** E1–E17 in `test/gate-test.sh`, each mutation-tested. E2 exists specifically as
 E1's positive control: gstack is installed on the author's machine, and
 `forgeward-detect-environment.sh` is not a PATH lookup, so the suite's PATH-shim helpers do
 nothing to it — an assertion that forgets any of its three roots (`$CLAUDE_CONFIG_DIR/skills`,
 `<git toplevel>/.claude/skills`, `$CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills`) finds the real
 gstack and passes vacuously. E5 pins that a substitute name carrying JSON metacharacters is
 *dropped* rather than escaped, since that value is the only marker field originating in a repo
-file. Suites: gate 155/155, pre-push 15/15.
+file. Suites: gate 161/161, pre-push 15/15.
+
+**Two findings from the 0.8.0 security review, both Medium, both fixed here.** Worth recording
+because each is an instance of a rule this repo already had and each got past a green suite —
+E1–E11 were all passing when both were found, so "the tests pass" was never evidence about them.
+
+- **A committed symlink at `.forgeward/config.yml` was followed.** `[ -f ]` and `[ -r ]` both
+  follow links, so a repo could commit the config as a git symlink (mode 120000) aimed at any
+  file readable by whoever checks the branch out and runs the gate; the reviewer demonstrated
+  end-to-end that its value was carried into the pass marker. Impact was bounded — the marker is
+  local, never committed, and nothing transmits it — but the file-existence oracle was real, and
+  awk would scan a file of any size. Fixed by **refusing** links rather than resolving them, plus
+  a 64KB size cap and per-item caps of 64 characters and 32 entries. Refusal because this key only
+  *silences a disclosure*, so declining to read a config costs one redundant paragraph — the same
+  fail-open direction as the rest of the script — while containment would need `readlink -f`,
+  which is not portable to the bash 3.2 environments this repo still targets. **This knowingly
+  breaks the monorepo that legitimately symlinks its config to a shared file**; such a repo must
+  use a regular file, and reads as `unreadable` rather than silently empty so the disclosure fires.
+- **A character allowlist was mistaken for structural validation — including in my own comment.**
+  `forgeward-write-marker.sh` accepted any probe output that began `{`, ended `}`, and drew only
+  from the character set the probe uses, and the comment above it claimed the marker was validated
+  for "two independent reasons". A charset constrains *bytes*, not *structure*:
+  `{"a":"b"},"diff_hash":"FORGED","passed":false,"z":{}` satisfies every one of those conditions
+  and splices **duplicate top-level keys** into a syntactically valid marker, where jq and python3
+  alike resolve last-value-wins — so the forged pair is what `is_fresh()` reads. Replaced with a
+  match against the probe's complete literal output shape, anchored at both ends, each field drawn
+  from its own closed vocabulary. Duplicate-key splicing is now unrepresentable.
+
+  **The reviewer's suggested fix — parse it with jq or python3 — was declined.** The
+  supply-chain reviewer had just certified that this diff adds no external tool requirement, and
+  the marker is the artifact that authorizes a push, so its write path should have the fewest
+  possible ways to fail. An anchored shape match needs no parser and is strictly *stronger* than
+  a generic "is this an object" test, which would still accept `{"passed":false}`. **The cost is
+  real and is a maintenance obligation, recorded in `TODOS.md`:** the two scripts are now coupled,
+  and any new field in the probe's output must be added to the marker's check in the same commit
+  or provenance silently degrades to `probe: unavailable`. That failure is safe (provenance is
+  lost, enforcement is not) and E10 turns red on it, which is what keeps it from being silent.
+
+  E16 is the reviewer's proof-of-concept verbatim. E17 pins the same attack from the other end —
+  a payload that *opens* with genuine, fully-conformant probe output and appends the forgery,
+  which survives any check anchored only at the start. Confirmed by mutation: deleting the single
+  trailing `$` from the regex reds E17 and nothing else, and is invisible to E16.
 
 ## RESOLVED — the error-path class was fixed one branch at a time, so the fixes cancelled each other out
 

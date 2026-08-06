@@ -121,14 +121,37 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   a typo'd `substitutes:` is indistinguishable from an absent one. (0.8.0, 2026-08-06)
   **Priority:** P2
 - **The marker's `schema` field is written by nothing-reads-it, and now so is
-  `environment`.** Grepped: `schema` appears once in the whole repo, at the point of
-  writing. No freshness check consults it, no hook refuses a push over it, no test asserted
-  it before E10. So the 2 → 3 bump in 0.8.0 is provenance, not a compatibility mechanism,
+  `environment`.** Grepped: outside its own write site and its comment, the only reader of
+  `schema` anywhere is E10 — a test asserting it equals 3. No freshness check consults it,
+  no hook refuses a push over it, and before 0.8.0 nothing read it at all. So the 2 → 3
+  bump is provenance, not a compatibility mechanism,
   and it cannot protect a future reader from an old marker. If a marker format change ever
   *does* need to be enforced, the version field has to start being read first — and the
   fail-safe direction is already available for free (an unrecognised schema should read as
   stale, which costs one re-gate). (0.8.0, 2026-08-06) **Priority:** P3
-- **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E11
+- **The probe and the marker writer are now coupled, and the coupling is a standing
+  maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
+  its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
+  parse so the push-authorizing write path keeps needing no external tool (and because a
+  generic "is this an object" test would still accept `{"passed":false}`). The cost: **any new
+  field added to `forgeward-detect-environment.sh` must be added to that regex in the same
+  commit**, or every marker silently records `environment: {"probe":"unavailable"}`. The
+  failure is safe — provenance is lost, enforcement is not — and E10 goes red on it, which is
+  the only reason it is not silent. Anyone touching the probe's output should read the comment
+  above `_env_ok` first. Revisit if the probe grows past a handful of fields: at that point the
+  regex stops being readable and taking the parser dependency becomes the better trade.
+  (security review, 2026-08-06) **Priority:** P2
+- **The symlink refusal knowingly breaks a legitimate configuration.** A monorepo that
+  symlinks `.forgeward/config.yml` to a shared config elsewhere in the tree is now ignored
+  (reads `unreadable`, so the disclosure still fires) and must use a regular file. This is
+  documented in the script and in `DECISIONS.md` but **not in any user-facing doc** — the
+  README never mentions the config file's constraints at all, so the first person to hit this
+  will debug it from behavior. Fix is one sentence in the README next to the
+  `standalone.substitutes` mention. Note the containment alternative was declined on
+  portability (`readlink -f` is absent from the bash 3.2/macOS environments this repo targets),
+  not on principle; a portable resolver would reopen it. (security review, 2026-08-06)
+  **Priority:** P3
+- **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E17
   pin the *probe*; the decision to print `NOT COVERED: quality` lives in
   `skills/gate/SKILL.md` Step 1c and is executed by a model. The same is true of every
   other instruction in that file, so this is not a new class of gap — but it is the reason
@@ -297,10 +320,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `forgeward-gate-check.sh`'s halt message promised it "ships in one motion". All three
   corrected in place. Full reasoning in `DECISIONS.md`.
 
-  E1–E11, each mutation-tested in both directions where a direction exists. E2 is E1's
+  E1–E17, each mutation-tested in both directions where a direction exists. E2 is E1's
   positive control and is load-bearing: gstack is installed on the author's machine and
   the probe is not a PATH lookup, so an assertion that forgets any of its three roots
-  finds the real gstack and greens vacuously. Suites: gate 155/155, pre-push 15/15.
+  finds the real gstack and greens vacuously. E12–E17 were added *after* E1–E11 were
+  green, for the two Medium findings of the 0.8.0 security review (a followed config
+  symlink; a character allowlist mistaken for structural validation) — a reminder that
+  a passing suite is evidence about the assertions in it and nothing else. Suites: gate
+  161/161, pre-push 15/15.
 
 - **P1: unparseable hook input was ALLOWED through the PreToolUse gate — and the #11 fix
   that was supposed to prevent it had been silently cancelled by the branch it fell

@@ -52,20 +52,43 @@ hash="$("$here/forgeward-diff-hash.sh" "$base")"
 # regardless. Losing the marker would force a full re-review; losing the provenance
 # costs one unanswerable question later.
 #
-# VALIDATED BEFORE INTERPOLATION even though the probe already sanitises its own
-# output. Two independent reasons: the two files can be upgraded separately (this one
-# ships in a plugin cache that a user can edit), and it is the only field here whose
-# content originates in a repo file rather than from git. Restricted to the compact
-# JSON-object shape the probe emits — first line only, fixed charset, braces at both
-# ends. Anything else is replaced wholesale, not repaired.
+# VALIDATED BEFORE INTERPOLATION as an EXACT SHAPE, not a charset. The distinction is
+# the whole point, and an earlier draft of this got it wrong in a way worth recording:
+# it accepted any first line that began `{`, ended `}`, and drew only from the character
+# set the probe uses. That is a CHARACTER allowlist, and it does not constrain STRUCTURE.
+# A string like `{"a":"b"},"diff_hash":"forged","passed":false,"z":{}` satisfies every one
+# of those conditions, and splicing it in produces a syntactically valid marker carrying
+# DUPLICATE top-level keys — where jq and python3 both resolve last-value-wins, so the
+# forged pair is what `is_fresh()` reads. Confirmed by proof-of-concept in the 0.8.0
+# security review, which is also where the overstated comment was caught.
+#
+# So the check below matches the probe's output against the complete literal shape it is
+# contracted to emit, anchored at both ends, with each field's value drawn from its own
+# closed vocabulary. Duplicate-key splicing is unrepresentable: there is exactly one
+# accepted string shape and it has no room for a second `diff_hash`.
+#
+# Deliberately NOT a jq/python3 structural parse, which was the reviewer's suggested fix.
+# This script needs neither tool today and a marker write must not start depending on one
+# — the marker is the artifact that authorizes a push, so its write path should have the
+# fewest possible ways to fail. An anchored shape match is portable, needs no parser, and
+# is strictly STRONGER than a generic `is this an object` test, which would still accept
+# `{"passed":false}`.
+#
+# THE COST, stated because it is real: this couples the two scripts. Any new field in the
+# probe's output must be added here in the same commit or the marker silently degrades to
+# `probe: unavailable`. That failure is safe (provenance is lost, enforcement is not) and
+# loud enough to notice in the E-series, but it is a genuine maintenance obligation and is
+# recorded in TODOS.md.
+#
+# WHY VALIDATE AT ALL when the probe already sanitises its own output: the two files can
+# be upgraded separately — this one ships in a plugin cache a user can edit — and the
+# substitutes field is the only content here originating in a repo file rather than git.
 env_json=""
 if [ -x "$here/forgeward-detect-environment.sh" ]; then
   env_json="$("$here/forgeward-detect-environment.sh" 2>/dev/null | head -n 1 || true)"
 fi
-case "$env_json" in
-  '{'*'}') printf '%s' "$env_json" | LC_ALL=C grep -q '[^-{}",:_a-zA-Z0-9]' && env_json="" ;;
-  *) env_json="" ;;
-esac
+_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*"\}$'
+printf '%s' "$env_json" | LC_ALL=C grep -Eq "$_env_ok" || env_json=""
 [ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
 
 # Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't

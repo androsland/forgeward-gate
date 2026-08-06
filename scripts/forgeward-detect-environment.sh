@@ -65,14 +65,46 @@ gs_cso="$(probe cso)"
 # dropped. Note the failure would be fail-SAFE even unsanitised - an unparseable marker
 # makes marker_get return empty, is_fresh() answers "stale", and the gate re-runs - but
 # "it would only cost a re-gate" is a poor reason to interpolate unvalidated file content.
+#
+# SYMLINKS ARE REFUSED, NOT FOLLOWED. `[ -f ]` and `[ -r ]` both follow links, so before
+# this check a repo could commit `.forgeward/config.yml` as a git symlink (mode 120000)
+# pointing at any file readable by whoever checks the branch out and runs the gate. The
+# 0.8.0 security review demonstrated it end-to-end: a link to a file outside the repo,
+# shaped like a config, was followed and its value carried into the pass marker. Impact
+# was bounded — the marker is local, never committed, and nothing in the repo transmits
+# it — but the weaker oracle is real: `config` would report present/unreadable for any
+# path an attacker named, and awk would scan a file of any size.
+#
+# Refusal rather than resolve-and-contain (the reviewer's other suggestion) because the
+# cost of refusing is exactly the cost this whole script already accepts: this key only
+# SILENCES A DISCLOSURE, so a config we decline to read costs one redundant paragraph —
+# the same fail-open direction chosen everywhere else here. Containment would need
+# `readlink -f`, which is not portable to the older macOS bash 3.2 environments this repo
+# still targets, and a hand-rolled resolver on the path that authorizes pushes is a poor
+# trade for a convenience key.
+#
+# WHAT THIS DELIBERATELY BREAKS, stated so the limit is not mistaken for coverage: a
+# monorepo that legitimately symlinks `.forgeward/config.yml` to a shared config
+# elsewhere in the tree is ignored, and reads as `unreadable` rather than silently empty
+# so the disclosure still fires. That is a real configuration someone will have; it is
+# refused knowingly, not overlooked. Such a repo must use a regular file.
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 cfg=""
 [ -n "$top" ] && cfg="$top/.forgeward/config.yml"
 
 config_state="absent"
 substitutes=""
-if [ -n "$cfg" ] && [ -f "$cfg" ]; then
-  if [ -r "$cfg" ]; then
+if [ -n "$cfg" ] && [ -L "$cfg" ]; then
+  config_state="unreadable"
+elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
+  # Size cap before awk touches it. Nothing else bounds how much gets scanned, and a
+  # config this large is malformed by definition — the supported shape is a handful of
+  # short axis names. A `wc` that fails for any reason resolves to the refusing side.
+  _sz="$(LC_ALL=C wc -c < "$cfg" 2>/dev/null || echo 999999999)"
+  case "$_sz" in ''|*[!0-9]*) _sz=999999999 ;; esac
+  if [ "$_sz" -gt 65536 ]; then
+    config_state="unreadable"
+  else
     config_state="present"
     # Tested as the `if` condition rather than by inspecting `$?` afterwards. `$?` does
     # survive an intervening comment, but only until someone inserts a command there,
@@ -88,7 +120,17 @@ if [ -n "$cfg" ] && [ -f "$cfg" ]; then
         v=$0
         sub(/^[[:space:]]+-[[:space:]]*/, "", v)
         sub(/[[:space:]]*(#.*)?$/, "", v)
-        if (v ~ /^[A-Za-z0-9_-]+$/) { out = (out=="" ? v : out "," v) }
+        # Bounded on BOTH axes as well as charset. Charset alone stops forgery but not
+        # size: a 5000-character all-alphanumeric name passes every metacharacter check
+        # and lands in the marker verbatim. Not a forgery path — found by an injection
+        # probe during 0.8.0 and confirmed Low by the security review — but a marker is
+        # a small artifact read on every push, and nothing else bounds it. 64 chars and
+        # 32 items are far above any real axis list and far below anything that matters.
+        # `length()` and a counter rather than an `{n,m}` interval: interval expressions
+        # need --re-interval on older gawk and are absent from some awks entirely.
+        if (n < 32 && length(v) <= 64 && v ~ /^[A-Za-z0-9_-]+$/) {
+          out = (out=="" ? v : out "," v); n++
+        }
         next
       }
       # A non-item line at the substitutes indent level closes the list.
@@ -101,9 +143,13 @@ if [ -n "$cfg" ] && [ -f "$cfg" ]; then
       # discloses instead of silently believing nothing was configured.
       config_state="unreadable"; substitutes=""
     fi
-  else
-    config_state="unreadable"
   fi
+elif [ -n "$cfg" ] && [ -e "$cfg" ]; then
+  # Exists but is not a readable regular file: a directory at that path, or a file the
+  # user cannot read. `-e` succeeds without read permission, so this catches chmod 000.
+  # Reported as unreadable rather than absent because the two lead to the same disclosure
+  # and this one is the more accurate answer.
+  config_state="unreadable"
 fi
 
 printf '{"gstack_ship":"%s","gstack_review":"%s","gstack_cso":"%s","config":"%s","substitutes":"%s"}\n' \
