@@ -2049,8 +2049,8 @@ EM="$TMP/envmarker"; mkrepo "$EM"
    && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
 EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EMJ" ] \
-  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==3 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] else 1)' "$EMJ" \
-  && ok "env: the pass marker is schema 3 and carries a readable environment object" \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
+  && ok "env: the pass marker is schema 4 and carries a readable environment object" \
   || nok "env E10" "marker '$EMJ'"
 
 # E11: the probe must never cost a PASS. If it is missing or broken, the marker is still
@@ -2191,7 +2191,14 @@ E16M="$(fakeprobe dup '{"a":"b"},"diff_hash":"FORGEDHASH","passed":false,"z":{}'
 # is anchored only at the start — which is precisely what dropping the trailing `$` from
 # the shape regex would produce. Pinned separately from E16 because that single-character
 # regression is invisible to E16 and to every other assertion in this file.
-E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":""},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
+#
+# THE PREFIX MUST STAY EXACTLY CURRENT, or this assertion quietly stops testing anything.
+# It only exercises the trailing anchor while the opening bytes are a shape `_env_ok`
+# would otherwise accept; the moment a field is added to the probe and not added here, the
+# payload is rejected on its prefix instead and removing the `$` no longer turns it red.
+# Verified by mutation when `seo_posture` was added: with the field in this string,
+# dropping `$` from `_env_ok` reddens E17; with the stale string, it does not.
+E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":"","seo_posture":""},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
 [ -f "$E17M" ] && notforged "$E17M" TAILFORGE \
   && ok "env: a valid-prefix-plus-appendix splice is rejected (the shape match is anchored at BOTH ends)" \
   || nok "env E17" "marker '$E17M'"
@@ -2215,6 +2222,140 @@ E18J="$(envprobe "$EMPTY_CFG")"
 [ "$(jfield "$E18J" config)" = present ] && [ "$(jfield "$E18J" substitutes)" = "quality,deep-audit" ] \
   && ok "env: a CRLF config parses identically to LF (no CR reaches the marker, none dropped)" \
   || nok "env E18" "got '$E18J'"
+rmcfg
+
+# --- E19..E26: the shapes 0.9.0 added ------------------------------------------
+# Two documented keys were prose the reader never looked at (`seo.posture`, `seo.routes`)
+# and two ordinary YAML spellings read as "nothing configured" (flow sequences, quoted
+# scalars). E19..E21 pin what now parses, E22..E26 pin what must NOT change while it does.
+# `seo.routes` is deliberately still unread and there is no assertion for it here — a test
+# would be asserting the absence of a feature the docs now say is absent.
+
+# E19: a flow sequence is EQUIVALENT to the block form, not merely non-empty. Asserted
+# against E4's exact expected value so the two spellings cannot drift apart.
+mkcfg 'standalone:
+  substitutes: [quality, deep-audit]'
+E19J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E19J" config)" = present ] && [ "$(jfield "$E19J" substitutes)" = "quality,deep-audit" ] \
+  && ok "env: a flow sequence parses to the same CSV as the equivalent block list" \
+  || nok "env E19" "got '$E19J'"
+
+# E20: simply-quoted scalars, both quote characters, both list spellings. The apostrophe
+# is the interesting half: the reader gets it via `awk -v sq=`, because writing it inside
+# the single-quoted awk program would end the quote and the usual workaround (`"\047"`)
+# leans on octal escapes not every awk implements.
+mkcfg "standalone:
+  substitutes:
+    - \"quality\"
+    - 'deep-audit'"
+E20J="$(envprobe "$EMPTY_CFG")"
+mkcfg "standalone:
+  substitutes: [\"quality\", 'deep-audit']"
+E20F="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E20J" substitutes)" = "quality,deep-audit" ] \
+  && [ "$(jfield "$E20F" substitutes)" = "quality,deep-audit" ] \
+  && ok "env: double- and single-quoted scalars unquote in both the block and flow forms" \
+  || nok "env E20" "block '$E20J' flow '$E20F'"
+
+# E21: `seo.posture` is read at all — the half of this lane that was pure prose. Quoted
+# and bare must agree, since a user copying the value out of the posture table will write
+# it either way.
+mkcfg 'seo:
+  posture: private-shareable'
+E21A="$(envprobe "$EMPTY_CFG")"
+mkcfg 'seo:
+  posture: "private-closed"'
+E21B="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E21A" seo_posture)" = private-shareable ] \
+  && [ "$(jfield "$E21B" seo_posture)" = private-closed ] \
+  && ok "env: seo.posture is read, bare and quoted alike" \
+  || nok "env E21" "bare '$E21A' quoted '$E21B'"
+
+# E22: the posture is an ENUM, compared as whole strings, not a charset. A value the
+# reviewers have no ruleset for must read as "not pinned" so classification falls back to
+# detection — never reach a reviewer that would then act on it. The `substitutes` clause is
+# the positive control: without it, a reader that silently failed on the whole file would
+# also produce an empty posture and green this.
+mkcfg 'standalone:
+  substitutes: [quality]
+seo:
+  posture: totally-made-up'
+E22J="$(envprobe "$EMPTY_CFG")"
+[ -z "$(jfield "$E22J" seo_posture)" ] && [ "$(jfield "$E22J" substitutes)" = "quality" ] \
+  && ok "env: an unrecognised posture is dropped, and the rest of the config still parses" \
+  || nok "env E22" "got '$E22J'"
+
+# E23: E7 for the other key. A `posture:` under a different top-level key must not be
+# adopted, or any repo with an unrelated `posture` field silently pins the SEO ruleset.
+mkcfg 'other:
+  posture: private-closed'
+E23J="$(envprobe "$EMPTY_CFG")"
+[ -z "$(jfield "$E23J" seo_posture)" ] \
+  && ok "env: a posture under a DIFFERENT top-level key is not adopted" \
+  || nok "env E23" "got '$E23J'"
+
+# E24: the two values come back from awk on one line separated by `|`, so a `|` reaching
+# either value would shift the split and hand the posture field whatever followed it. It
+# cannot: the substitute charset excludes `|` and the posture is enum-compared. Asserted
+# through BOTH fields, because a shifted split is only visible in the second one.
+mkcfg 'standalone:
+  substitutes:
+    - a|b
+    - quality
+seo:
+  posture: private-closed'
+E24J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E24J" substitutes)" = "quality" ] && [ "$(jfield "$E24J" seo_posture)" = private-closed ] \
+  && ok "env: a '|' in config content cannot shift the field separator" \
+  || nok "env E24" "got '$E24J'"
+
+# E25: the 32-item cap is SHARED, so the new spelling cannot buy a bigger budget than the
+# one E15 pins. Counted by commas for the same reason E15 is: the assertion should not
+# restate the cap's arithmetic in a second place.
+E25L="standalone:
+  substitutes: ["
+i=1; while [ "$i" -le 40 ]; do E25L="$E25L axis$i,"; i=$((i+1)); done
+mkcfg "${E25L%,}]"
+E25J="$(envprobe "$EMPTY_CFG")"
+E25N="$(jfield "$E25J" substitutes | tr ',' '\n' | grep -c .)"
+[ "$E25N" = 32 ] \
+  && ok "env: a 40-item FLOW sequence is truncated to the same 32-item cap as a block list" \
+  || nok "env E25" "got $E25N items from '$E25J'"
+
+# E26: E18's CRLF guard extended to the shapes added here, and for the same reason — the
+# failure is silent and looks exactly like working software. The flow sequence survives
+# because the closing-bracket strip is anchored at end-of-line through `[[:space:]]*`, and
+# the posture because its trailing strip is; tighten either to a literal space and every
+# Windows checkout loses its config with no error anywhere.
+mkdir -p "$ER/.forgeward"
+printf 'standalone:\r\n  substitutes: [quality, "deep-audit"]\r\nseo:\r\n  posture: private-shareable\r\n' \
+  > "$ER/.forgeward/config.yml"
+E26J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E26J" substitutes)" = "quality,deep-audit" ] \
+  && [ "$(jfield "$E26J" seo_posture)" = private-shareable ] \
+  && ok "env: a CRLF config parses identically to LF for the flow and posture shapes too" \
+  || nok "env E26" "got '$E26J'"
+
+# E27: awk EXITING 0 is not awk WORKING, which is the distinction that cost 0.7.3 and
+# 0.7.6. The END block always prints the `|` separator, so output without one means
+# something other than this program produced it — an awk that reports success while
+# emitting nothing usable. That must read UNREADABLE (disclose), never present-with-an-
+# empty-list, which is indistinguishable from "the user configured nothing".
+#
+# The second clause is the positive control and is load-bearing: `unreadable` is also what
+# a config the reader genuinely cannot open produces, so without proving the SAME config
+# parses under the real awk this assertion would green on a merely-broken fixture.
+mkcfg 'standalone:
+  substitutes:
+    - quality'
+E27OK="$(envprobe "$EMPTY_CFG")"
+E27SHIM="$TMP/awkshim-e27"; mkdir -p "$E27SHIM"
+printf '#!/bin/sh\nprintf "no separator here\\n"\nexit 0\n' > "$E27SHIM/awk"; chmod +x "$E27SHIM/awk"
+E27J="$( cd "$ER" && PATH="$E27SHIM:$PATH" CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$ENV_SH" 2>/dev/null )"
+[ "$(jfield "$E27J" config)" = unreadable ] && [ -z "$(jfield "$E27J" substitutes)" ] \
+  && [ "$(jfield "$E27OK" substitutes)" = "quality" ] \
+  && ok "env: an awk that exits 0 without the field separator reads UNREADABLE, not empty" \
+  || nok "env E27" "shimmed '$E27J' real '$E27OK'"
 rmcfg
 
 echo "1..$((PASS+FAIL))"

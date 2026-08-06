@@ -394,6 +394,51 @@ Expected:
 **NOT TESTED YET**
 ---
 
+## 5b. Test C — `.forgeward/config.yml` is honoured, and says what it does not honour
+
+The probe is covered by E1–E27 in the suite. What no test can reach is the half executed by
+a model: whether the gate *acts* on the config it is handed. That is this section's only job.
+
+```bash
+# in ~/forgeward-live-test/app
+mkdir -p .forgeward
+cat > .forgeward/config.yml <<'YAML'
+standalone:
+  substitutes: ["quality"]
+seo:
+  posture: private-shareable
+  routes: {"/app/*": private-closed}
+YAML
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"
+```
+
+The probe must print `"substitutes":"quality","seo_posture":"private-shareable"` — note the
+flow sequence and the quoted scalar, both of which read as *nothing configured* before 0.9.0.
+
+Now run `/forgeward:gate` on a change that touches a public page. Expected, in the firing
+decision:
+- **No `NOT COVERED: quality` line**, even with gstack absent — the substitute answered it.
+  `deep-audit` is *not* in the list, so its disclosure must still appear. Both halves matter:
+  a gate that silences everything is as wrong as one that silences nothing.
+- The posture is reported as pinned, e.g.
+  `Postures: all = private-shareable (pinned in .forgeward/config.yml)`, and the
+  privacy-reviewer fires on that group even if the diff is only markup.
+- **`seo.routes` is called out as having no effect.** It is documented and unread; the gate
+  must say so rather than silently classifying by detection as though the pin were honoured.
+
+Then break it and confirm the failure is loud in the right direction:
+```bash
+printf 'seo:\n  posture: not-a-real-posture\n' > .forgeward/config.yml
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # seo_posture must be EMPTY
+ln -sf /etc/hostname .forgeward/config.yml                # a symlink is refused, not followed
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # config must read "unreadable"
+rm -rf .forgeward
+```
+
+**NOT TESTED YET**
+
+---
+
 ## 6. Optional — real gstack `/ship` integration (only if gstack is installed)
 
 The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push`,
@@ -433,5 +478,5 @@ printf '{"cwd":"'"$PWD"'","tool_input":{"command":"git push"}}' \
 
 Run the suite any time to confirm the decision logic itself is intact:
 ```bash
-cd <PLUGIN_DIR> && npm test    # 21 assertions, all should pass
+cd <PLUGIN_DIR> && npm test    # gate 171 + pre-push 15, all should pass
 ```

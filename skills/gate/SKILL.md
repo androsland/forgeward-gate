@@ -113,8 +113,14 @@ and whether Open Graph tags are present. The seo-reviewer does this in detail; y
 need enough to route the work.
 
 The postures are `public-indexed`, `private-shareable`, `private-closed`,
-`staging-preview`, `authenticated-shareable`, and `unknown`. A repo may pin them in
-`.forgeward/config.yml` (`seo.posture`, or `seo.routes` per prefix); a pin wins.
+`staging-preview`, `authenticated-shareable`, and `unknown`.
+
+A repo may pin one posture for the whole repo as `seo.posture` in
+`.forgeward/config.yml`. Read it from the `seo_posture` field of the Step 1c probe
+below (one run answers both steps) — a non-empty value wins over detection for every
+route group and you say so in the firing decision. `seo.routes`, the per-prefix form,
+is **documented but not honoured**: it is read by nothing, so a repo that pins it is
+classified by detection regardless. Say so if you see one rather than acting on it.
 
 Two of these change firing:
 
@@ -162,7 +168,8 @@ exist; it now detects and self-adjusts). Two axes are still owned by a partner t
 ```
 
 It prints one line of JSON and always exits 0 — it is informational, and must never
-stop a gate run. Read `gstack_review`, `gstack_cso`, and `substitutes`:
+stop a gate run. It also carries `seo_posture` for Step 1a, so one run serves both
+steps. Read `gstack_review`, `gstack_cso`, and `substitutes`:
 
 | axis | owner | when its owner is absent |
 |------|-------|--------------------------|

@@ -64,6 +64,36 @@ axes where a PASS means less without a partner tool. Pin `standalone.substitutes
 `.forgeward/config.yml` to silence an axis you cover another way — a disclosure that repeats
 after being answered is nagging, and nagging is how gates get switched off.
 
+### `.forgeward/config.yml`
+
+Optional, and everything works without it. **Exactly two keys are honoured:**
+
+```yaml
+standalone:
+  substitutes: [quality, deep-audit]   # or a block list; axes you cover another way
+seo:
+  posture: private-shareable           # one of the six postures, for the whole repo
+```
+
+- **`seo.routes` is documented in the skill and agent files but is NOT read.** A per-route
+  mapping with glob keys would need a real YAML parser; until one exists, a repo that pins it
+  is classified by detection instead. Stated here so the pin's absence of effect is not
+  discovered from behaviour.
+- **It is a reader, not a YAML parser.** Block sequences, flow sequences (`[a, b]`) and
+  simply-quoted scalars work; anchors, aliases, multi-document streams, escapes inside quotes
+  and an indented `standalone:`/`seo:` do not. Anything it does not understand reads as *not
+  configured*, so the cost of a shape it refuses is a disclosure you have already answered —
+  never a silently skipped check. Nothing validates the file or warns on unknown keys, so a
+  typo'd key is indistinguishable from an absent one.
+- **A symlink at this path is refused, not followed** — it reads as unreadable and the
+  disclosure still fires. This knowingly breaks a monorepo that symlinks the file to a shared
+  config elsewhere in the tree; such a repo must use a regular file. `[ -f ]` and `[ -r ]` both
+  follow links, and the 0.8.0 security review demonstrated a committed link carrying an
+  outside file's contents into the pass marker.
+- Values are bounded and sanitised on the way out (64 chars and 32 items for substitutes,
+  `[A-Za-z0-9_-]` only; the posture is compared against the six literal values). The marker is
+  assembled by string interpolation and this file is the only repo-controlled input to it.
+
 ## How it works
 
 - **Happy path:** run `/forgeward:gate`. It detects which surfaces the diff touches, fires

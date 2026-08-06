@@ -87,7 +87,13 @@ env_json=""
 if [ -x "$here/forgeward-detect-environment.sh" ]; then
   env_json="$("$here/forgeward-detect-environment.sh" 2>/dev/null | head -n 1 || true)"
 fi
-_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*"\}$'
+# `seo_posture` is matched as a CHARSET, not as the six-value enum the probe enforces,
+# and the asymmetry with the fields above it is deliberate. The enum is validated at the
+# source by whole-string comparison; repeating it here would add a second copy to drift
+# out of sync while buying no additional structural constraint, because `[a-z-]` already
+# excludes every character a splice needs (`"`, `,`, `{`, `}`) — which is the only thing
+# this check is defending. Same reasoning as `substitutes` beside it.
+_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*","seo_posture":"[a-z-]*"\}$'
 printf '%s' "$env_json" | LC_ALL=C grep -Eq "$_env_ok" || env_json=""
 [ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
 
@@ -99,7 +105,7 @@ mkdir -p "$(dirname "$marker")"
 
 cat > "$marker" <<EOF
 {
-  "schema": 3,
+  "schema": 4,
   "passed": true,
   "branch": "$branch",
   "base": "$base",

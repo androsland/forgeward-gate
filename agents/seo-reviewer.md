@@ -68,9 +68,33 @@ tags. Indexability and shareability are INDEPENDENT axes.
 Report the posture of each group in your output, before the findings, e.g.
 `Postures: /(marketing) = public-indexed; /app/* = private-closed`.
 
-A repo may pin posture in `.forgeward/config.yml`, either globally
-(`seo.posture: <value>`) or per route (`seo.routes: {"/app/*": private-closed}`).
-A pin always wins over detection.
+A repo may pin the posture **globally** in `.forgeward/config.yml`:
+
+```yaml
+seo:
+  posture: private-shareable
+```
+
+Read it from the environment probe rather than by opening the file yourself — the probe
+refuses symlinks, caps the file size, and validates the value against the six postures
+above, none of which you get from a raw `Read`:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
+```
+
+If its `seo_posture` field is non-empty, that value **wins over your own detection for
+every route group** — say so in your posture line, e.g.
+`Postures: all = private-shareable (pinned in .forgeward/config.yml)`. If it is empty,
+nothing is pinned and you classify normally. An unrecognised value reads as empty, so a
+typo'd pin is indistinguishable from an absent one and simply returns you to detection.
+
+**`seo.routes` is NOT honoured.** A per-route mapping was described in this file before
+any of it was parsed, and it is still not read: the reader handles a fixed set of shapes
+and a mapping with glob keys is not one of them. Ignore `seo.routes` if you see it in a
+repo's config, mention in your output that it has no effect, and classify that repo's
+route groups by detection — which is the right answer per group anyway, and the reason
+this is a disclosed gap rather than an urgent one.
 
 ### Recognizing each posture
 

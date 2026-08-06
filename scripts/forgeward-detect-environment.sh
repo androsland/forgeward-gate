@@ -43,28 +43,55 @@ gs_review="$(probe review)"
 gs_cso="$(probe cso)"
 
 # --- .forgeward/config.yml -----------------------------------------------------------
-# THIS IS NOT A YAML PARSER, and must never be described as one. It reads exactly one
-# shape and refuses everything else:
+# THIS IS NOT A YAML PARSER, and must never be described as one. It reads a fixed set of
+# shapes under two top-level keys and refuses everything else:
 #
 #   standalone:
-#     substitutes:
+#     substitutes:            # block sequence
 #       - quality
-#       - deep-audit
+#       - "deep-audit"        # a simply-quoted scalar is accepted
+#   seo:
+#     posture: private-shareable
 #
-# Block sequence, two-space nesting, one bare scalar per line. It does NOT handle flow
-# sequences (`[a, b]`), anchors, aliases, multi-document streams, tabs, quoted scalars
-# with escapes, or `standalone` nested under anything. Every one of those reads as "no
-# substitutes named", which disclose-by-default turns into a redundant paragraph rather
-# than a hidden gap. A real YAML dependency is not worth taking for one optional key;
-# if this shape stops being enough, take the dependency rather than growing this.
+#   standalone:
+#     substitutes: [quality, deep-audit]      # flow sequence, equivalent to the above
 #
-# SANITISED ON THE WAY OUT, and this is load-bearing rather than defensive. The value is
-# the only part of the marker that comes from a file the repo controls, and the marker is
+# HONOURED KEYS ARE EXACTLY `standalone.substitutes` AND `seo.posture`. `seo.routes` is
+# named in `skills/gate/SKILL.md` and `agents/seo-reviewer.md` and is NOT read here — a
+# per-route mapping with glob keys cannot be parsed by this reader without turning it into
+# the YAML parser this header forbids, and a partially-honoured pin is worse than an
+# openly-unhonoured one. Both documents now say so; if that changes, change them together.
+#
+# It does NOT handle anchors, aliases, multi-document streams, escapes inside quoted
+# scalars, block scalars, an unterminated flow sequence, or `standalone:`/`seo:` nested
+# under anything. Every one of those reads as "nothing configured", which
+# disclose-by-default turns into a redundant paragraph rather than a hidden gap.
+#
+# WHY NOT A REAL YAML PARSER, since the shapes keep growing: the obvious candidate is
+# python3's `yaml` module with this awk as the fallback, copying the jq/python3 two-arm
+# pattern in the hooks. It was declined because **PyYAML is not in the standard library**
+# (verified: no `yaml` in `sys.stdlib_module_names`), so `python3` being present says
+# nothing about `import yaml` succeeding. That makes arm selection a coin flip on what
+# happens to be installed, and two arms that parse DIFFERENT shapes is the exact
+# divergence 0.7.5 shipped and V7 now exists to catch. One arm that everyone gets is worth
+# more here than a better arm some people get. If a genuine parser is ever needed, take
+# the dependency outright rather than conditionally.
+#
+# SANITISED ON THE WAY OUT, and this is load-bearing rather than defensive. These are the
+# only parts of the marker that come from a file the repo controls, and the marker is
 # assembled as JSON by string interpolation. A name carrying a quote or a brace would
-# produce a malformed marker. Names are restricted to [A-Za-z0-9_-]; anything else is
-# dropped. Note the failure would be fail-SAFE even unsanitised - an unparseable marker
-# makes marker_get return empty, is_fresh() answers "stale", and the gate re-runs - but
-# "it would only cost a re-gate" is a poor reason to interpolate unvalidated file content.
+# produce a malformed marker. Substitute names are restricted to [A-Za-z0-9_-]; the
+# posture must be one of the six literal values the reviewers know, compared as whole
+# strings rather than matched by charset. Anything else is dropped. Note the failure would
+# be fail-SAFE even unsanitised - an unparseable marker makes marker_get return empty,
+# is_fresh() answers "stale", and the gate re-runs - but "it would only cost a re-gate" is
+# a poor reason to interpolate unvalidated file content.
+#
+# AN UNRECOGNISED POSTURE IS DROPPED SILENTLY, and that is the fail-open direction here: a
+# typo'd or invented value reads as "not pinned", so the seo-reviewer classifies by
+# detection — its normal job — instead of acting on a pin nobody can honour. The cost is
+# that a typo is indistinguishable from an absent key. Nothing in this file validates the
+# config or warns on unknown keys; see TODOS.md.
 #
 # SYMLINKS ARE REFUSED, NOT FOLLOWED. `[ -f ]` and `[ -r ]` both follow links, so before
 # this check a repo could commit `.forgeward/config.yml` as a git symlink (mode 120000)
@@ -94,6 +121,7 @@ cfg=""
 
 config_state="absent"
 substitutes=""
+seo_posture=""
 if [ -n "$cfg" ] && [ -L "$cfg" ]; then
   config_state="unreadable"
 elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
@@ -106,42 +134,114 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
     config_state="unreadable"
   else
     config_state="present"
+    # Two values come back on ONE line separated by `|`, which neither can contain: the
+    # substitute charset excludes it and the posture is compared against six literals.
+    # A separator rather than two lines because splitting lines in bash 3.2 without
+    # `read -d` or a second tool is clumsier than a parameter expansion, and this keeps
+    # the script's tool set at git/wc/awk.
+    #
+    # `sq` carries the apostrophe in from the shell. Writing it inside this
+    # single-quoted program would end the quote, and the alternative (`"\047"`) leans on
+    # octal string escapes that not every awk implements.
+    #
     # Tested as the `if` condition rather than by inspecting `$?` afterwards. `$?` does
     # survive an intervening comment, but only until someone inserts a command there,
     # and then the failure branch silently stops firing.
-    if substitutes="$(awk '
-      # Track only the two-level path standalone -> substitutes. Any line at column 0
-      # that is not "standalone:" ends the section, so a later top-level key cannot
-      # have its list adopted.
-      /^standalone:[[:space:]]*$/ { in_s=1; in_sub=0; next }
-      /^[^[:space:]#]/            { in_s=0; in_sub=0 }
+    if _cfgout="$(awk -v sq="'" '
+      # A simply-quoted scalar has its quotes removed; anything else is returned as-is
+      # and fails the charset/enum test below on its own merits. Escapes inside the
+      # quotes are NOT interpreted - a backslash is just another character the charset
+      # rejects.
+      function unquote(s,   q) {
+        if (length(s) >= 2) {
+          q = substr(s, 1, 1)
+          if ((q == "\"" || q == sq) && substr(s, length(s), 1) == q)
+            s = substr(s, 2, length(s) - 2)
+        }
+        return s
+      }
+      function trim(s) {
+        sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s
+      }
+      # Bounded on BOTH axes as well as charset. Charset alone stops forgery but not
+      # size: a 5000-character all-alphanumeric name passes every metacharacter check
+      # and lands in the marker verbatim. Not a forgery path — found by an injection
+      # probe during 0.8.0 and confirmed Low by the security review — but a marker is
+      # a small artifact read on every push, and nothing else bounds it. 64 chars and
+      # 32 items are far above any real axis list and far below anything that matters.
+      # `length()` and a counter rather than an `{n,m}` interval: interval expressions
+      # need --re-interval on older gawk and are absent from some awks entirely.
+      # The caps are shared by both list shapes, so a flow sequence cannot buy a bigger
+      # budget than a block one.
+      function additem(v) {
+        v = unquote(v)
+        if (n < 32 && length(v) <= 64 && v ~ /^[A-Za-z0-9_-]+$/) {
+          out = (out=="" ? v : out "," v); n++
+        }
+      }
+      # Track only the two-level paths standalone -> substitutes and seo -> posture. Any
+      # line at column 0 that is not one of those two headers ends both sections, so a
+      # later top-level key cannot have its list or its posture adopted.
+      /^standalone:[[:space:]]*$/ { in_s=1; in_sub=0; in_seo=0; next }
+      /^seo:[[:space:]]*$/        { in_seo=1; in_s=0; in_sub=0; next }
+      /^[^[:space:]#]/            { in_s=0; in_sub=0; in_seo=0 }
+      # Flow sequence, complete on its own line. Requires the closing bracket: an
+      # unterminated `[a, b` falls through to the list-closing rule and reads as nothing
+      # configured, which discloses. Both strips are anchored - `^[^[]*\[` takes
+      # everything up to the FIRST bracket, `\][[:space:]]*(#.*)?$` everything from the
+      # last one - so an item containing a stray bracket cannot shift the boundaries.
+      in_s && /^[[:space:]]+substitutes:[[:space:]]*\[.*\][[:space:]]*(#.*)?$/ {
+        v=$0
+        sub(/^[^[]*\[/, "", v)
+        sub(/\][[:space:]]*(#.*)?$/, "", v)
+        m = split(v, parts, ",")
+        for (i = 1; i <= m; i++) additem(trim(parts[i]))
+        in_sub=0
+        next
+      }
       in_s && /^[[:space:]]+substitutes:[[:space:]]*$/ { in_sub=1; next }
       in_s && in_sub && /^[[:space:]]+-[[:space:]]*/ {
         v=$0
         sub(/^[[:space:]]+-[[:space:]]*/, "", v)
         sub(/[[:space:]]*(#.*)?$/, "", v)
-        # Bounded on BOTH axes as well as charset. Charset alone stops forgery but not
-        # size: a 5000-character all-alphanumeric name passes every metacharacter check
-        # and lands in the marker verbatim. Not a forgery path — found by an injection
-        # probe during 0.8.0 and confirmed Low by the security review — but a marker is
-        # a small artifact read on every push, and nothing else bounds it. 64 chars and
-        # 32 items are far above any real axis list and far below anything that matters.
-        # `length()` and a counter rather than an `{n,m}` interval: interval expressions
-        # need --re-interval on older gawk and are absent from some awks entirely.
-        if (n < 32 && length(v) <= 64 && v ~ /^[A-Za-z0-9_-]+$/) {
-          out = (out=="" ? v : out "," v); n++
-        }
+        additem(v)
+        next
+      }
+      # Whole-string comparison against the six postures the reviewers implement, not a
+      # charset: an unrecognised value must read as "not pinned" rather than reach the
+      # marker and then a reviewer that has no ruleset for it.
+      #
+      # Matched at ANY indent under `seo:`, not only at two spaces, which is the same
+      # laxity the substitutes items above have. So a `posture:` nested deeper (under a
+      # hypothetical `seo.defaults:`) is adopted, and the last one in the file wins. Left
+      # lax deliberately: tightening to a fixed indent is a new branch that would drop the
+      # pin of anyone indenting with four spaces, and the over-read only fires on shapes
+      # nothing documents, in the direction of honouring a pin the user did write.
+      in_seo && /^[[:space:]]+posture:[[:space:]]*/ {
+        v=$0
+        sub(/^[[:space:]]+posture:[[:space:]]*/, "", v)
+        sub(/[[:space:]]*(#.*)?$/, "", v)
+        v = unquote(v)
+        if (v == "public-indexed" || v == "private-shareable" || v == "private-closed" ||
+            v == "staging-preview" || v == "authenticated-shareable" || v == "unknown")
+          posture = v
         next
       }
       # A non-item line at the substitutes indent level closes the list.
       in_sub && /^[[:space:]]+[^[:space:]-]/ { in_sub=0 }
-      END { print out }
+      END { printf "%s|%s\n", out, posture }
     ' "$cfg" 2>/dev/null)"; then
-      :
+      # Exit status 0 is not enough: the END block always prints the separator, so output
+      # without one means awk produced something other than this program did - the same
+      # "it ran" vs "it worked" distinction that cost 0.7.3 and 0.7.6.
+      case "$_cfgout" in
+        *"|"*) substitutes="${_cfgout%%|*}"; seo_posture="${_cfgout#*|}" ;;
+        *)     config_state="unreadable"; substitutes=""; seo_posture="" ;;
+      esac
     else
       # awk absent or exploded: say so rather than claiming an empty list, so the caller
       # discloses instead of silently believing nothing was configured.
-      config_state="unreadable"; substitutes=""
+      config_state="unreadable"; substitutes=""; seo_posture=""
     fi
   fi
 elif [ -n "$cfg" ] && [ -e "$cfg" ]; then
@@ -152,6 +252,11 @@ elif [ -n "$cfg" ] && [ -e "$cfg" ]; then
   config_state="unreadable"
 fi
 
-printf '{"gstack_ship":"%s","gstack_review":"%s","gstack_cso":"%s","config":"%s","substitutes":"%s"}\n' \
-  "$gs_ship" "$gs_review" "$gs_cso" "$config_state" "$substitutes"
+# Field order is part of the contract: `forgeward-write-marker.sh` validates this line
+# against its complete literal shape, anchored at both ends. Adding, removing or
+# reordering a field here without editing `_env_ok` in the same commit makes every marker
+# record `environment: {"probe":"unavailable"}` — safe, but provenance is lost silently
+# except for E10 going red.
+printf '{"gstack_ship":"%s","gstack_review":"%s","gstack_cso":"%s","config":"%s","substitutes":"%s","seo_posture":"%s"}\n' \
+  "$gs_ship" "$gs_review" "$gs_cso" "$config_state" "$substitutes" "$seo_posture"
 exit 0
