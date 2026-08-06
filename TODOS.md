@@ -192,6 +192,18 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   the probe was built as a script with its own exit contract rather than as prose, and the
   remaining half is untested by construction. The live-test in `live-test/` is where this
   would be caught, and it is manual. (0.8.0, 2026-08-06) **Priority:** P3
+  **Partly closed 2026-08-06:** `live-test/LIVE-TEST.md` §5b was executed against installed
+  0.9.0 and the model half held — posture reported as pinned, `seo.routes` called out
+  unprompted, privacy fired on a markup-only diff. The `NOT COVERED` half is the piece still
+  owed a real run; see the item below.
+- **§5b's `substitutes` assertion cannot be tested on a machine that has gstack.** It asserts
+  that `NOT COVERED: quality` is *absent* because the substitute answered it — but on a
+  gstack-present box that line is absent regardless, so the assertion passes vacuously. The
+  2026-08-06 run worked around this by pointing `CLAUDE_CONFIG_DIR` at an empty directory,
+  which exercises the probe's detection correctly but is a simulation, not the real
+  condition. Re-run §5b on a genuinely gstack-free machine when one is to hand. This is the
+  general shape of every standalone-posture assertion, not a quirk of this one.
+  (live-test run, 2026-08-06) **Priority:** P3
 
 ## Quality axis
 
