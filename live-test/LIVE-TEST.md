@@ -435,7 +435,23 @@ ln -sf /etc/hostname .forgeward/config.yml                # a symlink is refused
 rm -rf .forgeward
 ```
 
-**NOT TESTED YET**
+**TESTED — 2026-08-06, plugin 0.9.0 installed from cache.** Every assertion above held,
+including the three that only a model can satisfy: the seo-reviewer reported
+`Postures: all = private-shareable (pinned in .forgeward/config.yml)` after running the
+probe itself, and called `seo.routes` out as unread *unprompted*; the privacy-reviewer
+fired on a markup-only diff and reasoned from the pin rather than the diff shape. Both
+negative checks behaved (invalid posture → empty, symlink → `unreadable`), reviewers left
+the repo byte-identical, and the FAIL wrote no marker.
+
+Two caveats on how it was run, so the next person does not over-read this:
+
+- It used a purpose-built fixture in a scratch directory, not the §2 repo — the §2 scaffold
+  has no public page to touch, and this section needs one.
+- **The `substitutes` half was verified against a *simulated* gstack-absent machine**
+  (`CLAUDE_CONFIG_DIR` pointed at an empty directory). On a box where gstack is installed,
+  `NOT COVERED: quality` would be absent whether or not the substitute worked, so the
+  assertion is vacuous there. If you re-run this on a genuinely gstack-free machine, that
+  is the stronger test and worth preferring.
 
 ---
 
