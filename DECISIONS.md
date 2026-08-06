@@ -4,6 +4,139 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — the gate reported a handoff it never performed when gstack was absent
+
+**Date:** 2026-08-06 · **Version:** 0.8.0
+
+**Symptom.** On a machine with no gstack, a passing `/forgeward:gate` ended with
+`forgeward gate: PASS (fired: …). Marker written. Handing off to /ship.` — and nothing shipped.
+No error, no warning, no push. The user's work sat uncommitted behind a success message.
+
+**What it was, and why the prediction about it was wrong.** `skills/gate/SKILL.md` Step 3
+invoked gstack's `ship` skill unconditionally. `docs/axis-proposals.md` had flagged this as
+"untested — likely-broken", guessing it would hard-fail without gstack. It did not, and the
+reality is worse in the way that matters:
+
+- The marker is written **before** the handoff. So the gate's actual product — the review and
+  the receipt — was never at risk, and the user was never blocked. A hard failure would have
+  been *visible*, and would have cost only a retry.
+- What actually broke is the **report**. The gate asserted an action it had not taken. A gate
+  that hard-fails tells you something is wrong; a gate that lies tells you everything is fine.
+  This is the same class as the fail-open error paths of 0.7.4–0.7.6: the failure returns the
+  same surface as success, so nothing distinguishes them from outside.
+
+**Fix.** Step 3 branches on `gstack_ship` from the new environment probe. Present → hand off as
+before. Absent → do not attempt the Skill call, and report that `/ship` is not installed and the
+marker is already in place, so a manual push will be allowed. The handoff is stated as a
+convenience rather than part of the gate, because it is: the review and the marker are both
+complete before that branch is reached, so a missing `/ship` costs two commands, never a
+re-review.
+
+**The wider decision: DISCLOSE, do not refuse (Option B, `docs/axis-proposals.md` §3).**
+forgeward's reviewer table is scoped as a *delta against gstack*, so every deferral becomes a
+hole the moment the other side is absent. One had already shipped that way (`supply-chain-reviewer`
+deferring CVEs to a `/cso` that need not exist, fixed earlier). Rather than keep patching
+instances, 0.8.0 makes the environment a first-class input:
+
+- `scripts/forgeward-detect-environment.sh` probes `ship`/`review`/`cso` and reads an optional
+  `standalone.substitutes` list from `.forgeward/config.yml`.
+- Gate Step 1c names any axis whose owner is absent (`quality`, `deep-audit`) in the firing
+  decision, then **gates normally**. It never FAILs, never withholds the marker, and never
+  re-fires a reviewer to compensate — a security reviewer asked to also judge quality does
+  neither job well.
+- The marker records the environment (schema 3), so a PASS is auditable after the fact.
+
+**Three deliberate asymmetries, each the opposite of a neighbouring script's posture.**
+
+- **The probe fails OPEN (noisy), while `forgeward-detect-gstack-skill.sh` fails CLOSED.** That
+  script's answer drives a *skip*, so a false "installed" silently drops a check. This one's
+  answer drives a *sentence*, so being wrong costs a redundant paragraph while the other
+  direction hides a real gap. Unreadable config, missing config and parse trouble all resolve
+  to "disclose".
+- **The probe always exits 0.** It is informational. A gate run must never be blocked because
+  an *optional* partner tool could not be probed.
+- **A broken probe never costs a marker.** Any unexpected output degrades to
+  `"environment": {"probe":"unavailable"}` and the marker is written anyway. Losing a marker
+  forces a full re-review; losing provenance costs one unanswerable question later.
+
+**Two limits, stated so they are not mistaken for coverage.**
+
+- **Presence, not diligence.** The probe sees that a skill is *installed*. gstack installed and
+  never run is indistinguishable from gstack actively covering the axis, so the disclosure says
+  "the tool is here", never "the axis was reviewed".
+- **`.forgeward/config.yml` gets a reader, not a YAML parser.** It handles exactly one shape —
+  a two-space block sequence under `standalone.substitutes`. Flow sequences (`[a, b]`), quoted
+  scalars, anchors, aliases and tabs all read as "no substitutes named", which disclose-by-default
+  turns into a redundant paragraph rather than a hidden gap. The file was pure prose before this
+  (documented in two agent files, parsed by nothing); this is its first parser, and it is
+  deliberately narrow rather than the beginning of a YAML dependency.
+
+**Also corrected here — three places the repo already described behaviour it did not have,**
+which is how the gap survived this long:
+- `live-test/LIVE-TEST.md` told a tester the gate "tells you it would" hand off with no gstack.
+  It did not. That branch now exists, and the line describes what actually happens.
+- `docs/axis-proposals.md` said "forgeward refuses the `/ship` handoff", conflating **this repo's
+  own dev workflow** (declined because `/ship` would re-bump a version living in three manifests)
+  with **plugin behaviour** (which hands off, and now degrades). Disambiguated in place.
+- `scripts/forgeward-gate-check.sh`'s `/ship` halt message promised the gate "ships in one
+  motion" — true only on the gstack branch. Reworded to hold either way rather than probing,
+  because that is the halt path and it must stay fast and dependency-free.
+
+**Note the `schema` field is provenance, not enforcement.** It is written by
+`forgeward-write-marker.sh` and read by nothing in the repo — no freshness check consults it, no
+push is refused over it. Bumping 2 → 3 is therefore free, and must not be mistaken for a
+compatibility mechanism. The same is true of the `environment` object beside it.
+
+**Evidence.** E1–E18 in `test/gate-test.sh`, each mutation-tested. E2 exists specifically as
+E1's positive control: gstack is installed on the author's machine, and
+`forgeward-detect-environment.sh` is not a PATH lookup, so the suite's PATH-shim helpers do
+nothing to it — an assertion that forgets any of its three roots (`$CLAUDE_CONFIG_DIR/skills`,
+`<git toplevel>/.claude/skills`, `$CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills`) finds the real
+gstack and passes vacuously. E5 pins that a substitute name carrying JSON metacharacters is
+*dropped* rather than escaped, since that value is the only marker field originating in a repo
+file. Suites: gate 162/162, pre-push 15/15.
+
+**Two findings from the 0.8.0 security review, both Medium, both fixed here.** Worth recording
+because each is an instance of a rule this repo already had and each got past a green suite —
+E1–E11 were all passing when both were found, so "the tests pass" was never evidence about them.
+
+- **A committed symlink at `.forgeward/config.yml` was followed.** `[ -f ]` and `[ -r ]` both
+  follow links, so a repo could commit the config as a git symlink (mode 120000) aimed at any
+  file readable by whoever checks the branch out and runs the gate; the reviewer demonstrated
+  end-to-end that its value was carried into the pass marker. Impact was bounded — the marker is
+  local, never committed, and nothing transmits it — but the file-existence oracle was real, and
+  awk would scan a file of any size. Fixed by **refusing** links rather than resolving them, plus
+  a 64KB size cap and per-item caps of 64 characters and 32 entries. Refusal because this key only
+  *silences a disclosure*, so declining to read a config costs one redundant paragraph — the same
+  fail-open direction as the rest of the script — while containment would need `readlink -f`,
+  which is not portable to the bash 3.2 environments this repo still targets. **This knowingly
+  breaks the monorepo that legitimately symlinks its config to a shared file**; such a repo must
+  use a regular file, and reads as `unreadable` rather than silently empty so the disclosure fires.
+- **A character allowlist was mistaken for structural validation — including in my own comment.**
+  `forgeward-write-marker.sh` accepted any probe output that began `{`, ended `}`, and drew only
+  from the character set the probe uses, and the comment above it claimed the marker was validated
+  for "two independent reasons". A charset constrains *bytes*, not *structure*:
+  `{"a":"b"},"diff_hash":"FORGED","passed":false,"z":{}` satisfies every one of those conditions
+  and splices **duplicate top-level keys** into a syntactically valid marker, where jq and python3
+  alike resolve last-value-wins — so the forged pair is what `is_fresh()` reads. Replaced with a
+  match against the probe's complete literal output shape, anchored at both ends, each field drawn
+  from its own closed vocabulary. Duplicate-key splicing is now unrepresentable.
+
+  **The reviewer's suggested fix — parse it with jq or python3 — was declined.** The
+  supply-chain reviewer had just certified that this diff adds no external tool requirement, and
+  the marker is the artifact that authorizes a push, so its write path should have the fewest
+  possible ways to fail. An anchored shape match needs no parser and is strictly *stronger* than
+  a generic "is this an object" test, which would still accept `{"passed":false}`. **The cost is
+  real and is a maintenance obligation, recorded in `TODOS.md`:** the two scripts are now coupled,
+  and any new field in the probe's output must be added to the marker's check in the same commit
+  or provenance silently degrades to `probe: unavailable`. That failure is safe (provenance is
+  lost, enforcement is not) and E10 turns red on it, which is what keeps it from being silent.
+
+  E16 is the reviewer's proof-of-concept verbatim. E17 pins the same attack from the other end —
+  a payload that *opens* with genuine, fully-conformant probe output and appends the forgery,
+  which survives any check anchored only at the start. Confirmed by mutation: deleting the single
+  trailing `$` from the regex reds E17 and nothing else, and is invisible to E16.
+
 ## RESOLVED — the error-path class was fixed one branch at a time, so the fixes cancelled each other out
 
 **Date:** 2026-08-06 · **Version:** 0.7.6

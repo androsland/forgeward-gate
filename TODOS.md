@@ -99,39 +99,90 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Standalone posture (no gstack installed)
 
-Full analysis in `docs/axis-proposals.md` → "Later findings" §3.
+Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
+0.8.0** — see `## Completed`. What follows is what it did *not* close.
 
-- **forgeward is scoped as a delta against gstack, so a deferral is a hole when gstack is
-  absent.** README line 7 defines it as "a gate for gstack" and the reviewer table's third
-  column is "why it's here (not redundant with gstack)". Decide Option A (declare gstack a
-  hard dependency) or Option B (conditional deferral — recommended, because the six
-  reviewers do work standalone). What is not acceptable is leaving it implicit. Two things
-  now bound this, both enumerated rather than sampled: the only *behavioral* deferral was
-  `supply-chain-reviewer`'s, fixed in 0.7.4 below — `security-reviewer`'s two gstack
-  references are positioning prose that skips nothing, and the other four reviewers name
-  gstack zero times. And gate mechanics are verified gstack-free: `hooks/` and `scripts/`
-  reference it only in comments and in `forgeward-diff-hash.sh`'s cosmetic-file exclusions,
-  which stay inert standalone. So what remains for Option B is the posture *statement* and
-  the `/ship` handoff, not another unchecked axis. (2026-08-05) **Priority:** P2
-- **README line 45 still claims code quality is covered by gstack's `/review`.** That is
-  false without gstack, and per the quality-axis findings below it is shaky even with it —
-  `/review` has 0 standalone runs in the log and runs inside `/ship`, which this repo's own
-  workflow skips. Left alone deliberately in 0.7.4, which scoped itself to the CVE axis;
-  fixing it means deciding the quality axis first. The `/cso` claim on line 336 was
-  corrected there. An unstated limit reads as a claim of coverage, and this audience is
-  exactly the people who are not us. **Priority:** P2
-- **Under Option B, detect gstack at gate time and disclose — do not fail.** Name the
-  unowned axes in the firing decision. Detection must handle custom `--prefix` install
-  variants (README line 57), must stay silent when `.forgeward/config.yml` names a
-  substitute (Dependabot/Snyk/CI SAST), and structurally cannot tell a configured tool
-  from an installed-but-never-run one. **Priority:** P2
-- **Record the detected environment in the pass marker.** Option B makes coverage
-  environment-dependent, so the same plugin version means different things on two
-  machines. The marker already carries `fired`; recording what the gate could and could
-  not see makes that variance auditable from the artifact rather than invisible.
+- **`.forgeward/config.yml` now has a parser for exactly one key, and two documented keys
+  still have none.** 0.8.0 gave it its first reader, for `standalone.substitutes`. But
+  `seo.posture` and `seo.routes` are still pure prose — promised to users in
+  `skills/gate/SKILL.md:117` and `agents/seo-reviewer.md:71-73`, parsed by nothing, so a
+  repo that pins its posture there is silently ignored today. The asymmetry is *worse* now
+  than before this lane: one key genuinely works, which makes the other two look like they
+  do. Either wire them to the same reader or say in both files that the pin is not yet
+  honoured. (0.8.0, 2026-08-06) **Priority:** P2
+- **The config reader is a one-shape reader, not a YAML parser, and the shapes it refuses
+  are the ones a real user is most likely to write.** `[a, b]` flow sequences and quoted
+  scalars (`- "quality"`) both read as "nothing configured", so a user who silences an axis
+  in perfectly valid YAML keeps getting the disclosure and has no way to tell why. Failing
+  toward disclosure is the right direction, but a *silently* ignored config is still a bad
+  experience. Cheapest real fix is to use python3's YAML when present and keep the awk
+  reader as the fallback — the hooks already have a jq/python3 two-arm pattern to copy.
+  Note what will not surface this: nothing validates the file or warns on unknown keys, so
+  a typo'd `substitutes:` is indistinguishable from an absent one. (0.8.0, 2026-08-06)
+  **Priority:** P2
+- **The marker's `schema` field is written by nothing-reads-it, and now so is
+  `environment`.** Grepped: outside its own write site and its comment, the only reader of
+  `schema` anywhere is E10 — a test asserting it equals 3. No freshness check consults it,
+  no hook refuses a push over it, and before 0.8.0 nothing read it at all. So the 2 → 3
+  bump is provenance, not a compatibility mechanism,
+  and it cannot protect a future reader from an old marker. If a marker format change ever
+  *does* need to be enforced, the version field has to start being read first — and the
+  fail-safe direction is already available for free (an unrecognised schema should read as
+  stale, which costs one re-gate). (0.8.0, 2026-08-06) **Priority:** P3
+- **The probe and the marker writer are now coupled, and the coupling is a standing
+  maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
+  its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
+  parse so the push-authorizing write path keeps needing no external tool (and because a
+  generic "is this an object" test would still accept `{"passed":false}`). The cost: **any new
+  field added to `forgeward-detect-environment.sh` must be added to that regex in the same
+  commit**, or every marker silently records `environment: {"probe":"unavailable"}`. The
+  failure is safe — provenance is lost, enforcement is not — and E10 goes red on it, which is
+  the only reason it is not silent. Anyone touching the probe's output should read the comment
+  above `_env_ok` first. Revisit if the probe grows past a handful of fields: at that point the
+  regex stops being readable and taking the parser dependency becomes the better trade.
+  (security review, 2026-08-06) **Priority:** P2
+- **The `awk` call is not locale-pinned, while the `wc -c` three lines above it is.**
+  `forgeward-detect-environment.sh:103` runs `LC_ALL=C wc -c`; line 112 runs a bare `awk`.
+  Nothing explains the asymmetry, in a file where every other asymmetry is documented. It
+  matters because both the CRLF handling and the charset filter depend on character-class
+  semantics: `\r ∈ [[:space:]]` is what makes a Windows config parse at all, and
+  `[A-Za-z0-9_-]` is a *range*, whose members are collation-dependent outside the C locale.
+  `LC_ALL=C` would make both byte-exact and is strictly the safer direction. Verified clean
+  on gawk 5.1.0 under `C.UTF-8` and forced `LC_ALL=C`; no locale was found where it breaks,
+  which is why this is P3 rather than a fix. Note what it means for the tests: **E18 asserts
+  "works under the test runner's locale", not "works everywhere"** — it cannot pin what the
+  script does not pin. Deliberately NOT fixed in 0.8.0: the change is one token, but the
+  script had just been cleared by a security pass and editing it afterwards to chase a
+  non-finding trades a reviewed artifact for an unreviewed one. Fix it and re-fire together.
+  (security review, 2026-08-06) **Priority:** P3
+- **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
+  `[ -L ]`/`[ -f ]`/`[ -r ]` run at `forgeward-detect-environment.sh:97-99`, but `wc -c` and
+  `awk` read the file afterwards, so a process with concurrent write access to the checked-out
+  tree could swap a regular file for a symlink inside that window. Raised by the 0.8.0 security
+  review as informational and explicitly *not* filed as a finding: the attacker must already
+  have local write access to the same checkout while the gate runs, which implies code
+  execution, and the outcome is still bounded by the 64-byte/32-item/ASCII-only sanitizer and
+  the marker's own `_env_ok` gate downstream. Recorded here only so a future reader finds the
+  decision instead of rediscovering the gap and assuming it was missed. Closing it properly
+  means opening the file once and working from that handle — not worth the portability cost
+  today. (security review, 2026-08-06) **Priority:** P4
+- **The symlink refusal knowingly breaks a legitimate configuration.** A monorepo that
+  symlinks `.forgeward/config.yml` to a shared config elsewhere in the tree is now ignored
+  (reads `unreadable`, so the disclosure still fires) and must use a regular file. This is
+  documented in the script and in `DECISIONS.md` but **not in any user-facing doc** — the
+  README never mentions the config file's constraints at all, so the first person to hit this
+  will debug it from behavior. Fix is one sentence in the README next to the
+  `standalone.substitutes` mention. Note the containment alternative was declined on
+  portability (`readlink -f` is absent from the bash 3.2/macOS environments this repo targets),
+  not on principle; a portable resolver would reopen it. (security review, 2026-08-06)
   **Priority:** P3
-- **Untested: does the gate's Step 3 `/ship` handoff degrade or hard-fail with no
-  gstack?** Flagged as likely-broken, not confirmed. **Priority:** P2
+- **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E18
+  pin the *probe*; the decision to print `NOT COVERED: quality` lives in
+  `skills/gate/SKILL.md` Step 1c and is executed by a model. The same is true of every
+  other instruction in that file, so this is not a new class of gap — but it is the reason
+  the probe was built as a script with its own exit contract rather than as prose, and the
+  remaining half is untested by construction. The live-test in `live-test/` is where this
+  would be caught, and it is manual. (0.8.0, 2026-08-06) **Priority:** P3
 
 ## Quality axis
 
@@ -143,6 +194,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `"covered-by-forgeward"`, while forgeward's README skips code-quality because
   `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
   an existence proof, not a measured rate. (2026-08-05) **Priority:** P2
+
+  **Still open after 0.8.0, and only half-narrowed.** Option B made the *gstack-absent*
+  half explicit — the gate now discloses `quality` as unowned. It does nothing about this
+  entry's actual finding, which is the **gstack-present** case: `/review` defers to
+  forgeward while forgeward defers to `/review`, so both installed still means nobody
+  reviews quality, and no disclosure fires because `gstack_review` reads `present`. The
+  probe sees presence, not diligence, and this is exactly the blind spot that phrase
+  names. (0.8.0, 2026-08-06)
 - **`error-path-reviewer` — MEASURED 2026-08-06, and the decision rule says fold, not
   build.** Owns one question: *when this code fails, does anything notice?* Four rules
   (discarded failure signal, dead/unreachable error path, unchecked conditional-write
@@ -261,6 +320,41 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P2: the gate reported a `/ship` handoff it never performed when gstack was absent.**
+  Fixed 2026-08-06, shipped in 0.8.0. Closes the Option B decision, the README quality
+  claim, the marker-environment item, and the "untested handoff" item in one lane.
+
+  The handoff had been flagged as "untested — likely-broken", guessing a hard failure. It
+  was not a hard failure, and the reality was worse: the marker is written *before* the
+  handoff, so the PASS was never at risk and the user was never blocked — the gate simply
+  announced "Handing off to /ship" on a machine where nothing shipped. Same class as the
+  0.7.4–0.7.6 error-path work: the failure surface is identical to the success surface.
+
+  Shipped: `scripts/forgeward-detect-environment.sh` (probes `ship`/`review`/`cso`, reads
+  `standalone.substitutes`, always exits 0, fails toward disclosure); gate Step 1c naming
+  any axis whose owner is absent and then gating normally; Step 3 branching on
+  `gstack_ship`; marker schema 3 carrying the environment. README line **57** (not 45 —
+  the number in this file and in `docs/axis-proposals.md` was wrong, and is corrected in
+  both) now qualifies the quality claim.
+
+  Three documents were also describing behaviour the code did not have, which is how the
+  gap survived: `live-test/LIVE-TEST.md` told testers the gate "tells you it would" hand
+  off standalone; `docs/axis-proposals.md` said "forgeward refuses the `/ship` handoff",
+  conflating this repo's own dev workflow with plugin behaviour; and
+  `forgeward-gate-check.sh`'s halt message promised it "ships in one motion". All three
+  corrected in place. Full reasoning in `DECISIONS.md`.
+
+  E1–E18, each mutation-tested in both directions where a direction exists. E2 is E1's
+  positive control and is load-bearing: gstack is installed on the author's machine and
+  the probe is not a PATH lookup, so an assertion that forgets any of its three roots
+  finds the real gstack and greens vacuously. E12–E17 were added *after* E1–E11 were
+  green, for the two Medium findings of the 0.8.0 security review (a followed config
+  symlink; a character allowlist mistaken for structural validation) — a reminder that
+  a passing suite is evidence about the assertions in it and nothing else. E18 pins that
+  a CRLF config parses identically to an LF one — not a security case, a regression guard
+  for the trailing-CR class that already shipped once in 0.7.6. Suites: gate 162/162,
+  pre-push 15/15.
 
 - **P1: unparseable hook input was ALLOWED through the PreToolUse gate — and the #11 fix
   that was supposed to prevent it had been silently cancelled by the branch it fell

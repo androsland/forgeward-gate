@@ -248,7 +248,12 @@ Commit it, then run **`/forgeward:gate`** again.
 
 Expected:
 - privacy-reviewer now ends `PRIVACY VERDICT: PASS`; the other surfaces still self-skip.
-- The gate writes the marker and hands off to `/ship` (or, with no gstack, tells you it would).
+- The gate writes the marker, then branches on whether gstack's `/ship` is installed: with
+  gstack it hands off in the same motion; without it, it reports that `/ship` is not installed
+  and that you should commit, push and open the PR yourself. Either way the marker is written
+  first, so the push hook allows the push. (Until 0.8.0 this line promised a graceful
+  standalone branch that did not exist — the handoff was unconditional, so with no gstack the
+  gate reported a handoff that never happened.)
 - Verify the marker and that the push now goes through:
   ```bash
   cat .git/forgeward-gate-marker.json          # shows passed:true, base, diff_hash

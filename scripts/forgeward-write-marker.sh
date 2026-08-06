@@ -31,6 +31,66 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 head="$(git rev-parse HEAD)"
 hash="$("$here/forgeward-diff-hash.sh" "$base")"
 
+# --- environment provenance ---------------------------------------------------
+# WHY THE MARKER CARRIES THIS. forgeward is scoped as a delta against gstack, so what
+# a PASS actually COVERS depends on what else was installed on the machine that ran it.
+# Two markers both saying `passed: true` can mean materially different things, and until
+# now nothing recorded which. docs/axis-proposals.md §4 puts it as turning the coverage
+# variance "from invisible into auditable". This is the auditable half; the disclosure
+# the user reads is Step 1 of the gate skill.
+#
+# THIS IS PROVENANCE, NOT ENFORCEMENT. Nothing reads the field back — no freshness
+# check consults it, no push is refused because of it. It answers "what did this PASS
+# mean?" after the fact. Same is true of the `schema` number beside it, which is
+# written here and read by nothing in the repo; do not mistake either for a
+# compatibility mechanism.
+#
+# NEVER BLOCKS THE MARKER. The probe exits 0 by design, but it is still an external
+# process that can be missing, unreadable, or replaced. A reviewer PASS that was
+# genuinely earned must not be discarded because a provenance probe broke, so any
+# unexpected output degrades to a recorded "unavailable" and the marker is written
+# regardless. Losing the marker would force a full re-review; losing the provenance
+# costs one unanswerable question later.
+#
+# VALIDATED BEFORE INTERPOLATION as an EXACT SHAPE, not a charset. The distinction is
+# the whole point, and an earlier draft of this got it wrong in a way worth recording:
+# it accepted any first line that began `{`, ended `}`, and drew only from the character
+# set the probe uses. That is a CHARACTER allowlist, and it does not constrain STRUCTURE.
+# A string like `{"a":"b"},"diff_hash":"forged","passed":false,"z":{}` satisfies every one
+# of those conditions, and splicing it in produces a syntactically valid marker carrying
+# DUPLICATE top-level keys — where jq and python3 both resolve last-value-wins, so the
+# forged pair is what `is_fresh()` reads. Confirmed by proof-of-concept in the 0.8.0
+# security review, which is also where the overstated comment was caught.
+#
+# So the check below matches the probe's output against the complete literal shape it is
+# contracted to emit, anchored at both ends, with each field's value drawn from its own
+# closed vocabulary. Duplicate-key splicing is unrepresentable: there is exactly one
+# accepted string shape and it has no room for a second `diff_hash`.
+#
+# Deliberately NOT a jq/python3 structural parse, which was the reviewer's suggested fix.
+# This script needs neither tool today and a marker write must not start depending on one
+# — the marker is the artifact that authorizes a push, so its write path should have the
+# fewest possible ways to fail. An anchored shape match is portable, needs no parser, and
+# is strictly STRONGER than a generic `is this an object` test, which would still accept
+# `{"passed":false}`.
+#
+# THE COST, stated because it is real: this couples the two scripts. Any new field in the
+# probe's output must be added here in the same commit or the marker silently degrades to
+# `probe: unavailable`. That failure is safe (provenance is lost, enforcement is not) and
+# loud enough to notice in the E-series, but it is a genuine maintenance obligation and is
+# recorded in TODOS.md.
+#
+# WHY VALIDATE AT ALL when the probe already sanitises its own output: the two files can
+# be upgraded separately — this one ships in a plugin cache a user can edit — and the
+# substitutes field is the only content here originating in a repo file rather than git.
+env_json=""
+if [ -x "$here/forgeward-detect-environment.sh" ]; then
+  env_json="$("$here/forgeward-detect-environment.sh" 2>/dev/null | head -n 1 || true)"
+fi
+_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*"\}$'
+printf '%s' "$env_json" | LC_ALL=C grep -Eq "$_env_ok" || env_json=""
+[ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
+
 # Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't
 # collide. Git branch names are already filesystem-safe (they map to
 # refs/heads/<name> files), so no extra sanitization is needed.
@@ -39,13 +99,14 @@ mkdir -p "$(dirname "$marker")"
 
 cat > "$marker" <<EOF
 {
-  "schema": 2,
+  "schema": 3,
   "passed": true,
   "branch": "$branch",
   "base": "$base",
   "reviewed_head": "$head",
   "diff_hash": "$hash",
-  "fired": "$fired"
+  "fired": "$fired",
+  "environment": $env_json
 }
 EOF
 

@@ -1914,6 +1914,309 @@ rm -rf "$R/.claude"
   && ok "detect: a path-shaped argument is a usage error, never a match" \
   || nok "detect D12" "expected 2"
 
+# --- E1..E11: environment disclosure (Option B standalone posture) ---------------
+# forgeward is scoped as a DELTA against gstack, so what a PASS covers depends on what
+# else is installed. 0.8.0 makes that visible instead of leaving it to a README table:
+# the gate DISCLOSES an unowned axis and gates anyway. These pin the probe that decision
+# reads from.
+#
+# THE VACUITY TRAP, and it is the reason E2 exists. forgeward-detect-environment.sh is
+# NOT a PATH lookup, so the suite's PATH-shim helpers do nothing to it. It resolves
+# THREE roots, and simulating "no gstack" means neutralising all of them:
+#   1. $CLAUDE_CONFIG_DIR/skills  (falls back to $HOME/.claude/skills if unset)
+#   2. <git toplevel>/.claude/skills   <- the one that is easy to forget
+#   3. $CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills
+# gstack is very likely installed on the machine running this suite (it is on the
+# author's), so an assertion that forgets root 1 or 3 finds the REAL gstack, and one that
+# forgets root 2 finds whatever the cwd repo ships. Every "absent" assertion below would
+# then pass while proving nothing. E2 is the positive control that makes that detectable:
+# it must come back "present" from the same harness, so a change that hard-wires the
+# probe to "absent" turns E2 red instead of quietly greening E1.
+ENV_SH="$PLUGIN/scripts/forgeward-detect-environment.sh"
+ER="$TMP/envrepo"; mkrepo "$ER"          # a repo with NO .claude/skills of its own
+( cd "$ER" && echo x > x.txt && git add -A && git commit -qm init ) >/dev/null 2>&1
+EMPTY_CFG="$TMP/envcfg-empty"; mkdir -p "$EMPTY_CFG"
+envprobe() { # envprobe <config-dir> -> one line of JSON, run from inside $ER
+  ( cd "$ER" && CLAUDE_CONFIG_DIR="$1" "$ENV_SH" 2>/dev/null )
+}
+jfield() { # jfield <json> <key> -> value  (string fields only; the probe emits no nesting)
+  printf '%s' "$1" | sed -n 's/.*"'"$2"'":"\([^"]*\)".*/\1/p'
+}
+mkcfg() { mkdir -p "$ER/.forgeward"; printf '%s\n' "$1" > "$ER/.forgeward/config.yml"; }
+rmcfg() { rm -rf "$ER/.forgeward"; }
+
+# E1: nothing installed anywhere the probe looks -> all three axes read absent.
+E1J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E1J" gstack_ship)" = absent ] \
+  && [ "$(jfield "$E1J" gstack_review)" = absent ] \
+  && [ "$(jfield "$E1J" gstack_cso)" = absent ] \
+  && ok "env: with every root neutralised, all three gstack axes read ABSENT" \
+  || nok "env E1" "got '$E1J'"
+
+# E2: THE POSITIVE CONTROL for E1. Same harness, one skill planted -> present, and only
+# that one. Without this, a probe that always printed "absent" would green E1.
+E2C="$TMP/envcfg-review"; mkdir -p "$E2C/skills/review"
+printf -- '---\nname: review\nversion: 1.0.0\n%s\n---\n\nBody.\n' "$MARKER" > "$E2C/skills/review/SKILL.md"
+E2J="$(envprobe "$E2C")"
+[ "$(jfield "$E2J" gstack_review)" = present ] && [ "$(jfield "$E2J" gstack_ship)" = absent ] \
+  && ok "env: a planted /review reads PRESENT while /ship stays absent (E1 is not vacuous)" \
+  || nok "env E2" "got '$E2J'"
+
+# E3: no config file at all -> absent, empty list. The common case, and it must disclose.
+rmcfg
+E3J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E3J" config)" = absent ] && [ -z "$(jfield "$E3J" substitutes)" ] \
+  && ok "env: no .forgeward/config.yml -> config=absent, no substitutes" \
+  || nok "env E3" "got '$E3J'"
+
+# E4: the one shape the reader supports.
+mkcfg 'standalone:
+  substitutes:
+    - quality
+    - deep-audit'
+E4J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E4J" config)" = present ] && [ "$(jfield "$E4J" substitutes)" = "quality,deep-audit" ] \
+  && ok "env: standalone.substitutes block list parses to a CSV of axis names" \
+  || nok "env E4" "got '$E4J'"
+
+# E5: the marker is assembled by string interpolation and this is the only field whose
+# content comes from a repo file. A name carrying a quote or a brace must be DROPPED, not
+# escaped and not passed through — pinned here so a future "be more permissive" edit that
+# would let it reach the marker turns red.
+mkcfg 'standalone:
+  substitutes:
+    - a"b},{evil
+    - quality'
+E5J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E5J" substitutes)" = "quality" ] \
+  && ok "env: a substitute name with JSON metacharacters is dropped, not interpolated" \
+  || nok "env E5" "got '$E5J'"
+
+# E6: an unreadable config must say so rather than claim an empty list. Direction matters:
+# "unreadable" makes the caller disclose (a redundant paragraph), while a silent empty
+# list is indistinguishable from "the user configured nothing" and hides a real gap.
+# Skipped as root, where chmod 000 does not deny.
+mkcfg 'standalone:
+  substitutes:
+    - quality'
+chmod 000 "$ER/.forgeward/config.yml"
+if [ "$(id -u)" = 0 ] || [ -r "$ER/.forgeward/config.yml" ]; then
+  ok "env: unreadable-config case SKIPPED (running as root; chmod 000 does not deny)"
+else
+  E6J="$(envprobe "$EMPTY_CFG")"
+  [ "$(jfield "$E6J" config)" = unreadable ] && [ -z "$(jfield "$E6J" substitutes)" ] \
+    && ok "env: an unreadable config reads UNREADABLE (disclose), never present-with-no-substitutes" \
+    || nok "env E6" "got '$E6J'"
+fi
+chmod 644 "$ER/.forgeward/config.yml"
+
+# E7: the reader tracks a two-level path. A later top-level key with its own
+# `substitutes:` list must not have it adopted.
+mkcfg 'standalone:
+  substitutes:
+    - quality
+other:
+  substitutes:
+    - deep-audit'
+E7J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E7J" substitutes)" = "quality" ] \
+  && ok "env: a substitutes list under a DIFFERENT top-level key is not adopted" \
+  || nok "env E7" "got '$E7J'"
+rmcfg
+
+# E8: always exit 0. It is informational and feeds a sentence, not a skip — a probe that
+# can fail a gate run would be a new way to block a user over a missing OPTIONAL tool.
+if ( cd "$ER" && CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$ENV_SH" >/dev/null 2>&1 ); then
+  ok "env: probe exits 0 even with nothing installed and no config"
+else
+  nok "env E8" "expected exit 0"
+fi
+
+# E9: one line, and real JSON. It is interpolated into the marker, so a stray newline or
+# a broken quote would corrupt a file both hooks parse.
+E9J="$(envprobe "$EMPTY_CFG")"
+[ "$(printf '%s\n' "$E9J" | wc -l | tr -d ' ')" = 1 ] \
+  && printf '%s' "$E9J" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null \
+  && ok "env: probe emits exactly one line and it parses as JSON" \
+  || nok "env E9" "got '$E9J'"
+
+# E10: the marker carries the environment, and it round-trips through the SAME dotted-path
+# read the hooks use. This is provenance — nothing enforces on it — so the assertion is
+# that it is readable, not that it gates anything.
+EM="$TMP/envmarker"; mkrepo "$EM"
+( cd "$EM" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
+   && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
+   && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
+[ -f "$EMJ" ] \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==3 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] else 1)' "$EMJ" \
+  && ok "env: the pass marker is schema 3 and carries a readable environment object" \
+  || nok "env E10" "marker '$EMJ'"
+
+# E11: the probe must never cost a PASS. If it is missing or broken, the marker is still
+# written, still valid JSON, and records that provenance was unavailable. Losing the
+# marker would force a full re-review; losing the provenance costs one unanswered question.
+EB="$TMP/envbroken"; mkrepo "$EB"
+FAKE_PLUGIN="$TMP/fakeplugin"; mkdir -p "$FAKE_PLUGIN"
+cp "$PLUGIN/scripts/forgeward-write-marker.sh" "$PLUGIN/scripts/forgeward-diff-hash.sh" "$FAKE_PLUGIN/"
+printf '#!/usr/bin/env bash\necho "NOT JSON {oops"\nexit 3\n' > "$FAKE_PLUGIN/forgeward-detect-environment.sh"
+chmod +x "$FAKE_PLUGIN"/*.sh
+( cd "$EB" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
+   && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
+   && "$FAKE_PLUGIN/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+EBJ="$(cd "$EB" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
+[ -f "$EBJ" ] \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["passed"] is True and d["environment"]=={"probe":"unavailable"} else 1)' "$EBJ" \
+  && ok "env: a broken probe still yields a valid marker recording probe=unavailable" \
+  || nok "env E11" "marker '$EBJ'"
+
+# --- E12..E17: the 0.8.0 security review's two findings -------------------------
+# Both were found AFTER E1..E11 were green, which is the point of keeping them in their
+# own block: the suite passing was never evidence that these hold. E12..E15 pin the
+# config reader's input bounds (Finding 1), E16..E17 pin the marker's shape check
+# (Finding 2). Every payload below is the reviewer's own proof-of-concept, not a
+# paraphrase of it.
+rep() { # rep <char> <n> -> n copies of char. awk, because the reader already needs it.
+  awk -v c="$1" -v n="$2" 'BEGIN{s="";for(i=0;i<n;i++)s=s c;print s}'
+}
+
+# E12: SYMLINKS ARE REFUSED, NOT FOLLOWED. `[ -f ]` and `[ -r ]` both follow links, so
+# before this a repo could commit `.forgeward/config.yml` as a git symlink (mode 120000)
+# aimed at any file readable by whoever checks the branch out and runs the gate — and the
+# review demonstrated end-to-end that its value was carried into the pass marker.
+# The load-bearing half of this assertion is the SECOND clause: `config: unreadable`
+# alone would also be produced by a dangling link, so the target must be proven unparsed.
+rmcfg
+E12T="$TMP/env-symlink-target.yml"
+printf '%s\n' 'standalone:
+  substitutes:
+    - leakedfromoutside' > "$E12T"
+mkdir -p "$ER/.forgeward"
+if ln -s "$E12T" "$ER/.forgeward/config.yml" 2>/dev/null; then
+  E12J="$(envprobe "$EMPTY_CFG")"
+  [ "$(jfield "$E12J" config)" = unreadable ] && [ -z "$(jfield "$E12J" substitutes)" ] \
+    && ok "env: a SYMLINKED config is refused (unreadable) and its target is never parsed" \
+    || nok "env E12" "got '$E12J'"
+else
+  ok "env: symlink-refusal case SKIPPED (this filesystem cannot create symlinks)"
+fi
+rmcfg
+
+# E13: bounded before awk touches it. Nothing else limits how much gets scanned, and a
+# config this size is malformed by definition — the supported shape is a handful of short
+# axis names. Refusing resolves to "disclose", the same fail-open direction as everything
+# else here, so the cost of being wrong is one redundant paragraph.
+mkdir -p "$ER/.forgeward"
+{ printf '%s\n' 'standalone:' '  substitutes:' '    - quality'
+  printf '# %s\n' "$(rep p 70000)"
+} > "$ER/.forgeward/config.yml"
+E13J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E13J" config)" = unreadable ] && [ -z "$(jfield "$E13J" substitutes)" ] \
+  && ok "env: a config over the 64KB cap reads UNREADABLE and is not scanned" \
+  || nok "env E13" "got '$E13J'"
+
+# E14: per-item length bound, asserted on BOTH sides of the boundary so an off-by-one is
+# visible. A 5000-character all-alphanumeric name passes every metacharacter check and
+# lands in the marker verbatim — found by an injection probe during 0.8.0, confirmed Low
+# by the review (not a forgery path), fixed because nothing else bounded it.
+E14_64="$(rep a 64)"; E14_65="$(rep b 65)"
+mkcfg "standalone:
+  substitutes:
+    - $E14_65
+    - $E14_64
+    - quality"
+E14J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E14J" substitutes)" = "$E14_64,quality" ] \
+  && ok "env: a name over 64 chars is dropped while a 64-char name and its siblings survive" \
+  || nok "env E14" "got '$E14J'"
+
+# E15: item-count bound. Same reasoning as E14 on the other axis — 32 is far above any
+# real axis list and far below anything that makes the marker unwieldy. Counted by commas
+# rather than by matching the exact string, so the assertion does not restate the cap's
+# arithmetic in a second place.
+{ printf '%s\n' 'standalone:' '  substitutes:'
+  i=1; while [ "$i" -le 40 ]; do printf '    - axis%s\n' "$i"; i=$((i+1)); done
+} > "$ER/.forgeward/config.yml"
+E15J="$(envprobe "$EMPTY_CFG")"
+E15N="$(jfield "$E15J" substitutes | tr ',' '\n' | grep -c .)"
+[ "$E15N" = 32 ] \
+  && ok "env: a list of 40 substitutes is truncated to the 32-item cap" \
+  || nok "env E15" "got $E15N items from '$E15J'"
+rmcfg
+
+# --- E16..E17: the marker's environment field is validated as an exact SHAPE ------
+# A CHARACTER allowlist does not constrain STRUCTURE, and the first draft of this check
+# was one. Both payloads below draw only from the character set the probe itself uses,
+# so both passed that draft untouched; both splice DUPLICATE top-level keys into the
+# marker, where jq and python3 alike resolve last-value-wins — so the forged pair is what
+# is_fresh() reads. These assert the forgery is now unrepresentable, and that the marker
+# degrades to recorded-unavailable rather than being lost.
+fakeprobe() { # fakeprobe <name> <line-it-prints> -> path to the resulting marker
+  local d="$TMP/fp-$1" r="$TMP/fpr-$1"
+  mkdir -p "$d"
+  cp "$PLUGIN/scripts/forgeward-write-marker.sh" "$PLUGIN/scripts/forgeward-diff-hash.sh" "$d/"
+  { printf '#!/usr/bin/env bash\n'; printf 'cat <<%s\n%s\n%s\n' "'EOFP'" "$2" "EOFP"; } \
+    > "$d/forgeward-detect-environment.sh"
+  chmod +x "$d"/*.sh
+  mkrepo "$r"
+  ( cd "$r" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
+     && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
+     && "$d/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+  printf '%s/forgeward-gate-markers/feat.json' \
+    "$(cd "$r" && git rev-parse --path-format=absolute --git-common-dir)"
+}
+# Asserts the marker still authorizes truthfully: passed stays true, the diff hash is the
+# one the script computed rather than one the probe supplied, and provenance is recorded
+# as unavailable rather than silently forged.
+notforged() { # notforged <marker-path> <string-that-must-not-appear>
+  python3 - "$1" "$2" <<'PY' 2>/dev/null
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if d["passed"] is True
+         and sys.argv[2] not in d.get("diff_hash","")
+         and d["environment"]=={"probe":"unavailable"} else 1)
+PY
+}
+
+# E16: the review's proof-of-concept verbatim. Every character is in the old allowlist,
+# it begins `{` and ends `}`, and splicing it yields a syntactically VALID marker whose
+# second `diff_hash` and second `passed` win.
+E16M="$(fakeprobe dup '{"a":"b"},"diff_hash":"FORGEDHASH","passed":false,"z":{}')"
+[ -f "$E16M" ] && notforged "$E16M" FORGEDHASH \
+  && ok "env: a duplicate-key splice from the probe is rejected; passed and diff_hash stand" \
+  || nok "env E16" "marker '$E16M'"
+
+# E17: the same attack through the OTHER end. Here the payload OPENS with the probe's
+# genuine, fully-conformant output and appends the forgery, so it survives any check that
+# is anchored only at the start — which is precisely what dropping the trailing `$` from
+# the shape regex would produce. Pinned separately from E16 because that single-character
+# regression is invisible to E16 and to every other assertion in this file.
+E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":""},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
+[ -f "$E17M" ] && notforged "$E17M" TAILFORGE \
+  && ok "env: a valid-prefix-plus-appendix splice is rejected (the shape match is anchored at BOTH ends)" \
+  || nok "env E17" "marker '$E17M'"
+
+# E18: a CRLF config parses identically to an LF one. Not a security case — a regression
+# guard for a class this repo has already shipped twice. 0.7.6 fixed `marker_get` reading
+# a trailing CR off the marker's `base`, which made a FRESH marker read as stale on
+# Windows; the same shape reaches here through `.forgeward/config.yml`, which a Windows
+# checkout with `core.autocrlf=true` will hand to awk with `\r` on every line.
+#
+# It currently works, and the reason is worth pinning rather than trusting: `\r` is in
+# `[[:space:]]`, so the section header matches `standalone:\r` and the trailing-strip
+# removes the CR before the charset test. That is load-bearing and entirely implicit — an
+# edit that tightened either pattern to a literal space or `[ \t]` would drop every
+# substitute a Windows user configured, and the failure is SILENT in the worst way: the
+# config reads `present` with an empty list, which is indistinguishable from "the user
+# configured nothing" and looks exactly like working software.
+mkdir -p "$ER/.forgeward"
+printf 'standalone:\r\n  substitutes:\r\n    - quality\r\n    - deep-audit\r\n' > "$ER/.forgeward/config.yml"
+E18J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E18J" config)" = present ] && [ "$(jfield "$E18J" substitutes)" = "quality,deep-audit" ] \
+  && ok "env: a CRLF config parses identically to LF (no CR reaches the marker, none dropped)" \
+  || nok "env E18" "got '$E18J'"
+rmcfg
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

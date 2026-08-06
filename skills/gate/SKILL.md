@@ -1,6 +1,6 @@
 ---
 name: gate
-description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests, code security), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker and invokes gstack's /ship in one motion. On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
+description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests, code security), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker, then invokes gstack's /ship in one motion when /ship is installed or hands back for a manual push when it is not. Discloses any axis no installed tool owns. On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
 allowed-tools:
   - Bash
   - Read
@@ -147,6 +147,50 @@ read as a PASS on the system. Recommend gating the engine repo separately.
 This is also a finding in its own right: if committed tooling references a path that
 is untracked, the security-reviewer should hear about it.
 
+### Step 1c — say what this INSTALL cannot cover
+
+Step 1b is about the blind spot of the *diff*. This is the blind spot of the *machine*.
+
+forgeward's reviewer table is scoped as a **delta against gstack** — its third column
+says what each reviewer adds that gstack does not. Scoping by delta means every
+deferral becomes a hole the moment the other side is absent, and one already shipped
+that way (`supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not
+exist; it now detects and self-adjusts). Two axes are still owned by a partner tool:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
+```
+
+It prints one line of JSON and always exits 0 — it is informational, and must never
+stop a gate run. Read `gstack_review`, `gstack_cso`, and `substitutes`:
+
+| axis | owner | when its owner is absent |
+|------|-------|--------------------------|
+| `quality` | gstack `/review` (`gstack_review`) | Nothing on this machine reviews code quality or design. No forgeward reviewer picks it up. |
+| `deep-audit` | gstack `/cso` (`gstack_cso`) | `security-reviewer` still runs, diff-scoped — it does **not** replace a whole-repo audit. `/forgeward:ci-gate` is the closest standing substitute. |
+
+If an axis's owner is absent AND its name is not in `substitutes`, add one line to the
+firing decision, e.g.
+`NOT COVERED: quality — gstack /review is not installed and no forgeward reviewer owns this axis.`
+
+Then **carry on and gate normally**. This is disclosure, not refusal, and the
+distinction is the whole design (`docs/axis-proposals.md` §3): forgeward is fully
+operational standalone, and refusing to gate because a *different* tool is missing
+would trade a disclosed gap for a blocked user. Never FAIL, never withhold the marker,
+and never re-fire a reviewer to compensate — a security reviewer asked to also judge
+quality does neither job well.
+
+**Say it once, and only when it is news.** If `substitutes` names the axis, the user
+has already answered and you say nothing at all. A disclosure that repeats after being
+answered is nagging, and nagging is how gates get switched off.
+
+**State presence, never diligence.** The probe sees that a skill is *installed*. It
+cannot tell gstack-installed-and-never-run from gstack-actively-covering-the-axis, so
+`gstack_review: present` licenses "the tool is here", never "quality was reviewed".
+If `config` reads `unreadable`, disclose anyway and say the config could not be read —
+being wrong in that direction costs a redundant paragraph; the other direction hides
+a real gap.
+
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
 **Before spawning anything**, snapshot the working tree so the read-only contract can
@@ -198,12 +242,27 @@ than the one it cleans up. Print the paths and let the user run
   "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
   ```
 
-  Then invoke gstack's ship in the same motion:
-  - Invoke the `ship` skill via the **Skill** tool (this model-initiated invocation is
-    not a user-typed expansion, so the `UserPromptExpansion` halt does not fire; the
-    `PreToolUse` push hook will find the fresh marker and allow the push).
+  Then hand off — **but only if there is something to hand off to.** Use
+  `gstack_ship` from the Step 1c probe (re-run it if you skipped Step 1c):
 
-  Report: `forgeward gate: PASS (fired: …). Marker written. Handing off to /ship.`
+  - **`gstack_ship: present`** → invoke the `ship` skill via the **Skill** tool. This
+    model-initiated invocation is not a user-typed expansion, so the
+    `UserPromptExpansion` halt does not fire; the `PreToolUse` push hook will find the
+    fresh marker and allow the push.
+    Report: `forgeward gate: PASS (fired: …). Marker written. Handing off to /ship.`
+
+  - **`gstack_ship: absent`** → **do not attempt the Skill call.** Stop here and report:
+    `forgeward gate: PASS (fired: …). Marker written. gstack /ship is not installed — commit, push and open the PR yourself; the marker is already in place, so the push hook will allow it.`
+
+  The handoff is a **convenience, not part of the gate**. The gate is the review and
+  the marker, and both are complete before this branch is reached — so a missing
+  `/ship` costs the user two commands, never a re-review.
+
+  Getting this wrong is worse than it looks, which is why it is spelled out. The marker
+  is written *above*, before this step: an unconditional Skill call on a machine with no
+  gstack does not block anything and does not lose the PASS — it produces a **false
+  success report**, telling the user their work shipped when nothing was pushed. A gate
+  that lies about what it did is worse than one that stops. Report only what happened.
 
 - **If any fired reviewer returned `VERDICT: FAIL`**: do NOT write a marker and do NOT
   invoke /ship. Print each failing reviewer's Critical/High findings (severity,

@@ -54,7 +54,15 @@ rather than a skipped one. It sees *presence*, not diligence — it cannot tell 
 never-run from gstack-actively-covering-the-axis, and it cannot see that you cover the axis with
 Dependabot or a CI job instead.
 
-**Still not included on purpose:** a code-quality reviewer — gstack's `/review` covers it.
+**Still not included on purpose:** a code-quality reviewer — gstack's `/review` covers it *when
+gstack is installed*. With no gstack there is no quality reviewer on this machine and nothing else
+picks the axis up, so the gate now **says so** in its firing decision rather than leaving you to
+infer it from a table (`scripts/forgeward-detect-environment.sh`). The same applies to a deep
+whole-repo security audit, which `/cso` owns and `security-reviewer` explicitly does not replace.
+Disclosure, not refusal: forgeward is fully operational standalone, and these two are the only
+axes where a PASS means less without a partner tool. Pin `standalone.substitutes` in
+`.forgeward/config.yml` to silence an axis you cover another way — a disclosure that repeats
+after being answered is nagging, and nagging is how gates get switched off.
 
 ## How it works
 
@@ -62,7 +70,9 @@ Dependabot or a CI job instead.
   only the relevant reviewers (read-only — `Read, Grep, Glob, Bash`, no edits, and no
   writes into the repo at all: scanners run through `scripts/forgeward-scan.sh`, which
   keeps reports on stdout, and the gate diffs the working tree before/after to prove it), and on
-  all-PASS writes a pass marker and hands off to gstack's `/ship` in one motion.
+  all-PASS writes a pass marker — then hands off to gstack's `/ship` in one motion if `/ship`
+  is installed, or tells you to push and open the PR yourself if it is not. The marker is
+  written either way, so the push hook allows the push regardless.
 - **Enforcement — fast feedback in Claude Code, and the real lock at `pre-push`:**
   1. `UserPromptExpansion` on a typed ship command → halts immediately if there's no fresh PASS
      for the current code, before any work runs. The matcher is `^([A-Za-z0-9_]+-)?ship$`, so it
@@ -347,9 +357,10 @@ reads the prior definition to establish a baseline — but the finding must stil
 line, and the baseline comes from source/migration history, which is a proxy for the deployed
 definition rather than proof of it.) Run gstack's `/cso` for a deep whole-repo audit **if you have
 gstack** — the reviewers do not assume you do, and `supply-chain-reviewer` picks up the CVE axis
-itself when `/cso` is absent. What is *not* yet established standalone is the gate's final `/ship`
-handoff, which is tracked in `TODOS.md`. Treat the `ci-gate` CI scanners as your unskippable floor. A gate PASS means the reviewed change is clean, not that the
-running application is secure.
+itself when `/cso` is absent. The gate's final `/ship` handoff is established standalone as of
+0.8.0: with no gstack it writes the marker and hands back for a manual push instead of reporting
+a handoff that did not happen. Treat the `ci-gate` CI scanners as your unskippable floor. A gate
+PASS means the reviewed change is clean, not that the running application is secure.
 
 ## Accepted design gaps (documented, not bugs)
 
