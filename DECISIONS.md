@@ -105,23 +105,62 @@ assertion written alongside the mechanism inherits the mechanism's blind spot. R
 one-line arrangement, and it asserts on the *message* rather than the exit status, since the exit
 status was never wrong.
 
-**Verification.** `test/version-check-test.sh`, 20 assertions, wired into `npm test`. Thirteen
-of fourteen mutations reddened exactly the assertions naming them and nothing else, and the two
-that reddened *nothing* are the entries to carry forward:
+**Round 3 then found a High in the guard the round-2 fix had just hardened — by a different
+mechanism.** Under a UTF-8 locale (this machine and `ubuntu-latest` both default to one) GNU grep
+will not match a negated bracket expression like `[^"]*` across a byte sequence that is not valid
+UTF-8, and **silently drops the whole line** from `grep -o` output rather than erroring. A fork PR
+author controls every byte of their own manifests, so: commit **two** `"version"` keys — a clean
+forward decoy and a real one carrying invalid bytes. The poisoned key is invisible to the script;
+`n` comes back 1, the ambiguity guard never fires, and the decoy validates as a normal forward
+version. Every JSON parser takes the *poisoned* one, because duplicate keys are last-wins in V8,
+Python and Go alike. Reproduced end to end before acting on it: base 0.9.0, head decoy 0.9.1 plus
+poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0, while `JSON.parse` read `0.1.0`.
+A complete bypass of the one hazard this file exists to prevent, from a one-line hex edit.
+
+Fixed with a script-wide `export LC_ALL=C`. Two things about that shape are deliberate:
+
+- **`export`, not `local`.** A `local LC_ALL=C` is *not* passed to a spawned child unless the name
+  was already exported — verified directly: `local` gives the child `<unset>`, a command prefix
+  and `export` both give it `C`. So the `local` form works for a bash builtin like `[[ x < y ]]`
+  and does nothing at all for `grep`. That is the worst available failure: it reads as the same
+  pin and is not one.
+- **One mechanism, not two.** `num_lt`'s own `local LC_ALL=C` was *removed* rather than left
+  beside the export. Two mechanisms claiming one job is how the next reader trusts the wrong one,
+  and here the redundant one is precisely the ineffective one.
+
+**A correction worth recording, because it nearly inverted the fix.** The first attempt to verify
+this finding appeared to *refute* it — `LC_ALL=C` changed nothing, suggesting the reviewer had
+misattributed the cause and their fix was a non-fix. That measurement was wrong: `grep` at an
+interactive prompt on this machine is a **shell function shimming to ugrep 7.5.0**, while a script
+gets `/usr/bin/grep`, GNU grep 3.7. Shell functions are not inherited by a non-interactive child,
+so the ad-hoc check and the script under test were running different programs with different
+invalid-byte behaviour. Re-run against `/usr/bin/grep` the finding reproduced exactly. **Verifying
+a claim about a tool means invoking the same binary the code invokes** — `type -a` and an explicit
+absolute path, not whatever the prompt resolves.
+
+**Verification.** `test/version-check-test.sh`, 22 assertions, wired into `npm test`. Fifteen of
+sixteen mutations reddened exactly the assertions naming them and nothing else — including the
+two added by the review rounds: reverting the counter to `grep -c` reddens R8b alone, and dropping
+the `export LC_ALL=C` reddens R15 alone. The one that reddened *nothing* is the entry to carry
+forward, together with the zero-comparison result:
 
 - The zero-comparison floor (Decision 4) was unpinned until R12 was written for it. Mutation
   testing is what found that; reading did not.
-- **`LC_ALL=C` in `num_lt` is NOT pinned and cannot be**, on this machine. Removing it reddens
-  nothing, because no locale here collates ASCII digits out of code-point order. It stays as
-  hardening with its effect unobservable — the same disclosure the `print()`/CRLF half of the
-  0.7.6 `marker_get` fix carries, and stated for the same reason: an unobservable guard that is
-  silently assumed covered is worse than one labelled.
+- **The `LC_ALL=C` *collation* effect is still not pinned and cannot be**, on this machine: no
+  locale here collates ASCII digits out of code-point order. What changed in round 3 is what
+  that sentence is worth. The same variable also decides whether `grep` matches across invalid
+  UTF-8, and *that* effect is now pinned hard by R15 — so the pin as a whole is covered while
+  one of its two effects remains unobservable. **The lesson is about the label, not the pin:**
+  "unobservable, kept as hardening" was recorded at P4 and read as *this line barely matters*,
+  when the line was in fact load-bearing for a reason nobody had enumerated. An unobservability
+  disclosure is a statement about the effects that were *measured*, never about the guard.
 
-A third mutation (`M6`, dropping the base-ref resolve guard) reported vacuous on the first pass
-and was a **harness escaping artifact** — applied properly it reddens R11 exactly. Worth
-recording: a mutation reporting "nothing reddened" is a claim to verify, not a finding to
-accept, and treating it as the latter would have added a test for a guard that was already
-pinned.
+Two mutations reported vacuous on their first pass and both were **harness escaping artifacts**,
+not coverage gaps — `M6` (dropping the base-ref resolve guard) reddens R11 exactly, and the
+`grep -c` revert reddens R8b exactly, once applied properly. The second was caught only because
+the first had already taught the habit. A mutation reporting "nothing reddened" is a claim to
+verify, not a finding to accept; treating either as the latter would have added a test for a
+guard that was already pinned.
 
 The live direction was proven on this repo rather than only in fixtures: the three manifests
 were edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1. The security

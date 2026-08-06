@@ -61,6 +61,28 @@
 #      so what is compared is what the author wrote. See the workflow for why.
 set -uo pipefail
 
+# EXPORTED, script-wide, and load-bearing -- not tidiness. Under a UTF-8 locale (this
+# machine and `ubuntu-latest` both default to one) GNU grep refuses to match a negated
+# bracket expression like `[^"]*` across a byte sequence that is not valid UTF-8, and
+# silently drops the whole line from `grep -o` output rather than erroring. A fork PR
+# author controls every byte of their own manifests, so that was a complete bypass of
+# the ambiguity guard below: commit TWO "version" keys, a clean forward decoy plus a
+# real one carrying invalid bytes, and the poisoned key becomes invisible to this
+# script while every JSON parser -- V8, Python, Go -- takes it as the value, because
+# duplicate keys are last-wins everywhere. Demonstrated end to end: base 0.9.0, head
+# declaring a decoy 0.9.1 and a poisoned 0.1.0; this script printed
+# `ok: version 0.9.1, not behind master` and exited 0 while `JSON.parse` read 0.1.0.
+# Under LC_ALL=C the same greps see both keys, the guard fires, and the merge is
+# refused. Found by round 3 of this branch's own security review.
+#
+# It must be `export`, and it must not be moved into a function as `local LC_ALL=C`.
+# A `local` assignment is NOT passed to a spawned child unless the name was already
+# exported -- verified: `local` gives the child `<unset>`, a command prefix and
+# `export` both give it `C`. So the `local` form works for a bash builtin like
+# `[[ x < y ]]` and silently does nothing for `grep`, which is the worst combination:
+# it looks like the same pin and is not one.
+export LC_ALL=C
+
 BASE="${1:-origin/master}"
 
 MANIFESTS="package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json"
@@ -115,11 +137,13 @@ strip0() { local s="${1#"${1%%[!0]*}"}"; printf '%s' "${s:-0}"; }
 # Length-then-bytes has no ceiling at all, for real this time: with leading zeros gone,
 # the longer numeral is always the larger one, and two numerals of EQUAL length compare
 # numerically under a plain byte comparison because ASCII digits ascend in code-point
-# order. `LC_ALL=C` is set locally so that last step is bytes rather than whatever the
-# ambient locale's collation does with digits -- the same pinning the probe's `wc -c`
-# has and its `awk` still lacks (open in TODOS.md).
+# order. That last step is bytes rather than ambient collation because of the
+# script-wide `export LC_ALL=C` at the top -- this function used to carry its own
+# `local LC_ALL=C`, which was removed rather than kept alongside it: two mechanisms
+# claiming one job is how the next reader picks the wrong one to trust, and the `local`
+# form is the one that does not survive a fork to `grep`. See the note by the export.
 num_lt() { # num_lt <digits> <digits>
-  local LC_ALL=C x y
+  local x y
   x="$(strip0 "$1")"; y="$(strip0 "$2")"
   [ "${#x}" -ne "${#y}" ] && { [ "${#x}" -lt "${#y}" ]; return $?; }
   [[ $x < $y ]]

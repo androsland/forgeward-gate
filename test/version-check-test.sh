@@ -251,6 +251,38 @@ setv "$R" 1.08.0 1.08.0 1.08.0; commit_head "$R"
 run "$R"
 [ "$st" -ne 0 ] && ok "R14b 1.9.0 -> 1.08.0 reads BACKWARD" || nok "R14b zero padding reverse" "st=$st out=$out"
 
+# --- R15: a version key hidden behind invalid UTF-8 is still counted ---------------
+# The bypass round 3 of the security review found, and the reason the script exports
+# LC_ALL=C. Under a UTF-8 locale GNU grep will not match `[^"]*` across bytes that are
+# not valid UTF-8 and drops the line from `grep -o` output without erroring. A fork PR
+# author owns every byte of their manifests, so a clean forward DECOY plus a poisoned
+# real key made the poisoned one invisible here while JSON parsers take it (duplicate
+# keys are last-wins everywhere). Repro before the fix: base 0.9.0, head decoy 0.9.1 +
+# poisoned 0.1.0 -> `ok: version 0.9.1, not behind master`, exit 0.
+#
+# The assertion reads the MESSAGE, not the exit status: post-fix the poisoned key is
+# visible, so this is refused as AMBIGUITY (two version fields), which is the correct
+# and honest answer -- the script cannot order a value with junk bytes in it and must
+# not try. An exit-status-only assertion would go green on any refusal at all.
+R="$(mkfixture utf8_smuggle 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+printf '{"name":"p","version":"0.9.1","version":"0.1.0\xff\xfe"}\n' > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
+run "$R"
+[ "$st" -ne 0 ] && case "$out" in *'exactly 1 version field'*) true ;; *) false ;; esac \
+  && ok "R15 a second version key hidden behind invalid UTF-8 is seen, not smuggled past" \
+  || nok "R15 utf8-smuggled duplicate key refused" "st=$st out=$out"
+
+# R15b: the same poisoning WITHOUT a decoy must not become a false FAIL on clean input.
+# One poisoned key on its own is refused for being unorderable, which is right; the
+# pair-partner here is that an ordinary all-ASCII manifest still passes, so R15 cannot
+# be satisfied by a script that has simply started refusing everything.
+R="$(mkfixture utf8_clean 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
+run "$R"
+[ "$st" -eq 0 ] && ok "R15b clean ASCII manifests still PASS under the exported LC_ALL=C" \
+  || nok "R15b LC_ALL=C did not break the normal path" "st=$st out=$out"
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

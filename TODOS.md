@@ -330,16 +330,28 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   standard answer and would be this repo's second CI-adjacent config; the cheap manual version
   is re-running that `ls-remote` at release time. Undecided which. (CI version check,
   2026-08-06) **Priority:** P3
-- **`LC_ALL=C` in `num_lt` is hardening whose effect is not observable here, so nothing pins
-  it.** `ci/check-version-monotonic.sh` sets it so the equal-length byte comparison is bytes
-  rather than ambient collation. Removing it reddens no assertion — no locale on this machine
-  collates ASCII digits out of code-point order, and none was found that does. Same shape as
-  the `print()`/CRLF half of the 0.7.6 `marker_get` fix (not observable on POSIX, covered only
-  indirectly), and recorded for the same reason: an unobservable guard silently assumed covered
-  is worse than one labelled. Note this is the *third* locale-pinning entry in this file —
-  `forgeward-detect-environment.sh:112`'s bare `awk` is still unpinned (P3, below). If a fourth
-  appears, the answer is probably a repo-wide convention rather than another bullet.
-  (CI version check, 2026-08-06) **Priority:** P4
+- **Locale pinning should be a repo-wide convention, not a per-script decision — this file now
+  has four entries about it and one of them was a High.** The `num_lt` bullet that used to sit
+  here said `LC_ALL=C` was hardening whose effect was unobservable, at P4. That framing was
+  wrong, and round 3 of the security review showed how: the *collation* effect really was
+  unobservable, but the same variable also governs whether `grep` will match `[^"]*` across
+  invalid UTF-8, and under the ambient locale it will not — which was a complete bypass of the
+  ambiguity guard (fixed, see `DECISIONS.md`). An "unobservable" label on a locale pin is
+  therefore only ever a statement about the *one* effect that was measured. Still unpinned:
+  `forgeward-detect-environment.sh:112`'s bare `awk`. The convention to settle on is probably
+  `export LC_ALL=C` at the top of every non-interactive script in this repo, since none of them
+  produce human-language output; `ci/check-version-monotonic.sh` is the first to do it.
+  (security review round 3, 2026-08-07) **Priority:** P2
+- **Nothing checks that a manifest is well-formed JSON, or that its bytes are valid UTF-8.**
+  `ci/check-version-monotonic.sh` reads versions with `grep`/`sed`, deliberately — no `jq`
+  dependency, and the DECISIONS entry on jq/python3 divergence is why. But that means the
+  duplicate-key and invalid-byte shapes it now *refuses* are only refused at the version field;
+  a manifest can still be malformed elsewhere and this says nothing. A separate, cheap
+  `python3 -c 'import json,sys;json.load(open(sys.argv[1],encoding="utf-8"))'` per manifest in
+  the same workflow would cover the whole file rather than one field, and would have caught the
+  round-3 smuggling shape as a side effect. Not done here because it widens the check's remit
+  from "direction" to "validity" and that deserves its own decision.
+  (security review round 3, 2026-08-07) **Priority:** P3
 - **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
@@ -351,7 +363,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 20) and every one of them is run by hand before a release. The new
+  version-check 22) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -378,7 +390,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R14b, 20 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R15b, 22 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -406,13 +418,38 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   *message*. Generalized: an assertion written alongside a mechanism inherits that mechanism's
   blind spot, and only an outside reader — or a mutation — sees past it.
 
+  **And a third time, as a High.** Round 3 found that under a UTF-8 locale GNU grep will not
+  match `[^"]*` across invalid UTF-8 and silently drops the line, so a fork PR author could
+  commit a clean forward *decoy* `"version"` key plus a poisoned real one and the poisoned key
+  became invisible to the script while every JSON parser took it (duplicate keys are last-wins).
+  Base 0.9.0, decoy 0.9.1, poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0. A
+  complete bypass of the file's whole purpose from a one-line hex edit. Fixed with a script-wide
+  `export LC_ALL=C`; pinned by R15/R15b. Three rounds, three defects, each in the layer the
+  previous round had just hardened — the operative lesson is that **an adversarial reader found
+  all three and the test suite found none of them**, which is an argument about how much review
+  a comparator is worth, not about the tests being bad.
+
+  **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local
+  LC_ALL=C` is not passed to a spawned child unless the name was already exported — verified
+  directly: `local` gives the child `<unset>`, a command prefix and `export` both give `C`. It
+  works for a bash builtin like `[[ x < y ]]` and does nothing for `grep`. `num_lt`'s own `local`
+  was removed rather than kept beside the export, because the redundant mechanism was precisely
+  the ineffective one.
+
+  **Verifying a claim about a tool means invoking the binary the code invokes.** The first attempt
+  to check round 3's finding appeared to refute it. That was wrong: `grep` at an interactive
+  prompt here is a shell function shimming to **ugrep 7.5.0**, while a script gets `/usr/bin/grep`
+  = **GNU grep 3.7**, and shell functions are not inherited by a non-interactive child. The ad-hoc
+  check and the code under test were different programs with different invalid-byte behaviour.
+  Use `type -a` and an absolute path.
+
   **Mutation testing earned its place and should not be skipped on the next one like it:** the
   zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
-  as covered was in fact unpinned. Thirteen of fourteen mutations reddened exactly the
-  assertions naming them; the exception is the `LC_ALL=C` pin, filed above as unobservable
-  rather than counted as covered. One earlier "vacuous" result was a harness-escaping artifact
-  and reddens R11 correctly when applied properly — a mutation reporting nothing is a claim to
-  verify, not a finding to accept.
+  as covered was in fact unpinned. Fifteen of sixteen mutations reddened exactly the assertions
+  naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as unobservable —
+  though round 3 showed that label covers only the effect that was measured, not the pin. Two
+  "vacuous" results were harness-escaping artifacts and redden R11 and R8b correctly when applied
+  properly — a mutation reporting nothing is a claim to verify, not a finding to accept.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
