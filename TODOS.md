@@ -373,6 +373,27 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   whether python3 is now an accepted repo-wide dependency for **CI-only** code while
   user-machine scripts stay tool-free — that split is the actual rule being followed, and it is
   currently implicit. (CI version check round 4, 2026-08-07) **Priority:** P3
+- **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
+  investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
+  ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
+  invalid-byte behaviour, which nearly inverted the round-3 fix (`DECISIONS.md`). (2) A **single
+  NUL byte** anywhere in a file makes GNU grep answer `binary file matches` instead of the
+  matching lines, and makes the ugrep shim return **nothing at all** — indistinguishable from
+  "no matches", which is exactly how a grep of `test/version-check-test.sh` came back empty and
+  produced a wrong conclusion about its own contents.
+  **Half of this is closed and half is not, and the split matters.** The NUL half is pinned:
+  R21 sweeps **every tracked file** via `git ls-files` (41 files, no binary member) and asserts
+  the enumeration is live before trusting the sweep. It was scoped to two files first, then
+  five, and a new NUL landed outside the list *both* times -- the trigger is "someone is writing
+  about control bytes", not "someone is editing the check", so any narrower scope is the wrong
+  shape. A repo that later adds a real binary asset needs an allowlist there.
+  **What is still open:** R21 runs only inside `test/version-check-test.sh`, which runs only
+  when someone runs `npm test` by hand -- see the CI item below, which is the real dependency.
+  And nothing pins the *shim* half at all: a script and a prompt resolving `grep` to different
+  binaries is a property of this machine that no assertion in this repo can see. The habits that
+  prevent both are spelling a control byte as `\u0000` and never as itself, and reaching for
+  `/usr/bin/grep` explicitly when the answer matters. (security review rounds 3 and 5,
+  2026-08-07) **Priority:** P3
 - **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
@@ -384,7 +405,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 26) and every one of them is run by hand before a release. The new
+  version-check 35) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -411,7 +432,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R18b, 26 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R21, 35 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -466,11 +487,24 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   arm and no `jq` fallback: two readers that can disagree is the diff-hash divergence rebuilt on
   purpose. Absent python3 is a named FAIL, never a skip (R18/R18b).
 
-  Four rounds, four defects, each in the layer the previous round had just hardened — the
-  operative lesson is that **an adversarial reader found all four and the test suite found none
+  **A fifth round, and it is the round-4 fix looked at from the other end.** Round 4 piped the
+  manifest to the parser on **stdin** so the bytes arrived unaltered, and wrote a comment there
+  naming both transforms a command substitution performs. The parser's *answer* still came back
+  through `out="$(python3 …)"`, which performs both: `$(...)` **deletes NUL bytes** (warning on
+  stderr, exit status untouched) and **strips trailing newlines**, and both are legal inside a
+  JSON string. So the `X.Y.Z` check validated a value the file did not contain. Committed
+  `"version":"1\u00009.0.0"`; python3 and node both read a version with an embedded NUL; the check printed
+  `ok: version 19.0.0, not behind master` and exited 0. Fixed the way round 4 was fixed — close
+  the channel, not the instance: the shape check moved *inside* the parser, so only digits and
+  dots ever cross. `re.fullmatch`, not `re.match(…$)`, because Python's `$` also matches before a
+  single trailing newline and the anchored form would have rebuilt half the bypass inside its own
+  fix. A `RecursionError` escaping `except ValueError` was the same round's Low.
+
+  Five rounds, five defects, each in the layer the previous round had just hardened — the
+  operative lesson is that **an adversarial reader found all five and the test suite found none
   of them**, which is an argument about how much review a comparator is worth, not about the
   tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
-  status, because two of the four failed closed for an unrelated reason and would have passed an
+  status, because two of them failed closed for an unrelated reason and would have passed an
   exit-status check.
 
   **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local

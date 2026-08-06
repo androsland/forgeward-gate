@@ -344,6 +344,196 @@ out="$( cd "$R" && PATH="$SHIM2" "$BASHBIN" "$CHK" master 2>&1 )"; st=$?
   && ok "R18b an unrecognised reader answer is a refusal, not a default" \
   || nok "R18b junk reader output refused" "st=$st out=$out"
 
+# --- R19..R20: values that do not survive the shell -----------------------------------
+#
+# Round 5's class. `$(...)` deletes NUL bytes and strips trailing newlines, both legal
+# inside a JSON string, so a shape check on the SHELL side validates a value the file
+# does not contain. These fixtures must be built by python and never pass through a
+# command substitution -- the first attempt to measure this used `V="$(python3 -c ...)"`
+# to build the fixture and silently sanitised its own input, reporting the bug absent.
+mkpoison() { # mkpoison <name> <python-expr-for-the-head-version>
+  # Separate `local` statements DELIBERATELY. In `local a=$1 b=$TMP/$a`, the `$a` on the
+  # right resolves to the GLOBAL `a`, not the local just declared -- bash creates every
+  # name in the statement before assigning any of them. Verified: with no global it
+  # yields empty (and errors under `set -u`), with one it silently yields the global's
+  # value. That is a wrong answer, not a crash, which is the worse of the two.
+  local name="$1"
+  local expr="$2"
+  local r="$TMP/$name"
+  mkdir -p "$r/.claude-plugin"
+  ( cd "$r" && git init -q . \
+      && git config user.email t@t && git config user.name t \
+      && git config commit.gpgsign false ) >/dev/null 2>&1
+  POISON_DIR="$r" POISON_EXPR="$expr" python3 - <<'PY'
+import json, os
+r = os.environ["POISON_DIR"]
+def write(v):
+    for p in ["package.json", ".claude-plugin/plugin.json"]:
+        open(os.path.join(r, p), "w").write(json.dumps({"name": "p", "version": v}))
+    open(os.path.join(r, ".claude-plugin/marketplace.json"), "w").write(
+        json.dumps({"plugins": [{"version": v}]}))
+write("9.0.0")
+PY
+  ( cd "$r" && git add -A && git commit -qm base && git branch -M master \
+      && git checkout -qb feat ) >/dev/null 2>&1
+  POISON_DIR="$r" POISON_EXPR="$expr" python3 - <<'PY'
+import json, os
+r, expr = os.environ["POISON_DIR"], os.environ["POISON_EXPR"]
+v = eval(expr)
+for p in ["package.json", ".claude-plugin/plugin.json"]:
+    open(os.path.join(r, p), "w").write(json.dumps({"name": "p", "version": v}))
+open(os.path.join(r, ".claude-plugin/marketplace.json"), "w").write(
+    json.dumps({"plugins": [{"version": v}]}))
+PY
+  ( cd "$r" && git add -A && git commit -qm head ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+# R19: a NUL byte inside the version string. Base 9.0.0; the head manifest's version is
+# the JSON string "1\u00009.0.0", which no conformant reader calls X.Y.Z. Before the fix
+# the shell saw the two halves spliced into `19.0.0`, validated THAT, and reported
+# `ok: version 19.0.0` -- a value present in no file anywhere. Asserts on the MESSAGE:
+# the exit status alone would not distinguish this from any other refusal.
+R="$(mkpoison nulsplice "'1' + chr(0) + '9.0.0'")"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'is not X.Y.Z'*) true ;; *) false ;; esac \
+  && ok "R19 a NUL inside the version is refused, not spliced into a valid number" \
+  || nok "R19 NUL-splice refused" "st=$st out=$out"
+
+# R19b: EXACTLY ONE trailing newline, and the count is the whole point of the assertion.
+# `$(...)` strips any number of them, so all counts are equally a transport bug -- but
+# only one newline also discriminates `re.fullmatch` from `re.match(r'...$')`, because
+# Python's `$` matches at end-of-string OR just before a newline that is the LAST
+# character. So `re.match` accepts "19.0.0\n" and rejects "19.0.0\n\n\n".
+#
+# This assertion was first written with three newlines and a comment claiming it pinned
+# `fullmatch`. It did not: a mutation swapping `fullmatch` for `match(...$)` left the
+# whole suite green. The comment asserted a property the fixture could not observe,
+# which is the same failure R8 had against `grep -c` -- an assertion written next to a
+# mechanism, inheriting its author's assumption about which case is hard.
+R="$(mkpoison nlsplice "'19.0.0' + chr(10)")"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'is not X.Y.Z'*) true ;; *) false ;; esac \
+  && ok "R19b one trailing newline is refused (this is what pins fullmatch over \$)" \
+  || nok "R19b single-trailing-newline splice refused" "st=$st out=$out"
+
+# R19b2: several trailing newlines. Kept alongside R19b rather than replaced by it: the
+# two fail for different reasons under a `match(...$)` regression, and a fixture that
+# only covers the harder case cannot show that the easier one still works.
+R="$(mkpoison nlsplice3 "'19.0.0' + chr(10) * 3")"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'is not X.Y.Z'*) true ;; *) false ;; esac \
+  && ok "R19b2 several trailing newlines are refused too" \
+  || nok "R19b2 multi-newline splice refused" "st=$st out=$out"
+
+# R19e: the refusal must name the value that is actually in the FILE. The reason string
+# crosses the same command substitution the version does, so an unescaped value gets the
+# same NUL deletion applied to it -- the run would refuse correctly while reporting
+# `version 19.0.0`, a string appearing in no file, as the thing it refused. Round 2
+# established that a guard citing the wrong reason is a guard the next person debugs
+# past; this is that rule applied to the round-5 fix's own error path.
+R="$(mkpoison nulmsg "'1' + chr(0) + '9.0.0'")"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'u00009.0.0'*) true ;; *) false ;; esac \
+  && ok "R19e the refusal names the escaped value, not the shell-mangled one" \
+  || nok "R19e message escapes control bytes" "st=$st out=$out"
+
+# R19c: the control. A trailing SPACE is not touched by command substitution, so this
+# shape was already refused before the fix -- it is here so a regression that loosens
+# the shape check cannot hide behind R19/R19b, which test the transport, not the shape.
+R="$(mkpoison spacetail "'19.0.0 '")"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'is not X.Y.Z'*) true ;; *) false ;; esac \
+  && ok "R19c control: a trailing space is refused too" \
+  || nok "R19c trailing space refused" "st=$st out=$out"
+
+# R19d: the same fixture builder with a CLEAN version must still pass, or R19/R19b prove
+# only that mkpoison produces something unreadable.
+R="$(mkpoison cleanbump "'19.0.0'")"
+run "$R" master
+[ "$st" -eq 0 ] && case "$out" in *'version 19.0.0'*) true ;; *) false ;; esac \
+  && ok "R19d the same builder with a clean version still passes" \
+  || nok "R19d clean fixture passes" "st=$st out=$out"
+
+# R20: a manifest nested deeper than python's recursion limit. `RecursionError` is not a
+# `ValueError`, so before the fix it escaped the parse guard, python died with a bare
+# traceback and empty stdout, and the run refused via the generic "no usable answer" arm.
+# It failed CLOSED, which is why this is a message assertion and not a security one: the
+# behaviour was already safe and only the reported reason was wrong.
+R="$(mkfixture deepnest 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+python3 -c "
+import sys
+sys.stdout.write('{\"a\":' * 3000 + '{\"version\":\"0.9.1\"}' + '}' * 3000)" \
+  > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
+run "$R" master
+[ "$st" -ne 0 ] && case "$out" in *'nested too deeply'*) true ;; *) false ;; esac \
+  && ok "R20 a too-deeply-nested manifest is refused by name, not by traceback" \
+  || nok "R20 deep nesting named" "st=$st out=$out"
+
+# R21: EVERY tracked file in this repo must be plain text -- NUL-free and valid UTF-8.
+# Not a behaviour of the check; a property of the repo, and it is here because it went
+# wrong five times while round 5 was being written, across four files. Documenting a NUL
+# byte is one keystroke away from EMBEDDING one, and a single NUL makes GNU grep answer
+# `binary file matches` instead of the matching lines and makes git treat the file as
+# binary in a diff. Worse on this machine: the interactive `grep` shims to ugrep, which
+# returns NOTHING at all -- indistinguishable from "no matches", which is how a grep of
+# this very suite came back empty and produced a wrong conclusion about its own contents.
+#
+# It is repo-wide rather than a list of paths because the first version WAS a list of
+# paths -- the two code files this round touched -- and the next NUL landed in
+# DECISIONS.md, in the paragraph explaining the hazard, while that version sat green.
+# Widening it to five named files did not help either: the one after that went into
+# TODOS.md, in a sentence saying to never write the byte literally. Enumerating the files
+# that have been bitten is not a strategy when the trigger is "someone is writing ABOUT
+# control bytes" and any file can be that file. The repo is 41 tracked files with no
+# legitimately-binary member, so the whole-repo form costs nothing and has no exceptions
+# to maintain; a repo that later adds an image needs an allowlist here, and that is the
+# one edit this assertion should ever need.
+#
+# The byte is named by escape inside python and never written literally here, so this
+# assertion cannot reintroduce the thing it forbids.
+#
+# Two assertions, not one. A sweep that enumerates nothing passes vacuously, and "checked
+# 0 files, found 0 problems" is the exact green-for-no-reason shape this whole branch is
+# about -- so the enumeration is asserted separately, with a floor and a named-member
+# check, before its result is trusted.
+R21_LIST="$(git -C "$PLUGIN" ls-files -z 2>/dev/null | tr '\0' '\n')"
+R21_N="$(printf '%s' "$R21_LIST" | /usr/bin/grep -c . || true)"
+case "$R21_LIST" in
+  *"ci/check-version-monotonic.sh"*) R21_HAS_SELF=y ;;
+  *)                                 R21_HAS_SELF=n ;;
+esac
+if [ "$R21_N" -ge 20 ] && [ "$R21_HAS_SELF" = y ]; then
+  ok "R21 enumeration is live ($R21_N tracked files, includes the script under test)"
+else
+  nok "R21 enumeration is live" "found $R21_N file(s), script-under-test present: $R21_HAS_SELF"
+fi
+
+R21_BAD="$(printf '%s\n' "$R21_LIST" | python3 -c "
+import sys, os
+bad = []
+for p in sys.stdin.read().splitlines():
+    if not p:
+        continue
+    try:
+        raw = open(os.path.join(sys.argv[1], p), 'rb').read()
+    except OSError:
+        continue            # deleted-but-tracked; not this assertion's question
+    if b'\x00' in raw:
+        bad.append(p + ' (NUL)')
+        continue
+    try:
+        raw.decode('utf-8')
+    except UnicodeDecodeError:
+        bad.append(p + ' (not UTF-8)')
+print('; '.join(bad))
+" "$PLUGIN")"
+[ -z "$R21_BAD" ] \
+  && ok "R21 every tracked file is NUL-free, valid UTF-8 text" \
+  || nok "R21 every tracked file is plain text" "$R21_BAD"
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

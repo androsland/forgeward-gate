@@ -50,15 +50,6 @@
 #      Duplicate keys within one object are refused separately and by name: a parser
 #      resolves those last-wins in silence, so counting keys after parsing would see one
 #      where the file has two.
-#   6. It requires `python3` and reads the manifests with the stdlib `json` module. That
-#      is a real external dependency and the only one -- see the note above read_version
-#      for why a textual reader could not be made correct and why there is no second arm.
-#      A box without python3 gets a named FAIL, never a quiet skip.
-#   7. It validates the version FIELD, not the manifest. `json.load` will reject a file
-#      that is not well-formed JSON or not valid UTF-8, so those two classes are covered
-#      as a side effect, but nothing here checks that the rest of the document means
-#      anything -- a manifest can be structurally valid and semantically nonsense and
-#      this will happily compare its version. Widening that is open in TODOS.md.
 #   4. A manifest absent from the base ref is skipped for the backward comparison (there
 #      is no prior value to compare against) but still has to agree with the others on
 #      the head side. Adding a manifest is a legitimate configuration and must not fire.
@@ -71,6 +62,21 @@
 #   5. It compares the CHECKED-OUT tree against a ref. Under `pull_request` the workflow
 #      checks out the PR head sha explicitly rather than GitHub's synthetic merge commit,
 #      so what is compared is what the author wrote. See the workflow for why.
+#   6. It requires `python3` and reads the manifests with the stdlib `json` module. That
+#      is a real external dependency and the only one -- see the note above read_version
+#      for why a textual reader could not be made correct and why there is no second arm.
+#      A box without python3 gets a named FAIL, never a quiet skip.
+#   7. It validates the version FIELD, not the manifest. `json.load` will reject a file
+#      that is not well-formed JSON or not valid UTF-8, so those two classes are covered
+#      as a side effect, but nothing here checks that the rest of the document means
+#      anything -- a manifest can be structurally valid and semantically nonsense and
+#      this will happily compare its version. Widening that is open in TODOS.md.
+#   8. It reports the version it read, and that number is only as trustworthy as the
+#      channel it came back through. Round 5 is the entry to re-read before touching
+#      `read_version`: `$(...)` deletes NUL bytes and strips trailing newlines, so a
+#      value validated on the SHELL side is not necessarily the value in the file. The
+#      shape check now runs inside the parser for that reason. Any future field read out
+#      of a manifest has the same problem and needs the same treatment.
 set -uo pipefail
 
 # Script-wide and exported. Be honest about what this is worth NOW, because its original
@@ -138,29 +144,48 @@ die() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 # keys are refused explicitly via `object_pairs_hook` rather than inferred from a count
 # -- the parser resolves duplicates last-wins silently, so counting after the fact would
 # see one key where the file has two.
+# THE SHAPE CHECK LIVES IN HERE, NOT IN THE SHELL, AND THAT IS THE WHOLE POINT.
+# Round 5 of the security review found the mirror image of the bug the stdin pipe below
+# was added to fix: the INPUT crossed the boundary intact and the OUTPUT did not.
+# `out="$(python3 ...)"` deletes NUL bytes and strips trailing newlines, both of which
+# are legal inside a JSON string (`"1\u00009.0.0"`, `"1.0.0\n"`), and both of which were
+# applied BEFORE the old bash-side `X.Y.Z` regex ever saw the value. So the regex
+# validated a string the file does not contain: `19.0.0` was spliced into `19.0.0`
+# and passed, and the run printed a version no parser would ever produce. Demonstrated
+# end to end; `1\u00000.0.0` reads as a forward `10.0.0` here while anything truncating
+# at NUL sees `1`, i.e. backward -- the exact hazard this file exists to stop.
+#
+# Validating here means only a string matching `[0-9]+\.[0-9]+\.[0-9]+` is ever handed
+# to the shell, and such a string is by construction immune to every transform command
+# substitution performs. That is a closed argument about the whole channel rather than a
+# patch for the two transforms that happen to be known -- the same move as round 4, for
+# the same reason: the third one is not enumerable in advance.
+#
+# `re.fullmatch`, NOT `re.match(...$)`. In Python `$` also matches just before a trailing
+# newline, so `re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", "1.0.0\n")` MATCHES -- which would
+# have reimplemented the exact bypass being fixed, in the line fixing it. `fullmatch` has
+# no such exception.
 READ_VERSION_PY='
-import json, sys
+import json, re, sys
+
+def say(s):
+    # Every exit goes through here so no path can forget to answer.
+    sys.stdout.buffer.write(s.encode("utf-8", "replace"))
+    sys.exit(0)
 
 def no_dupes(pairs):
-    out = {}
+    seen = {}
     for k, v in pairs:
-        if k in out:
-            sys.stdout.buffer.write(b"err:duplicate key " + json.dumps(k).encode())
-            sys.exit(0)
-        out[k] = v
-    return out
+        if k in seen:
+            say("err:duplicate key " + json.dumps(k))
+        seen[k] = v
+    return seen
 
 raw = sys.stdin.buffer.read()
 try:
     text = raw.decode("utf-8")
 except UnicodeDecodeError as e:
-    sys.stdout.buffer.write(("err:not valid UTF-8 (%s)" % e).encode("utf-8", "replace"))
-    sys.exit(0)
-try:
-    doc = json.loads(text, object_pairs_hook=no_dupes)
-except ValueError as e:
-    sys.stdout.buffer.write(("err:not valid JSON (%s)" % e).encode("utf-8", "replace"))
-    sys.exit(0)
+    say("err:not valid UTF-8 (%s)" % e)
 
 found = []
 def walk(node):
@@ -172,15 +197,24 @@ def walk(node):
     elif isinstance(node, list):
         for v in node:
             walk(v)
-walk(doc)
+
+try:
+    walk(json.loads(text, object_pairs_hook=no_dupes))
+except ValueError as e:
+    say("err:not valid JSON (%s)" % e)
+except RecursionError:
+    say("err:nested too deeply for the JSON reader to walk")
 
 if len(found) != 1:
-    sys.stdout.buffer.write(("err:expected exactly 1 version field, found %d" % len(found)).encode())
-    sys.exit(0)
-if not isinstance(found[0], str):
-    sys.stdout.buffer.write(("err:version is a JSON %s, not a string" % type(found[0]).__name__).encode())
-    sys.exit(0)
-sys.stdout.buffer.write(b"ok:" + found[0].encode("utf-8", "replace"))
+    say("err:expected exactly 1 version field, found %d" % len(found))
+v = found[0]
+if not isinstance(v, str):
+    say("err:version is a JSON %s, not a string" % type(v).__name__)
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v):
+    # json.dumps so the reason can name the value without shipping raw control
+    # bytes back through the same command substitution that mangles them.
+    say("err:version %s is not X.Y.Z (blind spot 2)" % json.dumps(v))
+say("ok:" + v)
 '
 
 # Reads a manifest on STDIN and prints its version, or returns 1 having said why.
@@ -189,7 +223,10 @@ sys.stdout.buffer.write(b"ok:" + found[0].encode("utf-8", "replace"))
 # shell string via `$(cat "$f")`, and command substitution strips trailing newlines and
 # silently drops NUL bytes -- so the bytes being validated were not the bytes on disk.
 # A pipe carries the file through unaltered, which is the only way "the check read what
-# the parser will read" can be true.
+# the parser will read" can be true. Note that this paragraph was already here, correctly
+# naming both transforms, while the RETURN path below still performed both of them --
+# see the round-5 note above READ_VERSION_PY. Knowing a hazard by name is not a guard
+# against it, and a comment that proves you knew is not mitigation.
 #
 # The helper reports failures on STDOUT as `err:<reason>` rather than by exit status,
 # because an exit status cannot distinguish "python3 refused this manifest" from
@@ -205,13 +242,18 @@ read_version() { # read_version <label>   [JSON on stdin]
     err:*) printf '%s in %s\n' "${out#err:}" "$1" >&2; return 1 ;;
     *)     printf 'the JSON reader returned no usable answer for %s -- refusing to guess\n' "$1" >&2; return 1 ;;
   esac
+  # Belt-and-braces only. The AUTHORITATIVE shape check is inside READ_VERSION_PY, on
+  # the far side of the command substitution -- see the round-5 note there for why it
+  # cannot live here. This line is kept because it costs nothing and it catches the one
+  # thing the python side cannot: a future edit that widens what `ok:` may carry.
+  #
   # Bash regex, NOT `printf | grep -q`. Under the `set -o pipefail` above, `grep -q`
   # exits on match and can SIGPIPE the printf still writing to it; pipefail then
   # promotes 141 to the pipeline status and the test reports NO-MATCH on input it
   # just matched. That is the P1 in DECISIONS.md, found by a 20000-trial probe, and
   # it must not be reintroduced here.
   [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || { printf 'version %s in %s is not X.Y.Z (blind spot 2)\n' "$v" "$1" >&2; return 1; }
+    || { printf 'version %s in %s did not survive the shell intact\n' "$v" "$1" >&2; return 1; }
   printf '%s' "$v"
 }
 

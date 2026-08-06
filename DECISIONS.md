@@ -181,8 +181,9 @@ on this machine. The comment above it was **rewritten to say exactly that** rath
 carrying its original justification. A line that reads as load-bearing for a reason that has
 since expired is the precise failure round 3 recorded, one round after recording it.
 
-**Verification.** `test/version-check-test.sh`, 26 assertions, wired into `npm test`. Twenty of
-twenty-one mutations reddened exactly the assertions naming them and nothing else — including
+**Verification.** `test/version-check-test.sh`, 35 assertions, wired into `npm test`. Of the
+twenty-one mutations written through round 4, twenty
+reddened exactly the assertions naming them and nothing else — including
 every one added by the review rounds: reverting the counter to `grep -c` reddens R8b alone,
 dropping the `export LC_ALL=C` reddened R15 alone while the textual reader still existed, and on
 the parser, dropping duplicate-key detection reddens R16 alone, accepting any number of `version`
@@ -227,6 +228,105 @@ The live direction was proven on this repo rather than only in fixtures: the thr
 were edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1. The security
 review's 2^64 repro was likewise re-run here after the fix, and now exits 1 naming the same
 file.
+
+**Round 5 is the mirror image of round 4, and the comment that should have prevented it was
+already in the file.** Round 4 replaced the textual reader with a real parser and piped the
+manifest in on **stdin** specifically so the bytes reached the parser unaltered — the comment
+written at that line names both of the transforms a command substitution performs, and it is
+correct. The **return** path was left as `out="$(python3 -c "$READ_VERSION_PY")"`, and it
+performs both of them: `$(...)` **deletes NUL bytes** (a warning on stderr, exit status
+untouched) and **strips trailing newlines**. Both are legal inside a JSON string. So the shape
+check that ran on the bash side was validating a value the file did not contain.
+
+Reproduced end to end: `{"name":"p","version":"1\u00009.0.0"}` committed on the head branch,
+base `9.0.0`. `python3` and `node` both read `'1\x009.0.0'`; the check printed
+`ok: version 19.0.0, not behind master (3 manifest(s) compared, all three agree)` and exited 0.
+The NUL was deleted in transit and `19.0.0` sailed through `[[ =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]`
+looking like a clean forward bump. A trailing newline does the same thing more quietly.
+
+**The fix is round 4's fix applied to the other direction: close the channel, do not patch the
+instance.** The `X.Y.Z` check now runs *inside* `READ_VERSION_PY`, so the only thing that ever
+crosses the substitution is a string of digits and dots — which is by construction immune to
+every transform `$(...)` performs. The bash-side regex is kept as belt-and-braces with a comment
+saying it is not the authoritative check and why it cannot be, because the tempting edit is to
+notice the duplication and delete the wrong one. The refusal message runs the offending value
+through `json.dumps`, so it can *name* the value without shipping raw control bytes back through
+the same channel that mangles them.
+
+**`re.fullmatch`, not `re.match(...$)` — and this is the trap, not a style note.** In Python `$`
+also matches just before a single trailing newline: `re.match(r'^[0-9]+\.[0-9]+\.[0-9]+$',
+'1.0.0\n')` is a match, `re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', '1.0.0\n')` is not. Verified
+directly. Writing the anchored form would have reimplemented one half of the exact bypass being
+fixed, in the line fixing it.
+
+The same round's Low was `RecursionError` escaping the `except ValueError` around `json.loads`
+— it is not a `ValueError`. A deeply-nested manifest killed python with a bare traceback and
+empty stdout, so the run refused via the generic catch-all arm: failed closed, wrong reason,
+no usable message. Now caught by name.
+
+**Knowing a hazard by name is not a guard against it.** That paragraph about `$(...)` was in the
+file, accurate, one screen above the code doing the thing it warns about — and it read as
+mitigation. It is now amended to say so explicitly, and blind spot 8 generalizes the rule: any
+future field read out of a manifest crosses the same channel and needs the same treatment.
+
+**Three self-inflicted errors from this round are worth more than the finding.**
+
+- **The first probe harness had the bug it was measuring.** It built the fixture with
+  `V="$(python3 -c ...)"`, which deleted the NUL and stripped the newlines before writing the
+  file — and reported the bug absent. A measurement apparatus that shares the mechanism under
+  test returns a clean result for the same reason the code does. The fixtures now pass a python
+  *expression* through `argv` and never let a shell touch the value.
+- **Raw NUL bytes then landed in the source while documenting the NUL bug**, repeatedly, in
+  three separate files. GNU grep answers `binary file matches` instead of matching lines; this
+  machine's interactive `grep` shims to **ugrep**, which returns *nothing at all*,
+  indistinguishable from "no matches". That is why an earlier grep of the test file came back
+  empty and produced a wrong conclusion about its contents. **R21 asserts the files are NUL-free
+  and valid UTF-8**, because the failure is silent in both tools and git treats the file as
+  binary from that point on.
+
+  **R21 had to be widened twice before it was pointed at the right thing, and the two failures
+  are the interesting part.** Version one listed the two code files this round touched; the next
+  NUL landed in `DECISIONS.md` — in the paragraph above, explaining the hazard — while R21 sat
+  green. Version two named five files; the one after *that* went into `TODOS.md`, in a sentence
+  saying to never write the byte literally. Enumerating the files that have already been bitten
+  is not a strategy when the trigger is *someone is writing about control bytes* and any file
+  can be that file. R21 is now repo-wide over `git ls-files`, which costs nothing here: 41
+  tracked files, no legitimately-binary member, no exceptions to maintain.
+
+  It is **two** assertions, and the second one is the reason to copy this shape. A sweep that
+  enumerates nothing reports "0 files checked, 0 problems" and passes — the exact green-for-no-
+  reason failure this branch spent five rounds on — so the enumeration is asserted separately,
+  with a count floor and a named-member check, before its result is trusted. Both directions
+  were checked by hand: splicing a NUL into `README.md` (a file no version of R21 ever named)
+  reddens the sweep and names the file; breaking the enumeration reddens the liveness assertion
+  and leaves the sweep green, which is precisely the pair that tells the two apart.
+- **`local name="$1" expr="$2" r="$TMP/$name"` does not do what it reads like.** Bash creates
+  every name in the statement before assigning any, so the `$name` on the right resolves to the
+  **global** — empty here (and `unbound variable` under `set -u`, which is how it surfaced), but
+  silently the global's *value* when one exists, which is the worse of the two outcomes. Split
+  into separate `local` statements with the reason recorded at the line.
+
+**And two of the round-5 mutations reddened nothing because the assertions were genuinely
+blind — the first instances on this branch of the third cause.** Rounds 1–4 produced four
+vacuous mutations and none was a coverage gap; round 5's `M23` and `M25` both were. `M23`
+(`fullmatch` → anchored `match`) survived because R19b used *three* trailing newlines, and
+Python's `$` only matches before a **single** final one — the assertion could not discriminate
+the two forms, and the comment claiming it did was false. `M25` (stop escaping the offending
+value) survived because the assertion read only `is not X.Y.Z` and never looked at whether the
+message named `19.0.0` for a file containing `1\u00009.0.0`. Both were written minutes after the
+fix, by the person who wrote the fix, which is this file's own recorded principle — *an
+assertion written alongside a mechanism inherits that mechanism's blind spot* — landing on the
+round-5 work itself. R19b now uses one newline, R19b2 covers three, R19e pins the escaped value.
+
+A fifth harness error is the reason to keep reading assertion *output*, not exit status: five new
+assertions were written as `out="$(run "$R" master 2>&1)"; st=$?` when `run()` *sets* `$out`/`$st`
+rather than printing. All five measured an empty string and a zero status. R19d — the positive
+control, asserting a clean version still passes — would have been **vacuously green** under an
+exit-status-only check, and it was the message assertion that caught it.
+
+Round 5 verification: 35 assertions; all four new mutations redden exactly the assertions naming
+them (`M22`→R7/R19/R19b/R19b2/R19e/R19c, `M23`→R19b, `M24`→R20, `M25`→R19e), and every earlier
+round's proof-of-concept still fails closed.
 
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 
