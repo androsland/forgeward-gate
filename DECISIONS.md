@@ -138,29 +138,90 @@ invalid-byte behaviour. Re-run against `/usr/bin/grep` the finding reproduced ex
 a claim about a tool means invoking the same binary the code invokes** — `type -a` and an explicit
 absolute path, not whatever the prompt resolves.
 
-**Verification.** `test/version-check-test.sh`, 22 assertions, wired into `npm test`. Fifteen of
-sixteen mutations reddened exactly the assertions naming them and nothing else — including the
-two added by the review rounds: reverting the counter to `grep -c` reddens R8b alone, and dropping
-the `export LC_ALL=C` reddens R15 alone. The one that reddened *nothing* is the entry to carry
-forward, together with the zero-comparison result:
+**Round 4 found a High in the same guard again, by a third unrelated mechanism — and that is what
+finally changed the approach rather than the code.** JSON `\uXXXX` escapes are legal in **key
+names**, not only in values. A manifest carrying `"version":"0.9.1","version":"0.1.0"` has
+exactly one literal `"version"` byte sequence in it, so the ambiguity guard counts 1 and passes,
+while every JSON parser decodes two keys and takes the second by last-wins. Reproduced end to end
+before acting on it: the check printed `ok: version 0.9.1, not behind master` and exited 0 while
+`python3 -m json.tool` and `node` both read `0.1.0`. Same bypass as round 3, same one-line edit,
+a mechanism the round-3 fix does not touch — `LC_ALL=C` is irrelevant to an escape sequence that
+is pure ASCII.
+
+**The fix is not a fourth patch. The textual reader was deleted and replaced with `python3`'s
+stdlib `json`,** with `object_pairs_hook` refusing duplicate keys by name before they can collapse
+last-wins, and a recursive walk that requires exactly one `version` field at any depth. Rounds 2,
+3 and 4 each defeated the same reader by an unrelated route — line-counting, invalid UTF-8,
+unicode escapes — and three independent evasions of one approach is not three bugs, it is the
+approach being wrong. The class is **text tools do not parse JSON**; its members cannot be
+enumerated, so enumerating them is not a strategy. The fourth patch would have been the third
+demonstration that patching does not converge.
+
+**Why a parser here, when this repo has twice declined "just use jq or python3".** Both declines
+are still correct and neither one reaches this file:
+
+- The **PyYAML** decline was `python3 -c 'import yaml'` — PyYAML is not in the standard library,
+  so the better arm would have existed only on some machines. `json` *is* stdlib, on every
+  python3 since 2.6.
+- The **marker-splicing** decline was about `forgeward-write-marker.sh`, which runs on arbitrary
+  user machines and whose supply-chain review had certified that it adds no external tool
+  requirement. This script runs on `ubuntu-latest` in a workflow this branch also adds; it is
+  never on the user's critical path, and nothing about it is certified tool-free.
+
+The precedent's actual principle — *one arm everybody gets beats a better arm some people get* —
+**argues for** a single python3 arm here, and it is why there is **no jq fallback and no second
+reader**. Two readers of the same JSON that can disagree is not belt-and-braces; it is
+`forgeward-diff-hash.sh`'s jq-vs-python3 divergence reproduced deliberately (see that entry
+below). A box without python3 gets a named FAIL from an explicit preflight, never a quiet skip.
+
+**A side effect worth stating, because the round-3 entry above is the warning for it.** The
+parser is locale-independent, so `export LC_ALL=C` no longer defends anything it was added to
+defend; the only surviving consumer is `num_lt`'s byte comparison, whose effect is unobservable
+on this machine. The comment above it was **rewritten to say exactly that** rather than left
+carrying its original justification. A line that reads as load-bearing for a reason that has
+since expired is the precise failure round 3 recorded, one round after recording it.
+
+**Verification.** `test/version-check-test.sh`, 26 assertions, wired into `npm test`. Twenty of
+twenty-one mutations reddened exactly the assertions naming them and nothing else — including
+every one added by the review rounds: reverting the counter to `grep -c` reddens R8b alone,
+dropping the `export LC_ALL=C` reddened R15 alone while the textual reader still existed, and on
+the parser, dropping duplicate-key detection reddens R16 alone, accepting any number of `version`
+fields reddens R8 and R8b, dropping the python3 preflight reddens R18 alone, and letting an
+unrecognized reader answer fall through as a pass reddens R18b alone. Ceasing to recurse into
+nested objects reddens 13 — `marketplace.json`'s version is nested, so most of the suite depends
+on the walk. The one that reddened *nothing* is the entry to carry forward, together with the
+zero-comparison result:
 
 - The zero-comparison floor (Decision 4) was unpinned until R12 was written for it. Mutation
   testing is what found that; reading did not.
 - **The `LC_ALL=C` *collation* effect is still not pinned and cannot be**, on this machine: no
   locale here collates ASCII digits out of code-point order. What changed in round 3 is what
-  that sentence is worth. The same variable also decides whether `grep` matches across invalid
-  UTF-8, and *that* effect is now pinned hard by R15 — so the pin as a whole is covered while
-  one of its two effects remains unobservable. **The lesson is about the label, not the pin:**
+  that sentence is worth. The same variable also decided whether `grep` matched across invalid
+  UTF-8 — an effect pinned hard by R15 for as long as the textual reader existed, and one the
+  round-4 parser then made moot, since `json.load` is locale-independent and R15 now asserts the
+  parser's own `not valid UTF-8` message. So collation is once again the *only* live effect of
+  the pin, and it is once again unobservable. **The lesson is about the label, not the pin:**
   "unobservable, kept as hardening" was recorded at P4 and read as *this line barely matters*,
   when the line was in fact load-bearing for a reason nobody had enumerated. An unobservability
-  disclosure is a statement about the effects that were *measured*, never about the guard.
+  disclosure is a statement about the effects that were *measured*, never about the guard — and
+  round 4 is the proof that the statement expires: the same words are true again for a narrower
+  reason, which is exactly how a stale justification survives a reading.
 
-Two mutations reported vacuous on their first pass and both were **harness escaping artifacts**,
-not coverage gaps — `M6` (dropping the base-ref resolve guard) reddens R11 exactly, and the
-`grep -c` revert reddens R8b exactly, once applied properly. The second was caught only because
-the first had already taught the habit. A mutation reporting "nothing reddened" is a claim to
-verify, not a finding to accept; treating either as the latter would have added a test for a
-guard that was already pinned.
+**Four mutations across this branch reported vacuous on their first pass and not one was a
+coverage gap.** Three were **harness artifacts** — `M6` (dropping the base-ref resolve guard), the
+`grep -c` revert, and `M19` (stopping the recursive walk) each failed to apply and reported a
+clean suite; applied properly they redden R11, R8b and thirteen assertions respectively. Two of
+those got through because the replacement silently matched nothing; `M19` was caught by an
+`assert count == 1` added after the first two, which is now the harness's standing shape.
+
+`M21` is the one worth keeping, because **it applied cleanly and was still a no-op**. It inserted
+an `ok:*) v="0.0.1"` arm to make an unrecognized reader answer pass — but placed it *after* the
+real `ok:*)` arm, and `case` takes the first match, so the mutant was unreachable code. An
+anchor-count assert cannot see this: the edit is real, the semantics are not. Re-pointed at the
+`*)` catch-all it reddens R18b exactly. So a vacuous mutation has two distinct causes — *did not
+apply* and *applied but cannot execute* — and only the first is mechanically detectable. A
+mutation reporting "nothing reddened" is a claim to verify, not a finding to accept; accepting
+any of these four would have added a test for a guard that was already pinned.
 
 The live direction was proven on this repo rather than only in fixtures: the three manifests
 were edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1. The security

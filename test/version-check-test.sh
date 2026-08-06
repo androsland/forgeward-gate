@@ -251,37 +251,98 @@ setv "$R" 1.08.0 1.08.0 1.08.0; commit_head "$R"
 run "$R"
 [ "$st" -ne 0 ] && ok "R14b 1.9.0 -> 1.08.0 reads BACKWARD" || nok "R14b zero padding reverse" "st=$st out=$out"
 
-# --- R15: a version key hidden behind invalid UTF-8 is still counted ---------------
-# The bypass round 3 of the security review found, and the reason the script exports
-# LC_ALL=C. Under a UTF-8 locale GNU grep will not match `[^"]*` across bytes that are
-# not valid UTF-8 and drops the line from `grep -o` output without erroring. A fork PR
-# author owns every byte of their manifests, so a clean forward DECOY plus a poisoned
-# real key made the poisoned one invisible here while JSON parsers take it (duplicate
-# keys are last-wins everywhere). Repro before the fix: base 0.9.0, head decoy 0.9.1 +
-# poisoned 0.1.0 -> `ok: version 0.9.1, not behind master`, exit 0.
+# --- R15/R16: two smuggling shapes that beat a TEXTUAL reader ----------------------
+# Rounds 3 and 4 of the security review, and together the reason the extraction is a
+# real JSON parser instead of a grep. Both fixtures are a clean forward DECOY key plus
+# a second key carrying a backward version, arranged so the old grep saw only the decoy
+# while `JSON.parse`/`json.load` took the second (duplicate keys are last-wins in V8,
+# Python and Go alike). Both printed `ok: version 0.9.1, not behind master` and exited 0
+# before the fix.
 #
-# The assertion reads the MESSAGE, not the exit status: post-fix the poisoned key is
-# visible, so this is refused as AMBIGUITY (two version fields), which is the correct
-# and honest answer -- the script cannot order a value with junk bytes in it and must
-# not try. An exit-status-only assertion would go green on any refusal at all.
+# Every assertion here reads the MESSAGE, never just the exit status. All three defects
+# on this branch failed closed for some unrelated reason at some point, so an
+# exit-status assertion goes green on a script that is broken in a different way.
+
+# R15: the second key is poisoned with invalid UTF-8. GNU grep under a UTF-8 locale
+# silently drops a line holding invalid bytes, so the poisoned key was invisible.
+# The parser refuses the manifest by name -- and note the reason CHANGED when the reader
+# was replaced: a grep-based fix could only report this as ambiguity, whereas the true
+# answer is that the file is not UTF-8 at all and no parser should have loaded it.
 R="$(mkfixture utf8_smuggle 0.9.0 0.9.0 0.9.0)"
 setv "$R" 0.9.1 0.9.1 0.9.1
 printf '{"name":"p","version":"0.9.1","version":"0.1.0\xff\xfe"}\n' > "$R/.claude-plugin/plugin.json"
 commit_head "$R"
 run "$R"
-[ "$st" -ne 0 ] && case "$out" in *'exactly 1 version field'*) true ;; *) false ;; esac \
-  && ok "R15 a second version key hidden behind invalid UTF-8 is seen, not smuggled past" \
-  || nok "R15 utf8-smuggled duplicate key refused" "st=$st out=$out"
+[ "$st" -ne 0 ] && case "$out" in *'not valid UTF-8'*) true ;; *) false ;; esac \
+  && ok "R15 a manifest that is not valid UTF-8 is refused by name, not mis-read" \
+  || nok "R15 invalid-UTF-8 manifest refused" "st=$st out=$out"
 
-# R15b: the same poisoning WITHOUT a decoy must not become a false FAIL on clean input.
-# One poisoned key on its own is refused for being unorderable, which is right; the
-# pair-partner here is that an ordinary all-ASCII manifest still passes, so R15 cannot
-# be satisfied by a script that has simply started refusing everything.
-R="$(mkfixture utf8_clean 0.9.0 0.9.0 0.9.0)"
-setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
+# R16: the second key is spelled `"\u0076ersion"` -- spec-legal JSON that decodes to
+# `version` and contains no literal `"version"` bytes for a text matcher to find. This
+# is the one that settles the argument for a parser: any of the seven characters can be
+# escaped independently, so there is no finite set of spellings to grep for.
+R="$(mkfixture escaped_key 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+printf '{"name":"p","version":"0.9.1","\\u0076ersion":"0.1.0"}\n' > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
 run "$R"
-[ "$st" -eq 0 ] && ok "R15b clean ASCII manifests still PASS under the exported LC_ALL=C" \
-  || nok "R15b LC_ALL=C did not break the normal path" "st=$st out=$out"
+[ "$st" -ne 0 ] && case "$out" in *'duplicate key'*) true ;; *) false ;; esac \
+  && ok "R16 a \\uXXXX-escaped duplicate version key is resolved and refused" \
+  || nok "R16 escaped duplicate key refused" "st=$st out=$out"
+
+# R16b: an escape that is NOT an attack must still pass. Without this, R16 is satisfied
+# by a reader that has simply started rejecting every backslash it sees -- and the whole
+# point of using a parser is that it resolves escapes correctly rather than fearing them.
+R="$(mkfixture escaped_ok 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+printf '{"n\\u0061me":"caf\\u00e9","version":"0.9.1"}\n' > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
+run "$R"
+[ "$st" -eq 0 ] && ok "R16b harmless \\uXXXX escapes elsewhere in a manifest still PASS" \
+  || nok "R16b benign escapes pass" "st=$st out=$out"
+
+# R17: malformed JSON is refused by name rather than partially read. The old textual
+# reader would happily extract a version from a file no parser could load.
+R="$(mkfixture malformed 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+printf '{"name":"p","version":"0.9.1",}\n' > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
+run "$R"
+[ "$st" -ne 0 ] && case "$out" in *'not valid JSON'*) true ;; *) false ;; esac \
+  && ok "R17 a manifest that is not valid JSON is refused by name" \
+  || nok "R17 malformed JSON refused" "st=$st out=$out"
+
+# --- R18: the reader being unavailable is a FAIL, never a skip ---------------------
+# Moving the extraction to python3 bought correctness and bought a dependency with it.
+# The failure that matters is not "python3 is missing" -- it is a check that goes green
+# because it could not run, which is the vacuous-pass class this file already refuses in
+# R12. Both arms below are refusals, and both are asserted on the MESSAGE, because "exit
+# non-zero" is what a script does when it is merely broken.
+BASHBIN="$(command -v bash)"
+
+# R18: python3 absent from PATH entirely. The shim dir carries only git, which is the
+# script's one other external command.
+SHIM="$TMP/nopy-bin"; mkdir -p "$SHIM"; ln -sf "$(command -v git)" "$SHIM/git"
+R="$(mkfixture nopython 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
+out="$( cd "$R" && PATH="$SHIM" "$BASHBIN" "$CHK" master 2>&1 )"; st=$?
+[ "$st" -ne 0 ] && case "$out" in *'python3 is required'*) true ;; *) false ;; esac \
+  && ok "R18 python3 absent -> named FAIL, not a skip and not a pass" \
+  || nok "R18 missing python3 refused by name" "st=$st out=$out"
+
+# R18b: python3 present but answering with something that is neither `ok:` nor `err:`
+# -- a wrapper, a broken build, a truncated write. The reader's contract is that only a
+# recognised answer is an answer; anything else is a refusal rather than a default.
+# Without this the `*)` arm is unreachable in tests and could be deleted unnoticed.
+SHIM2="$TMP/junkpy-bin"; mkdir -p "$SHIM2"; ln -sf "$(command -v git)" "$SHIM2/git"
+printf '#!/bin/sh\ncat >/dev/null\nprintf %%s "totally unexpected output"\n' > "$SHIM2/python3"
+chmod +x "$SHIM2/python3"
+R="$(mkfixture junkpython 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
+out="$( cd "$R" && PATH="$SHIM2" "$BASHBIN" "$CHK" master 2>&1 )"; st=$?
+[ "$st" -ne 0 ] && case "$out" in *'no usable answer'*) true ;; *) false ;; esac \
+  && ok "R18b an unrecognised reader answer is a refusal, not a default" \
+  || nok "R18b junk reader output refused" "st=$st out=$out"
 
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"

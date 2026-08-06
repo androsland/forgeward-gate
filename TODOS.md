@@ -341,17 +341,38 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `forgeward-detect-environment.sh:112`'s bare `awk`. The convention to settle on is probably
   `export LC_ALL=C` at the top of every non-interactive script in this repo, since none of them
   produce human-language output; `ci/check-version-monotonic.sh` is the first to do it.
-  (security review round 3, 2026-08-07) **Priority:** P2
-- **Nothing checks that a manifest is well-formed JSON, or that its bytes are valid UTF-8.**
-  `ci/check-version-monotonic.sh` reads versions with `grep`/`sed`, deliberately — no `jq`
-  dependency, and the DECISIONS entry on jq/python3 divergence is why. But that means the
-  duplicate-key and invalid-byte shapes it now *refuses* are only refused at the version field;
-  a manifest can still be malformed elsewhere and this says nothing. A separate, cheap
-  `python3 -c 'import json,sys;json.load(open(sys.argv[1],encoding="utf-8"))'` per manifest in
-  the same workflow would cover the whole file rather than one field, and would have caught the
-  round-3 smuggling shape as a side effect. Not done here because it widens the check's remit
-  from "direction" to "validity" and that deserves its own decision.
-  (security review round 3, 2026-08-07) **Priority:** P3
+  **Round 4 sharpened this rather than settling it:** replacing that script's `grep` reader with
+  a JSON parser removed the invalid-UTF-8 effect entirely (parsers are locale-independent), so
+  the pin there is back to guarding only the unobservable collation case. Read the wrong way
+  that is an argument to drop it; read correctly it is the argument *for* the convention — the
+  pin's value was never in any one measured effect, it is that a non-interactive script should
+  not have its behaviour depend on the invoker's environment at all. The next script to be
+  bitten will be bitten by a third effect nobody has enumerated either.
+  (security review round 3, 2026-08-07; updated round 4, 2026-08-07) **Priority:** P2
+- **Manifest *validity* is now covered as a side effect, and nothing covers manifest
+  *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
+  `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
+  now refused by name for all three files — that half is **done**, and the previous framing
+  ("no jq dependency, so this can't be cheap") no longer describes the code. What remains is
+  narrower and worth keeping separate: the check validates the version *field*, not the
+  document. A manifest can parse cleanly, carry a perfectly ordered version, and be semantically
+  nonsense — `plugin.json` missing `name`, `marketplace.json` with an empty `plugins` array,
+  a `source` pointing somewhere that does not exist. Nothing in this repo would notice. Schema
+  validation is a different job from direction checking and should be a separate CI step if it
+  is wanted at all; the argument against is that these three files change perhaps twice a
+  release and a bad one is caught the first time the plugin is installed.
+  (security review round 3, 2026-08-07; re-scoped after round 4, 2026-08-07) **Priority:** P3
+- **`ci/check-version-monotonic.sh` now requires `python3`, and that obligation is documented
+  in exactly one place — its own header.** It is the only external tool any script in this repo
+  needs, and it is deliberate (see `DECISIONS.md`: stdlib `json` only, one arm, no `jq`
+  fallback, because two readers of the same JSON that can disagree is the diff-hash divergence
+  bug rebuilt on purpose). The check fails closed with a named message when it is absent, so
+  nothing silently skips. What is *not* settled: `README.md` and `CONTRIBUTING`-equivalent docs
+  do not mention it, so a contributor running `npm test` on a python-less box gets a clear
+  failure from the check and no prior warning. Also worth deciding once rather than per-script:
+  whether python3 is now an accepted repo-wide dependency for **CI-only** code while
+  user-machine scripts stay tool-free — that split is the actual rule being followed, and it is
+  currently implicit. (CI version check round 4, 2026-08-07) **Priority:** P3
 - **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
@@ -363,7 +384,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 22) and every one of them is run by hand before a release. The new
+  version-check 26) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -390,7 +411,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R15b, 22 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R18b, 26 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -423,11 +444,34 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   commit a clean forward *decoy* `"version"` key plus a poisoned real one and the poisoned key
   became invisible to the script while every JSON parser took it (duplicate keys are last-wins).
   Base 0.9.0, decoy 0.9.1, poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0. A
-  complete bypass of the file's whole purpose from a one-line hex edit. Fixed with a script-wide
-  `export LC_ALL=C`; pinned by R15/R15b. Three rounds, three defects, each in the layer the
-  previous round had just hardened — the operative lesson is that **an adversarial reader found
-  all three and the test suite found none of them**, which is an argument about how much review
-  a comparator is worth, not about the tests being bad.
+  complete bypass of the file's whole purpose from a one-line hex edit. Fixed at the time with a
+  script-wide `export LC_ALL=C`.
+
+  **A fourth round, and it is the one that changed the design.** JSON `\uXXXX` escapes are legal
+  in **key names**: `{"version":"0.9.1","version":"0.1.0"}` contains exactly one literal
+  `"version"` byte sequence, so the guard counted 1 and passed while every parser decoded two
+  keys and took the second. Same bypass, same one-line edit, and `LC_ALL=C` is irrelevant to an
+  escape that is pure ASCII — verified end to end: `ok: version 0.9.1, not behind master`, exit
+  0, while `node` and `python3` both read `0.1.0`.
+
+  **Rounds 2, 3 and 4 defeated the same textual reader by three unrelated mechanisms, so the
+  reader was deleted rather than patched a third time.** Versions are now read by `python3`'s
+  stdlib `json` with `object_pairs_hook` refusing duplicate keys by name. Three independent
+  evasions of one approach is not three bugs — the class is *text tools do not parse JSON*, its
+  members cannot be enumerated, and a fourth patch would only have been the third demonstration
+  that patching does not converge. The repo's two earlier declines of "just use jq or python3"
+  both stand and neither reaches here: PyYAML is not stdlib (`json` is), and the marker writer
+  runs on arbitrary user machines (this runs on `ubuntu-latest`). Their shared principle — one
+  arm everybody gets beats a better arm some people get — is why there is a **single** python3
+  arm and no `jq` fallback: two readers that can disagree is the diff-hash divergence rebuilt on
+  purpose. Absent python3 is a named FAIL, never a skip (R18/R18b).
+
+  Four rounds, four defects, each in the layer the previous round had just hardened — the
+  operative lesson is that **an adversarial reader found all four and the test suite found none
+  of them**, which is an argument about how much review a comparator is worth, not about the
+  tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
+  status, because two of the four failed closed for an unrelated reason and would have passed an
+  exit-status check.
 
   **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local
   LC_ALL=C` is not passed to a spawned child unless the name was already exported — verified
@@ -445,11 +489,19 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
   **Mutation testing earned its place and should not be skipped on the next one like it:** the
   zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
-  as covered was in fact unpinned. Fifteen of sixteen mutations reddened exactly the assertions
-  naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as unobservable —
-  though round 3 showed that label covers only the effect that was measured, not the pin. Two
-  "vacuous" results were harness-escaping artifacts and redden R11 and R8b correctly when applied
-  properly — a mutation reporting nothing is a claim to verify, not a finding to accept.
+  as covered was in fact unpinned. Twenty of twenty-one mutations reddened exactly the
+  assertions naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as
+  unobservable — though round 3 showed that label covers only the effect that was measured, not
+  the pin, and round 4 then made the measured effect moot, which is the same trap twice.
+
+  **Four "vacuous" results, none of them a coverage gap, and they split into two causes.** Three
+  were harness artifacts that never applied — `M6`, the `grep -c` revert, and the walk-recursion
+  mutation — reddening R11, R8b and thirteen assertions respectively once applied properly. The
+  fourth, `M21`, **applied cleanly and was still a no-op**: it added an `ok:*)` arm after the
+  real one, and `case` takes the first match, so the mutant was unreachable. An `assert count ==
+  1` on the anchor (now the harness's standing shape) catches the first cause and structurally
+  cannot catch the second. A mutation reporting nothing is a claim to verify, not a finding to
+  accept — accepting any of the four would have added a test for a guard that was already pinned.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
