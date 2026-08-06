@@ -41,8 +41,10 @@
 # change. Each manifest names the exact path its version lives at.
 #
 # The extra sections are APPENDED ONLY WHEN THE FILE EXISTS, so a repo with no
-# .claude-plugin/ hashes byte-identically to before this change. Existing markers
-# in ordinary repos stay fresh; only plugin repos take a one-time re-gate.
+# .claude-plugin/ produces the same SECTION LAYOUT it always did. That layout is
+# still asserted (V4), but it no longer implies marker survival: the jq/python
+# alignment below rewrites the canonical bytes INSIDE the sections, so every repo
+# takes a one-time re-gate at this version, not just plugin repos.
 #
 # Fail-safe, per manifest: if it is missing/unparseable or no JSON tool (jq/python3)
 # is available, hash the raw blob -> a version bump then DOES re-gate (errs
@@ -57,11 +59,37 @@ tip="${2:-HEAD}"
 #   plugins -> .plugins[].version  (marketplace.json)
 # python3 writes with sys.stdout.buffer, never print(): print() translates \n to
 # \r\n on Windows, which silently changes the bytes being hashed.
+#
+# THE TWO BRANCHES MUST EMIT THE SAME BYTES, not merely the same semantics. They did
+# not: `jq -S` pretty-prints (2-space indent, newlines) while json.dumps here uses
+# compact separators, so the canonical snapshot of the SAME manifest differed between
+# a machine with jq and one without. A marker written on one read as stale on the
+# other and forced a spurious re-gate — fail-safe, never a false PASS, but wrong, and
+# invisible until someone moved between machines. `-c` matches the compact separators
+# and `-a` matches json.dumps' default ensure_ascii=True; without `-a`, jq emits raw
+# UTF-8 where python emits \uXXXX, so a manifest with one accented character diverges.
+#
+# BLIND SPOT — number literals still diverge, and this is not fixable here. jq
+# preserves a number's source text (`1.10` stays `1.10`, `1e10` prints as `1E+10`)
+# while python normalizes through float (`1.1`, `10000000000.0`, and `1e-7` -> `1e-07`).
+# Python cannot be made to match: json.dumps calls float.__repr__ DIRECTLY, so a float
+# subclass carrying the raw text is ignored, and parse_int would turn `5` into `5.0`.
+# Verified by fuzzing both branches over the shapes above, not reasoned about. The
+# residue is confined to a manifest carrying a float in scientific notation or with a
+# trailing zero; npm/plugin manifests carry versions as STRINGS, so in practice this is
+# unreachable. Fail direction is unchanged (spurious re-gate, never a false PASS).
+# Pinned by V8 so a future jq or python that closes it fails the suite instead of
+# quietly outdating this paragraph.
+#
+# ONE-TIME COST, accepted deliberately: aligning the two changes the canonical bytes,
+# so every marker written before this version reads as stale exactly once, in every
+# repo — not just plugin repos. That is why this is its own release and not folded in
+# with anything else. V4 asserts the CURRENT bytes; it no longer claims markers survive.
 normalize_manifest() { # normalize_manifest <mode>   (json on stdin)
   if command -v jq >/dev/null 2>&1; then
     case "$1" in
-      top)     jq -S '.version = "<<forgeward-gated>>"' 2>/dev/null ;;
-      plugins) jq -S 'if (.plugins|type) == "array"
+      top)     jq -S -c -a '.version = "<<forgeward-gated>>"' 2>/dev/null ;;
+      plugins) jq -S -c -a 'if (.plugins|type) == "array"
                       then .plugins |= map(if type == "object"
                                            then .version = "<<forgeward-gated>>"
                                            else . end)

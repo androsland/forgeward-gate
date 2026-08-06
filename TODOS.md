@@ -54,16 +54,6 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Gate — base detection and freshness
 
-- **`forgeward-diff-hash.sh` produces a DIFFERENT hash under `jq` than under the
-  `python3` fallback**, because `jq -S` pretty-prints while `json.dumps` uses
-  compact separators, so the two canonical snapshots are different bytes. A marker
-  written on a machine with `jq` reads as stale on one without it (and vice versa),
-  forcing a spurious re-gate. Pre-existing and fail-safe — it can only cause an
-  extra gate run, never a false PASS — and confirmed present in the pre-0.7.2
-  script too, so 0.7.2 neither introduced nor worsened it. Not folded into 0.7.2:
-  aligning the two would change the hash for every repo, which is a one-time global
-  re-gate and deserves its own PR. (surfaced while building 0.7.2, 2026-08-03)
-  **Priority:** P2
 - **The drive-letter arm in `remote_is_networked()` approximates git's third
   locality clause and diverges on DOS reserved device names.** git's real predicate is
   `!colon || (slash && slash < colon) || (has_dos_drive_prefix() && is_valid_path())`.
@@ -247,6 +237,29 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P2: `forgeward-diff-hash.sh` produced a DIFFERENT hash under `jq` than under the
+  `python3` fallback.** Fixed 2026-08-06, shipped in 0.7.5. Full entry in `DECISIONS.md`.
+
+  `jq -S` pretty-prints while `json.dumps` used compact separators, so the canonical
+  snapshot of the same manifest was different bytes on a machine with jq and one without,
+  and a marker written on either read as stale on the other. A second divergence sat behind
+  it: without `-a`, jq emits raw UTF-8 where `json.dumps` defaults to `ensure_ascii=True`.
+  Fix is `jq -S -c -a` on both invocations, verified by fuzzing the two branches against
+  each other rather than reading the flag docs.
+
+  Two things worth carrying forward. First, V5/V6 pinned that the fallback has the same
+  *semantics* and passed throughout, because each compared a branch only against itself —
+  the new V7 compares them to EACH OTHER, and mutation-testing confirms V5/V6 stay green
+  under the reverted fix while V7 goes red. Second, the accepted cost: every marker in every
+  repo re-gates once at this version, not just plugin repos, which is why it shipped alone
+  and why V4 was reframed from a back-compat assertion to a payload-assembly one rather than
+  having its expected value quietly updated.
+
+  Not fixed, disclosed instead: number literals still diverge (`jq` preserves source text,
+  python normalizes through float) and cannot be aligned, because `json.dumps` calls
+  `float.__repr__` directly and ignores a subclass. Unreachable for manifests that carry
+  versions as strings. Pinned by V8 as a known divergence.
 
 - **P1: `supply-chain-reviewer` returned PASS without ever checking dependency CVEs when
   gstack was absent.** Fixed 2026-08-05, shipped in 0.7.4.

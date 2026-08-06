@@ -1500,11 +1500,18 @@ v_src="$(cd "$RV" && "$HASH" main)"
   || nok "marketplace.json substantive change flips hash" "still $v_src"
 ( cd "$RV" && git reset -q --hard HEAD~1 ) >/dev/null 2>&1
 
-# V4: BACK-COMPAT. A repo with no .claude-plugin/ must hash to exactly the bytes
-# this script produced before the two extra manifests were handled, or every marker
-# in every ordinary repo goes stale on upgrade. The expected value is rebuilt here
-# from the legacy payload format independently, so a change to the script's
-# assembly fails this test rather than silently redefining "unchanged".
+# V4: PAYLOAD ASSEMBLY, rebuilt independently. A repo with no .claude-plugin/ must
+# hash to exactly the payload this test constructs by hand — same sections, same
+# separators, same trailing newline — so a change to the script's assembly fails here
+# rather than silently redefining "unchanged".
+#
+# THIS IS NO LONGER A BACK-COMPAT ASSERTION, and the change was deliberate. It used to
+# claim that markers in ordinary repos survive an upgrade, which held while the only
+# edit was appending sections for files those repos do not have. The jq/python
+# byte-alignment rewrote the canonical bytes INSIDE the package.json section, so every
+# repo re-gates once at that version. The independent rebuild below therefore tracks
+# the CURRENT canonicalization (`jq -S -c -a`) — if you change it there, you change it
+# here, and the one-time re-gate is the accepted cost stated in the script header.
 RL="$TMP/repo-legacy"
 mkrepo "$RL"
 ( cd "$RL"
@@ -1515,15 +1522,15 @@ legacy="$( cd "$RL"
   dp="$(git diff "main...HEAD" -- . ':(exclude)VERSION' ':(exclude)CHANGELOG.md' \
         ':(exclude)CHANGELOG' ':(exclude)TODOS.md' ':(exclude)package.json' 2>/dev/null)"
   raw="$(git show "HEAD:package.json" 2>/dev/null)"
-  if command -v jq >/dev/null 2>&1; then pp="$(printf '%s' "$raw" | jq -S '.version = "<<forgeward-gated>>"')"
+  if command -v jq >/dev/null 2>&1; then pp="$(printf '%s' "$raw" | jq -S -c -a '.version = "<<forgeward-gated>>"')"
   else pp="$(printf '%s' "$raw" | python3 -c 'import json,sys
 d=json.load(sys.stdin); d["version"]="<<forgeward-gated>>"
 sys.stdout.buffer.write(json.dumps(d,sort_keys=True,separators=(",",":")).encode())')"
   fi
   printf '%s\n--FORGEWARD-PKG--\n%s\n' "$dp" "$pp" | sha256sum | awk '{print $1}' )"
 [ "$(cd "$RL" && "$HASH" main)" = "$legacy" ] \
-  && ok "manifests: repo with no .claude-plugin/ hashes to the LEGACY bytes (existing markers survive the upgrade)" \
-  || nok "legacy payload back-compat" "got $(cd "$RL" && "$HASH" main), legacy $legacy"
+  && ok "manifests: repo with no .claude-plugin/ hashes to the independently-rebuilt payload (section layout + canonicalization both pinned)" \
+  || nok "payload assembly" "got $(cd "$RL" && "$HASH" main), rebuilt $legacy"
 
 # V5: the python3 fallback must implement the SAME semantics as the jq path, not
 # merely run. Exercised by putting a PATH in front that has python3 but no jq. Only
@@ -1552,8 +1559,41 @@ if command -v jq >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   [ -n "$fb_subst" ] && [ "$fb_subst" != "$fb_bump" ] \
     && ok "manifests: python3 fallback still flips the hash on a substantive plugin.json change (not over-neutralizing)" \
     || nok "python3 fallback substantive detection" "bump='$fb_bump' subst='$fb_subst' — the fallback is BLIND to a manifest change"
+
+  # V7: the assertion V5/V6 could not make. Those pin that the fallback has the same
+  # SEMANTICS (invariant on a bump, sensitive to a substantive change); both passed
+  # for a year while the two branches emitted different BYTES for the same manifest,
+  # because each was only ever compared against itself. The marker records a hash, so
+  # equal semantics is not enough — a marker written under jq must still read fresh
+  # under python3 and vice versa. This compares the two branches to EACH OTHER on the
+  # same commit, which is the only shape that catches it.
+  jq_hash="$( cd "$RV" && "$HASH" main )"
+  py_hash="$( cd "$RV" && PATH="$NOJQ" "$HASH" main )"
+  { [ -n "$jq_hash" ] && [ "$jq_hash" = "$py_hash" ]; } \
+    && ok "manifests: jq and python3 produce the IDENTICAL hash for the same manifest (marker portable across machines)" \
+    || nok "jq/python3 hash parity" "jq='$jq_hash' py='$py_hash' — a marker written on one machine reads STALE on the other"
+
+  # V8: pins the ONE disclosed residual, so a jq or python that closes it turns this
+  # red instead of quietly outdating the BLIND SPOT paragraph in the script header.
+  # jq preserves a number's source text; python normalizes it through float. Nothing
+  # in this file can align them (see the header for why python cannot be patched), so
+  # the divergence is asserted as KNOWN rather than left to be rediscovered. A
+  # manifest reaching this needs a float in scientific notation or with a trailing
+  # zero — npm and plugin manifests carry versions as strings, so it is unreachable in
+  # practice. If this test fails, the fix is to DELETE it and the header paragraph.
+  RN="$TMP/repo-numeric"
+  mkrepo "$RN"
+  ( cd "$RN"
+    printf '{\n  "name": "n",\n  "version": "1.0.0",\n  "weight": 1e10\n}\n' > package.json
+    echo ok > src.js; git add -A; git commit -qm base; git branch -M main
+    git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
+  n_jq="$( cd "$RN" && "$HASH" main )"
+  n_py="$( cd "$RN" && PATH="$NOJQ" "$HASH" main )"
+  { [ -n "$n_jq" ] && [ -n "$n_py" ] && [ "$n_jq" != "$n_py" ]; } \
+    && ok "manifests: number-literal divergence between jq and python3 is still present and DISCLOSED (known residual, pinned)" \
+    || nok "disclosed numeric residual changed" "jq='$n_jq' py='$n_py' — if these now MATCH, delete V8 and the BLIND SPOT paragraph in forgeward-diff-hash.sh"
 else
-  ok "manifests: python3-fallback comparison SKIPPED (needs both jq and python3 present)"
+  ok "manifests: python3-fallback comparison SKIPPED — V5/V6/V7/V8 all need BOTH jq and python3 present, so the jq/python3 hash-parity guarantee is UNVERIFIED on this machine"
 fi
 
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
