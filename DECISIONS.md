@@ -88,7 +88,24 @@ nothing. `grep -c` and `grep -o` in the same function drain to EOF and are unaff
 an early-exit reader can orphan its writer. The comment at that line says so, because the
 tempting edit is to put `grep -q` back.
 
-**Verification.** `test/version-check-test.sh`, 19 assertions, wired into `npm test`. Thirteen
+The ambiguity guard (Decision 3 / blind spot 3) was **right by accident** until round 2 of the
+review found it. It counted version fields with a bare `grep -c`, which counts matching *lines*,
+not matching *occurrences* — so two version keys colliding on one line (a minified manifest, a
+one-line nested object) counted as **1** and walked straight past the guard. Verified directly:
+`{"name":"x","version":"1.0.0","dep":{"version":"2.0.0"}}` → `grep -c` says 1, `grep -o | grep -c .`
+says 2. The input still failed closed, but one check later and for the *wrong stated reason* —
+`$v` came back holding both matches with an embedded newline and died on the X.Y.Z regex printing
+`is not X.Y.Z` instead of `expected exactly 1 version field`. Fixed to `grep -o … | grep -c .`
+(both drain to EOF, so neither can lose the SIGPIPE race described below).
+
+The reason this is recorded rather than quietly patched: **R8 was green over the whole defect**,
+because R8's fixture puts the two keys on separate lines — the one arrangement `grep -c` gets
+right. This is the same shape as R6 staying green through the 2⁶³ wrap, and it generalizes: an
+assertion written alongside the mechanism inherits the mechanism's blind spot. R8b now pins the
+one-line arrangement, and it asserts on the *message* rather than the exit status, since the exit
+status was never wrong.
+
+**Verification.** `test/version-check-test.sh`, 20 assertions, wired into `npm test`. Thirteen
 of fourteen mutations reddened exactly the assertions naming them and nothing else, and the two
 that reddened *nothing* are the entries to carry forward:
 

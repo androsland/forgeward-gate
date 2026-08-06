@@ -71,7 +71,16 @@ die() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 # more than one -- see blind spot 3. Prints nothing and returns 1 on either.
 read_version() { # read_version <json-text> <label>
   local n v
-  n="$(printf '%s\n' "$1" | grep -c '"version"[[:space:]]*:[[:space:]]*"[^"]*"')"
+  # `grep -o | grep -c .`, NOT a bare `grep -c`. `grep -c` counts matching LINES, not
+  # matching OCCURRENCES, so two version keys colliding on one line -- a minified
+  # manifest, a one-line nested object -- counted as 1 and walked straight past the
+  # guard below. It still failed closed, but one check later and for the wrong stated
+  # reason: `$v` came back holding both matches with an embedded newline and died on
+  # the X.Y.Z regex printing "is not X.Y.Z" instead of "expected exactly 1". A guard
+  # that is right by accident is not a guard, and the message it prints is what the
+  # next person debugs from. Both greps drain to EOF, so neither can lose the SIGPIPE
+  # race described below.
+  n="$(printf '%s\n' "$1" | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -c .)"
   [ "$n" = "1" ] || { printf 'expected exactly 1 version field in %s, found %s\n' "$2" "$n" >&2; return 1; }
   v="$(printf '%s\n' "$1" | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')"
   # Bash regex, NOT `printf | grep -q`. Under the `set -o pipefail` above, `grep -q`

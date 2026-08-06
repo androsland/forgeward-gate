@@ -340,8 +340,18 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `forgeward-detect-environment.sh:112`'s bare `awk` is still unpinned (P3, below). If a fourth
   appears, the answer is probably a repo-wide convention rather than another bullet.
   (CI version check, 2026-08-06) **Priority:** P4
+- **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
+  security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
+  rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
+  that would actually parse the language this repo is written in was the one that was absent.
+  The reviewer's finding this round was found by hand, not by a scanner. This repo is ~all bash
+  — quoting, `[ ]` vs `[[ ]]`, unset-variable and subshell-scope bugs are its native failure
+  modes, and it has already shipped two of them (the `grep -q`/pipefail P1, and the `grep -c`
+  line-vs-occurrence miscount below). Adding `shellcheck` to the reviewer's scanner set is
+  cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
+  where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 15) and every one of them is run by hand before a release. The new
+  version-check 20) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -368,7 +378,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R12, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R14b, 20 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -385,6 +395,16 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   already chosen — it could only see the ceiling that had been thought about. Same shape as
   V5/V6 passing while the jq/python3 divergence shipped underneath them. The comment above the
   fix asserted "no such ceiling" and was simply false; the assertion beside it could not tell.
+
+  **It happened a second time in the same file, which is what makes it a pattern rather than an
+  anecdote.** Round 2 of the security review found the ambiguity guard counting with a bare
+  `grep -c` — matching *lines*, not *occurrences* — so two version keys on one line counted as
+  1 and skipped the guard entirely. R8 was green throughout, because R8's fixture puts the two
+  keys on separate lines: the one arrangement `grep -c` gets right. The input still failed
+  closed, one check later and citing the wrong reason, so an assertion reading only the exit
+  status would also have stayed green. R8b pins the one-line arrangement and asserts on the
+  *message*. Generalized: an assertion written alongside a mechanism inherits that mechanism's
+  blind spot, and only an outside reader — or a mutation — sees past it.
 
   **Mutation testing earned its place and should not be skipped on the next one like it:** the
   zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read

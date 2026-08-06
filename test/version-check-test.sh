@@ -147,6 +147,21 @@ run "$R"
 [ "$st" -ne 0 ] && case "$out" in *'exactly 1 version field'*) true ;; *) false ;; esac \
   && ok "R8 two version fields in one manifest -> REFUSED" || nok "R8 ambiguity refused" "st=$st out=$out"
 
+# R8b: the SAME rule with both keys on ONE line. Split out from R8 because R8 alone
+# could not tell the guard from its accident: the counter was `grep -c`, which counts
+# matching LINES, so R8's two-line fixture was the only arrangement it got right. The
+# one-line arrangement counted 1, skipped the guard, and still exited non-zero for an
+# unrelated reason -- so an assertion checking only the exit status would have stayed
+# green over the defect. This one reads the MESSAGE, which is the part that was wrong.
+R="$(mkfixture ambiguous-oneline 0.9.0 0.9.0 0.9.0)"
+setv "$R" 0.9.1 0.9.1 0.9.1
+printf '{"name":"p","version":"0.9.1","nested":{"version":"0.0.1"}}\n' > "$R/.claude-plugin/plugin.json"
+commit_head "$R"
+run "$R"
+[ "$st" -ne 0 ] && case "$out" in *'exactly 1 version field'*) true ;; *) false ;; esac \
+  && ok "R8b two version fields on ONE line -> REFUSED for the stated reason" \
+  || nok "R8b same-line ambiguity refused" "st=$st out=$out"
+
 # --- R9: adding a manifest is legitimate and must not fire ------------------------
 # Blind spot 4. There is no prior value to compare against, which is not the same
 # observation as "it went backward".
