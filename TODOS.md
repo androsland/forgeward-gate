@@ -141,6 +141,20 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   above `_env_ok` first. Revisit if the probe grows past a handful of fields: at that point the
   regex stops being readable and taking the parser dependency becomes the better trade.
   (security review, 2026-08-06) **Priority:** P2
+- **The `awk` call is not locale-pinned, while the `wc -c` three lines above it is.**
+  `forgeward-detect-environment.sh:103` runs `LC_ALL=C wc -c`; line 112 runs a bare `awk`.
+  Nothing explains the asymmetry, in a file where every other asymmetry is documented. It
+  matters because both the CRLF handling and the charset filter depend on character-class
+  semantics: `\r ∈ [[:space:]]` is what makes a Windows config parse at all, and
+  `[A-Za-z0-9_-]` is a *range*, whose members are collation-dependent outside the C locale.
+  `LC_ALL=C` would make both byte-exact and is strictly the safer direction. Verified clean
+  on gawk 5.1.0 under `C.UTF-8` and forced `LC_ALL=C`; no locale was found where it breaks,
+  which is why this is P3 rather than a fix. Note what it means for the tests: **E18 asserts
+  "works under the test runner's locale", not "works everywhere"** — it cannot pin what the
+  script does not pin. Deliberately NOT fixed in 0.8.0: the change is one token, but the
+  script had just been cleared by a security pass and editing it afterwards to chase a
+  non-finding trades a reviewed artifact for an unreviewed one. Fix it and re-fire together.
+  (security review, 2026-08-06) **Priority:** P3
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
   `[ -L ]`/`[ -f ]`/`[ -r ]` run at `forgeward-detect-environment.sh:97-99`, but `wc -c` and
   `awk` read the file afterwards, so a process with concurrent write access to the checked-out
