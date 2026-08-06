@@ -40,18 +40,42 @@ _HAVE_JQ=0; command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
 _HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
 [ "$_HAVE_JQ" = 0 ] && [ "$_HAVE_PY" = 0 ] && { echo "forgeward pre-push: no jq/python3 — allowing push (gate not enforced)." >&2; exit 0; }
 
+# The twin of gate-check.sh's marker_get, and it had drifted from it in TWO ways.
+#
+# 1. jq's EXIT STATUS was discarded, so "jq failed to run" and "the field is absent"
+#    were the same observation. Fails CLOSED here — an empty `base` makes `is_fresh()`
+#    return 1, the ref reads as ungated, and the push is refused — so this is friction,
+#    not a hole. But `command -v jq` succeeding means jq is INSTALLED, not that it RUNS,
+#    and while it was installed-and-broken the python3 fallback beside it was
+#    unreachable: every push was blocked with no way to fall back.
+#
+# 2. It still used `print()`. DECISIONS.md (2026-08-02) records that "marker_get got the
+#    same byte-writing treatment as json_get" — that landed in gate-check.sh only, and
+#    this copy was never touched, so the entry described the repo as it was intended
+#    rather than as it was. `print()` appends "\n", which becomes "\r\n" on Windows, and
+#    `$(...)` strips only the LF; the surviving CR rides along on `base`, is passed to
+#    forgeward-diff-hash.sh as a ref, fails to resolve, and makes a genuinely fresh
+#    marker read as stale. Same fail-safe direction, same wrongness, one file over.
+#
+# Both are the error-path class this repo keeps re-finding. Neither can open the gate:
+# python3 parses the SAME file, so a malformed marker fails both branches.
 marker_get() { # marker_get <file> <dotpath>
+  local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    jq -r "$2 // empty" "$1" 2>/dev/null
-  else
-    python3 -c 'import json,sys
+    if _out="$(jq -r "$2 // empty" "$1" 2>/dev/null)"; then
+      printf '%s' "$_out"
+      return 0
+    fi
+    : # jq is installed but did not run — fall through and let python3 answer
+  fi
+  [ "$_HAVE_PY" = 1 ] || return 1
+  python3 -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))
     for k in path: d=d[k]
-    print(d if isinstance(d,str) else "")
+    sys.stdout.buffer.write((d if isinstance(d,str) else "").encode("utf-8","surrogateescape"))
 except Exception: pass' "$2" "$1"
-  fi
 }
 
 common_git_dir() {

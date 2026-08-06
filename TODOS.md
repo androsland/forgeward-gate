@@ -10,13 +10,6 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Gate — test suite
 
-- **`marker_get` discards jq's exit status the same way `json_get` used to.** A failed
-  jq yields an empty `base`/`diff_hash`, `is_fresh()` returns 1, and the branch reads as
-  ungated. That direction is fail-CLOSED — a spurious re-gate, never a missed one — so
-  it is not the bug `json_get` was, and it is deliberately left alone rather than
-  widening a security-relevant diff. Worth aligning for consistency: same three-line
-  fallback to python3. (found while fixing the P1 fail-open, 2026-08-03) **Priority:** P3
-
 ## Gate — publish matcher
 
 - **`strip_quoted`'s `st==2` backslash branch does `i += 2` with no bounds check**, so a
@@ -150,17 +143,34 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `"covered-by-forgeward"`, while forgeward's README skips code-quality because
   `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
   an existence proof, not a measured rate. (2026-08-05) **Priority:** P2
-- **`error-path-reviewer` — build blocking, pending a base-rate measurement.** Owns one
-  question: *when this code fails, does anything notice?* Four rules (discarded failure
-  signal, dead/unreachable error path, unchecked conditional-write result, resource leak
-  on the error path), each needing a stated consequence to reach High. Decision rule:
-  **≥1 true High per 5 PRs → build it blocking; below that → fold rules 1 and 3 into
-  `security-reviewer` Step 3 instead.** Measure by applying the checklist by hand to the
-  last 5 gated diffs across two repos. Must not fire on deliberate best-effort cleanup;
-  structurally cannot see a *wrong* handler, only a missing one. **Priority:** P2
-- **`marker_get` discarding jq's exit status is the third instance of the error-path
-  class** (after `json_get` and `strip_quoted`, both fixed in #11) and is the reviewer's
-  first fixture. Tracked separately below. (2026-08-05) **Priority:** —
+- **`error-path-reviewer` — MEASURED 2026-08-06, and the decision rule says fold, not
+  build.** Owns one question: *when this code fails, does anything notice?* Four rules
+  (discarded failure signal, dead/unreachable error path, unchecked conditional-write
+  result, resource leak on the error path), each needing a stated consequence to reach
+  High. Decision rule was **≥1 true High per 5 PRs → build it blocking; below that → fold
+  rules 1 and 3 into `security-reviewer` Step 3 instead.** Result: **0 true Highs per 5
+  PRs in both repos**, and 0.25/5 even on an extended forgeward window. Rules 2 and 4
+  fired zero times anywhere — they are not carrying weight and should not be folded.
+  So: fold rules 1 and 3, do not build a seventh reviewer. **Priority:** P2
+- **The fold needs `security-reviewer` Step 3 to learn fail-open/fail-closed first.**
+  Checked directly: Step 3 contains **no** occurrence of fail-open, fail-closed, or a
+  consequence-statement requirement. It already carries a near-equivalent of rule 3
+  ("Check-then-act without a lock, and the silent no-op"), complete with the right
+  discipline — High only if you can state the interleaving — so rule 3 folds cleanly by
+  analogy. Rule 1 has no counterpart at all, and dropping it in without the distinction
+  would produce a bullet that cannot say which direction a discarded status fails in,
+  which is the entire question. Add the vocabulary, then fold. (2026-08-06) **Priority:** P2
+- **The base-rate measurement structurally under-counts this class, and the 0.7.6 work is
+  the proof.** The method was a by-hand pass over merged diffs, and it scored 0 — while the
+  same session found two live instances (`json_get`'s python arm, `marker_get` ×2) that a
+  diff-reading pass cannot see, because each is only visible when two arms of one helper
+  are read *together*, and one of them was silently cancelling the #11 fix to the arm
+  beside it. Four known instances in ~40 files — `json_get` ×2, `strip_quoted`,
+  `marker_get` — three shipped, two surviving a round (#11) explicitly aimed at them.
+  See Completed for both 0.7.6 fixes. This does not overturn the fold decision — a reviewer
+  that also reads diffs would have scored the same 0 — but it is the reason the fold should
+  not be treated as "the class is rare." Weigh it if the axis is ever rescored.
+  (2026-08-06) **Priority:** —
 - **The review-ran check — warn-only, never blocking on a first version.** Gate on
   whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
   `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
@@ -231,12 +241,98 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
   awk-based design. Decide whether to keep it as an archaeological record or drop
   it. (PR #8, 2026-08-01) **Priority:** P4
+- **Nothing checks that a merge moves the version FORWARD, so merge order is load-bearing
+  whenever two version-bumping PRs are open.** Raised by the supply-chain reviewer on the
+  0.7.6 branch: #17 bumped to 0.7.5 and #18 to 0.7.6, so #17 merging *second* would have
+  taken the marketplace manifest 0.7.6 → 0.7.5, and most plugin-manager update logic reads a
+  backward version as no-op-or-worse rather than as an upgrade. **That instance was avoided
+  by merging #17 first (2026-08-06), by hand — the hazard is not fixed, only dodged.** The
+  version lives in three manifests and the only thing keeping them monotonic is whoever is
+  paying attention at merge time. A CI assertion that `plugin.json`'s version is strictly
+  greater than the base branch's would catch it without anyone having to remember. Note what
+  will NOT catch it: V1–V3 deliberately neutralize a version-only bump in the diff hash so a
+  release does not force a spurious re-gate, and that neutralization is direction-blind — a
+  backward bump is just as invisible to the hash as a forward one. The gate is structurally
+  the wrong layer for this; it belongs in CI. (0.7.6 supply-chain review, 2026-08-06)
+  **Priority:** P2
 - **The three merged PR bodies #1, #2 and #3 carry a `🤖 Generated with Claude Code`
   byline.** Cosmetic and historical; noted only so it is a deliberate choice to
   leave them rather than an oversight. Newer PRs do not carry it.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P1: unparseable hook input was ALLOWED through the PreToolUse gate — and the #11 fix
+  that was supposed to prevent it had been silently cancelled by the branch it fell
+  through to.** Fixed 2026-08-06, shipped in 0.7.6.
+
+  `json_get`'s python3 arm wrapped `json.load` and the field traversal in one
+  `except Exception: pass`, so "this is not JSON" and "that field is absent" both came back
+  empty with status 0. #11 had made the **jq** arm check its status and fall through to
+  python3; on malformed input that fall-through fired exactly as designed and handed control
+  to a branch carrying the same defect. Net effect, measured on both paths: a truncated
+  payload containing a real publish verb was allowed, with jq present *and* with jq absent.
+  A13/A14 could not see it — with a broken jq and no marker the hook denies for an unrelated
+  reason, so the arm looked covered.
+
+  Fix: split the parse from the traversal (parse failure → exit 1, absent field → exit 0 with
+  empty stdout), and on unreadable input decide from the **raw bytes** — deny if they contain
+  a publish verb, allow otherwise. Narrow on purpose: this hook fires on every Bash tool call,
+  so denying on any unreadable payload would wedge the session the moment the JSON tool broke.
+  Pinned by A20 (denies on both arms) and A21 (does not over-deny ordinary Bash). Both
+  mutation-tested.
+
+  Surfaced by the quality-axis base-rate measurement, as a lead — verified here before it was
+  acted on, and it turned out broader than reported: the agent described it as reachable only
+  via the python arm, and it is reachable with jq present too.
+
+  Two things this took with it. `test/gate-test.sh`'s A4 case `g""it push` had been passing for
+  the wrong reason since it was written — `pretool()` assembles JSON with raw `printf`, so the
+  unescaped quotes made the payload invalid and the verdict came from the empty-command
+  short-circuit rather than from the matcher. It is now `g\"\"it push`, decodes correctly, and
+  still allows, so the disclosure stands and is finally earned. And the first draft of A20's
+  jq-less PATH shim was a hand-written tool list that omitted `dirname`; the script died on its
+  second line, emitted nothing, and "no output" reads as ALLOW — a green assertion proving
+  nothing. The shim now mirrors the real PATH minus jq, and both shims carry a positive control.
+
+  The gate's own security review of this branch then found the **expansion** path still carried
+  the fail-open: it computed `_unreadable` and never read it. Rated Low as an unused variable; it
+  is not. On that path an empty `cwd` means no `cd` happened, so `is_fresh()` answers for whatever
+  directory the hook process inherited — a fresh marker in an unrelated repo lets the `/ship`
+  through. Closed by halting unconditionally there, with no raw-text narrowing, because that path
+  fires only on a typed `/ship` and a false halt costs one retry. Pinned by A22, whose **first
+  draft was vacuous and was caught by mutation testing**: it ran the probe from the harness's own
+  cwd, which has no marker, so removing the guard entirely still produced exit 2. It now runs the
+  hook process from inside the gated repo, which is the only arrangement where the inherited-marker
+  fail-open is reachable at all.
+
+- **P3: `marker_get` discarded jq's exit status, in both copies, and one of them still used
+  `print()`.** Fixed 2026-08-06, shipped in 0.7.6.
+
+  The third instance of the error-path class (after `json_get` and `strip_quoted`, #11). It
+  fails CLOSED, which is why it was deliberately left alone at 0.7.3 — and that reasoning was
+  wrong twice: fail-closed here means *every* push on a box with a broken-but-installed jq is
+  refused permanently, with the python3 fallback beside it unreachable, which is not a hook
+  erring safe but a hook that has stopped enforcing and started blocking. `command -v jq`
+  succeeding means jq is INSTALLED, not that it RUNS.
+
+  `pre-push.sh`'s copy carried a second defect: it still used `print()`, whose trailing newline
+  becomes CRLF on Windows while `$( )` strips only the LF — the surviving CR rides on `base`,
+  fails to resolve as a ref, and a fresh marker reads as stale. `DECISIONS.md` had recorded that
+  fix as landed since 2026-08-02; it had only ever landed in `gate-check.sh`. That paragraph is
+  now corrected in place.
+
+  Fix: both copies capture jq's output, check its status, and fall through to python3 — and
+  **A19 asserts the two function bodies are byte-identical**, which is the part that matters.
+  The duplication is deliberate (separate entry points, no shared library), so drift is its
+  standing cost, and a note in a decisions file demonstrably does not contain it. Pinned by A18
+  (gate-check) and P14 (pre-push), both with an ungated-branch control so an early-exiting hook
+  cannot read as a pass. All mutation-tested: reverting either copy reddens exactly the
+  assertions that name it, and nothing else.
+
+  Known blind spot, disclosed rather than papered over: the `print()` half is **not observable on
+  POSIX** — `$( )` strips the LF, so both forms produce identical bytes on Linux and macOS. It is
+  covered only indirectly, by A19's byte-parity check.
 
 - **P2: `forgeward-diff-hash.sh` produced a DIFFERENT hash under `jq` than under the
   `python3` fallback.** Fixed 2026-08-06, shipped in 0.7.5. Full entry in `DECISIONS.md`.
