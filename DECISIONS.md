@@ -4,6 +4,48 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — the same manifest hashed differently under `jq` than under the `python3` fallback
+
+**Date:** 2026-08-06
+
+**Symptom.** A marker written on a machine with `jq` read as STALE on a machine without it,
+and vice versa, forcing a spurious re-gate on a branch nobody had touched. Fail-safe — an
+extra gate run, never a false PASS — which is why it survived: the cost was a slow gate, not
+a wrong one, and it only reproduces when the same branch is gated from two machines.
+
+**Cause.** `normalize_manifest` has two branches that must emit the same BYTES, because what
+the marker records is a hash. `jq -S` pretty-prints with a 2-space indent; the python3 branch
+used `json.dumps(..., separators=(",",":"))`, which is compact. Same semantics, different
+bytes, for every manifest in every repo. A second divergence sat behind it: without `-a`, jq
+emits raw UTF-8 where `json.dumps` defaults to `ensure_ascii=True`, so a single accented
+character in a manifest diverged even after the whitespace was matched.
+
+**Why the tests did not catch it.** V5 and V6 pin that the fallback has the same semantics —
+invariant under a version bump, still sensitive to a substantive change — and both passed
+throughout. Each compared a branch only against ITSELF. Nothing compared the two branches to
+each other, which is the only shape that sees it. Confirmed by mutation: reverting the fix
+turns V7 red while V5 and V6 stay green.
+
+**Fix.** `jq -S -c -a` on both invocations. Verified by fuzzing the two branches against each
+other over compact/pretty shapes, empty containers, nested sort order, escapes, and unicode
+including an astral surrogate pair — not reasoned about from the flag documentation.
+
+**Accepted cost, stated because it is the expensive half.** Aligning the two rewrites the
+canonical bytes, so EVERY marker in EVERY repo reads stale exactly once at this version — not
+only plugin repos, which is what the previous change cost. That is why this shipped alone.
+V4 previously asserted "existing markers survive the upgrade"; that guarantee is deliberately
+given up, and the test was reframed to pin the payload assembly and current canonicalization
+rather than have its expected value quietly updated.
+
+**Blind spot — number literals still diverge, and cannot be closed here.** `jq` preserves a
+number's source text (`1.10` stays `1.10`, `1e10` prints `1E+10`); python normalizes through
+float (`1.1`, `10000000000.0`, `1e-7` → `1e-07`). Python cannot be made to match:
+`json.dumps` calls `float.__repr__` directly, so a float subclass carrying the raw text is
+ignored, and `parse_int` would turn `5` into `5.0`. Reaching it needs a manifest with a float
+in scientific notation or with a trailing zero; npm and plugin manifests carry versions as
+strings. Pinned by V8 as a KNOWN divergence, so a future jq or python that closes it fails
+the suite instead of quietly outdating this paragraph.
+
 ## RESOLVED — `supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not exist
 
 **Date:** 2026-08-05
