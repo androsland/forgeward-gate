@@ -204,7 +204,12 @@ if [ "$mode" = "expansion" ]; then
   git rev-parse --git-dir >/dev/null 2>&1 || exit 0
   if is_fresh "$(current_branch)" "HEAD"; then exit 0; fi
   echo "forgeward gate: /ship halted — the reviewers have not returned VERDICT: PASS on the current code." >&2
-  echo "Run /forgeward:gate first. It fires the relevant read-only reviewers and, on PASS, ships in one motion." >&2
+  # Phrased to be true on a machine with no gstack too. The old wording promised it
+  # "ships in one motion", which is only the gstack-installed branch of Step 3; the
+  # standalone branch writes the marker and hands back. Deliberately NOT probing for
+  # gstack here to tailor the sentence: this is the /ship halt path, it must stay fast
+  # and dependency-free, and a wording that holds either way costs nothing.
+  echo "Run /forgeward:gate first. It fires the relevant read-only reviewers and, on PASS, writes the marker — then ships in the same motion if gstack's /ship is installed." >&2
   exit 2
 fi
 

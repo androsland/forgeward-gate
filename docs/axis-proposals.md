@@ -333,9 +333,16 @@ advisory queue check at 1130–1146 reading via `git show HEAD:VERSION` and
 `git show origin/$BASE:VERSION`. The one helper the grep could not see,
 `bin/gstack-next-version`, writes only to `process.stdout` (line 506). **No write path.**
 
-This matters because version bumping is the whole reason forgeward refuses the `/ship`
-handoff (see [[forgeward-no-ship-handoff]] — `/ship` would re-bump). That objection does
-**not** apply to `/review`. The handoff this repo rejected is available in a cheaper form.
+This matters because version bumping is the whole reason **this repo's own dev workflow**
+declines the `/ship` handoff (see [[forgeward-no-ship-handoff]] — `/ship` would re-bump a
+version that lives in three manifests here). That objection does **not** apply to `/review`.
+The handoff this repo rejected is available in a cheaper form.
+
+Read that as scoped to developing forgeward itself, not as plugin behavior — the two were
+conflated in this paragraph until 0.8.0. The *plugin* does hand off: `skills/gate/SKILL.md`
+Step 3 invokes `/ship` when gstack is installed, and as of 0.8.0 reports the marker and hands
+back when it is not. A repo that does not want the handoff declines it the way this one does,
+by convention, not because forgeward withholds it.
 
 Constraint on using it: `/review` holds `Edit`/`Write` and runs Fix-First auto-fix, so it
 cannot run *inside* the read-only gate — the workspace guard would flag it, correctly.
@@ -355,9 +362,20 @@ other side is absent.** Shipped today:
   returns PASS. Most severe of these: CVE scanning is table stakes and the user has been
   told the axis is handled.
 - **README line 45** claims code quality is covered by `/review`. It is not.
+  *(Resolved in 0.8.0. The line is 57, not 45 — the number here was wrong and TODOS.md
+  inherited the error. It now qualifies the claim with "when gstack is installed" and
+  points at the disclosure.)*
 - **README line 336** advises running `/cso` for the deep audit — a no-op.
+  *(Already corrected in 0.7.4, which qualified it with "if you have gstack". Listed here
+  only because this section is the historical finding list; it is not outstanding.)*
 - **The gate's Step 3 hands off to `/ship`.** Whether that degrades gracefully or
   hard-fails without gstack is **untested** — flagged as likely-broken, not confirmed.
+  *(Resolved in 0.8.0, and the guess above was wrong in an instructive way. It did not
+  hard-fail: the marker is written BEFORE the handoff, so the PASS was never at risk and
+  the user was never blocked. The actual failure was a **false success report** — the gate
+  announcing "Handing off to /ship" on a machine where nothing shipped. Worse than the
+  predicted breakage, because a hard failure is visible and this is not. Step 3 now
+  branches on `gstack_ship`.)*
 
 Gate mechanics themselves carry **no** gstack dependency (verified): `hooks/` and
 `scripts/` reference gstack only in comments and accommodations —

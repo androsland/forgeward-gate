@@ -31,6 +31,43 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 head="$(git rev-parse HEAD)"
 hash="$("$here/forgeward-diff-hash.sh" "$base")"
 
+# --- environment provenance ---------------------------------------------------
+# WHY THE MARKER CARRIES THIS. forgeward is scoped as a delta against gstack, so what
+# a PASS actually COVERS depends on what else was installed on the machine that ran it.
+# Two markers both saying `passed: true` can mean materially different things, and until
+# now nothing recorded which. docs/axis-proposals.md §4 puts it as turning the coverage
+# variance "from invisible into auditable". This is the auditable half; the disclosure
+# the user reads is Step 1 of the gate skill.
+#
+# THIS IS PROVENANCE, NOT ENFORCEMENT. Nothing reads the field back — no freshness
+# check consults it, no push is refused because of it. It answers "what did this PASS
+# mean?" after the fact. Same is true of the `schema` number beside it, which is
+# written here and read by nothing in the repo; do not mistake either for a
+# compatibility mechanism.
+#
+# NEVER BLOCKS THE MARKER. The probe exits 0 by design, but it is still an external
+# process that can be missing, unreadable, or replaced. A reviewer PASS that was
+# genuinely earned must not be discarded because a provenance probe broke, so any
+# unexpected output degrades to a recorded "unavailable" and the marker is written
+# regardless. Losing the marker would force a full re-review; losing the provenance
+# costs one unanswerable question later.
+#
+# VALIDATED BEFORE INTERPOLATION even though the probe already sanitises its own
+# output. Two independent reasons: the two files can be upgraded separately (this one
+# ships in a plugin cache that a user can edit), and it is the only field here whose
+# content originates in a repo file rather than from git. Restricted to the compact
+# JSON-object shape the probe emits — first line only, fixed charset, braces at both
+# ends. Anything else is replaced wholesale, not repaired.
+env_json=""
+if [ -x "$here/forgeward-detect-environment.sh" ]; then
+  env_json="$("$here/forgeward-detect-environment.sh" 2>/dev/null | head -n 1 || true)"
+fi
+case "$env_json" in
+  '{'*'}') printf '%s' "$env_json" | LC_ALL=C grep -q '[^-{}",:_a-zA-Z0-9]' && env_json="" ;;
+  *) env_json="" ;;
+esac
+[ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
+
 # Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't
 # collide. Git branch names are already filesystem-safe (they map to
 # refs/heads/<name> files), so no extra sanitization is needed.
@@ -39,13 +76,14 @@ mkdir -p "$(dirname "$marker")"
 
 cat > "$marker" <<EOF
 {
-  "schema": 2,
+  "schema": 3,
   "passed": true,
   "branch": "$branch",
   "base": "$base",
   "reviewed_head": "$head",
   "diff_hash": "$hash",
-  "fired": "$fired"
+  "fired": "$fired",
+  "environment": $env_json
 }
 EOF
 
