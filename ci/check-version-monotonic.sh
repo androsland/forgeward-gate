@@ -85,23 +85,46 @@ read_version() { # read_version <json-text> <label>
   printf '%s' "$v"
 }
 
-# 0 when $1 is strictly less than $2.
+# Strip leading zeros from a digit string, keeping a lone `0`. `1.08.0` is a legal
+# shape for the regex above, and `08` must read as eight.
+strip0() { local s="${1#"${1%%[!0]*}"}"; printf '%s' "${s:-0}"; }
+
+# 0 when digit string $1 is numerically less than $2. NO BASH ARITHMETIC anywhere in
+# this comparison, and that is the entire point.
 #
-# Component-wise, NOT a weighted sum. `major*1000000 + minor*1000 + patch` is the
-# obvious form and it is wrong: it silently ties `1.0.1000` with `1.1.0`, so a version
-# that overflows a place value compares equal to one that does not and the backward
-# merge sails through. Comparing fields in order has no such ceiling.
+# The first draft was component-wise `$((10#$a1))`, chosen over the obvious weighted
+# sum `major*1000000 + minor*1000 + patch` because that form silently ties `1.0.1000`
+# with `1.1.0`. The comment above it then claimed the fix had "no such ceiling", and
+# the security review falsified that in one command: bash arithmetic is fixed-width
+# signed 64-bit, so a component at or above 2^63 wraps two's-complement -- and nothing
+# upstream bounded what reached it, because the validating regex accepts a digit run of
+# ANY length. Demonstrated end to end: base `18446744073709551617.0.0`, head reverted
+# to `1.0.0` -- a drastic backward move, the exact hazard this file exists to stop --
+# printed `ok ... not behind` and exited 0. The ceiling had moved from 10^3 to 2^63; it
+# had not gone away, and the comment asserting otherwise is how it survived review.
 #
-# `10#` forces base 10 so a zero-padded component (`1.08.0`) is arithmetic rather than
-# an octal syntax error. Callers must validate X.Y.Z first -- `read_version` does, and
-# an empty component here would be a bash error, not a wrong answer.
+# Length-then-bytes has no ceiling at all, for real this time: with leading zeros gone,
+# the longer numeral is always the larger one, and two numerals of EQUAL length compare
+# numerically under a plain byte comparison because ASCII digits ascend in code-point
+# order. `LC_ALL=C` is set locally so that last step is bytes rather than whatever the
+# ambient locale's collation does with digits -- the same pinning the probe's `wc -c`
+# has and its `awk` still lacks (open in TODOS.md).
+num_lt() { # num_lt <digits> <digits>
+  local LC_ALL=C x y
+  x="$(strip0 "$1")"; y="$(strip0 "$2")"
+  [ "${#x}" -ne "${#y}" ] && { [ "${#x}" -lt "${#y}" ]; return $?; }
+  [[ $x < $y ]]
+}
+
+# 0 when version $1 is strictly less than version $2. Callers must validate X.Y.Z
+# first -- `read_version` does.
 version_lt() { # version_lt <a> <b>
   local a1 a2 a3 b1 b2 b3
   IFS=. read -r a1 a2 a3 <<<"$1"
   IFS=. read -r b1 b2 b3 <<<"$2"
-  [ "$((10#$a1))" -ne "$((10#$b1))" ] && { [ "$((10#$a1))" -lt "$((10#$b1))" ]; return $?; }
-  [ "$((10#$a2))" -ne "$((10#$b2))" ] && { [ "$((10#$a2))" -lt "$((10#$b2))" ]; return $?; }
-  [ "$((10#$a3))" -lt "$((10#$b3))" ]
+  [ "$(strip0 "$a1")" != "$(strip0 "$b1")" ] && { num_lt "$a1" "$b1"; return $?; }
+  [ "$(strip0 "$a2")" != "$(strip0 "$b2")" ] && { num_lt "$a2" "$b2"; return $?; }
+  num_lt "$a3" "$b3"
 }
 
 git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1 \

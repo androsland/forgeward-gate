@@ -22,12 +22,21 @@ jobs:
   monotonic:
     runs-on: ubuntu-latest
     steps:
-      # Pinned to the v4 tag, not a commit SHA. A SHA pin is the stricter supply-chain
-      # posture and is the right end state; it is not done here because no SHA was
-      # verified at authoring time, and an unverified SHA typed from memory is strictly
-      # worse than a tag from the first-party publisher. Tracked in TODOS.md.
-      - uses: actions/checkout@v4
+      # SHA-pinned, not tag-pinned: a tag can be repointed, a SHA cannot. The SHA was
+      # RESOLVED, not recalled -- `git ls-remote --tags https://github.com/actions/checkout v4`
+      # on 2026-08-06, run twice independently, returning 11d5960 for refs/tags/v4 (a
+      # lightweight tag, so it names the commit directly and there is no ^{} to deref).
+      # An unverified SHA typed from memory would have been strictly worse than the tag.
+      # A pin needs a refresh policy or it decays into a stale-action problem instead:
+      # re-run that same ls-remote when GitHub cuts a new v4.x. Tracked in TODOS.md.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # Do not leave GITHUB_TOKEN in .git/config for the rest of the job. The
+          # workflow already holds only `contents: read` and references no secrets, so
+          # this is depth rather than a live hole -- but the script that runs next is
+          # checked out from the PR head, which on a fork PR is contributor-controlled
+          # content, and there is no reason for it to have a credential in reach.
+          persist-credentials: false
           # The PR HEAD, not GitHub's synthetic merge commit. What this check needs to
           # judge is the version the author wrote; the merge commit's version is a
           # merge RESULT, which conflates "the branch is fine" with "git happened to

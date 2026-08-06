@@ -196,6 +196,46 @@ run "$R"
   && ok "R12 no manifest on base at all -> FAIL (zero comparisons is not a pass)" \
   || nok "R12 zero-evidence floor" "st=$st out=$out"
 
+# --- R13: no 64-bit ceiling either -----------------------------------------------
+# Found by the security review of this very branch, and it falsified the comment that
+# sat above the comparator. The first draft compared with `$((10#$x))`, which is bash's
+# fixed-width signed 64-bit arithmetic: a component at or above 2^63 wraps, and the
+# validating regex accepts a digit run of ANY length, so nothing bounded what got there.
+# 18446744073709551617 is 2^64+1, which wrapped to 1 -- so this revert, a drastic
+# backward move, printed `ok ... not behind` and exited 0.
+#
+# Absurd as an input and exactly the point: the check exists to catch bad states, so a
+# fail-OPEN on a bad state is the one direction it must never take. R6 pinned the 10^3
+# ceiling and passed throughout, because it was written against the comparator that had
+# already been chosen -- an assertion cannot find a ceiling nobody suspected.
+R="$(mkfixture bigrevert 18446744073709551617.0.0 18446744073709551617.0.0 18446744073709551617.0.0)"
+setv "$R" 1.0.0 1.0.0 1.0.0; commit_head "$R"
+run "$R"
+[ "$st" -ne 0 ] && case "$out" in *BACKWARD*) true ;; *) false ;; esac \
+  && ok "R13 a revert from a 2^64-scale version reads BACKWARD (no 64-bit ceiling)" \
+  || nok "R13 bignum ceiling" "st=$st out=$out"
+
+R="$(mkfixture bigforward 1.0.0 1.0.0 1.0.0)"
+setv "$R" 18446744073709551617.0.0 18446744073709551617.0.0 18446744073709551617.0.0; commit_head "$R"
+run "$R"
+[ "$st" -eq 0 ] && ok "R13b the same pair in the forward direction still PASSES" \
+  || nok "R13b bignum forward" "st=$st out=$out"
+
+# --- R14: a zero-padded component is decimal, not a shorter number -----------------
+# `1.08.0` is a legal shape for the validator, and the length-first comparison in
+# num_lt would read `08` as two digits beating `9`'s one if the zero were not stripped.
+# The old `10#` prefix existed for this; the replacement has to earn it back.
+R="$(mkfixture padded 1.08.0 1.08.0 1.08.0)"
+setv "$R" 1.9.0 1.9.0 1.9.0; commit_head "$R"
+run "$R"
+[ "$st" -eq 0 ] && ok "R14 1.08.0 -> 1.9.0 reads FORWARD (leading zero stripped, not length-compared)" \
+  || nok "R14 zero padding" "st=$st out=$out"
+
+R="$(mkfixture padded_rev 1.9.0 1.9.0 1.9.0)"
+setv "$R" 1.08.0 1.08.0 1.08.0; commit_head "$R"
+run "$R"
+[ "$st" -ne 0 ] && ok "R14b 1.9.0 -> 1.08.0 reads BACKWARD" || nok "R14b zero padding reverse" "st=$st out=$out"
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

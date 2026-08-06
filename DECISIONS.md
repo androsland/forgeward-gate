@@ -44,13 +44,41 @@ glance, while the hook fires on every Bash tool call and a false red wedges the 
 human to wave it through. Accepted — it happens once per repo, and the alternative is a check
 that is silently inert exactly where it has never run before.
 
-**Two things this took with it.**
+**The comparator went wrong twice, and the second one is the entry worth keeping.**
 
-The obvious comparator is wrong. `major*1000000 + minor*1000 + patch` silently **ties**
-`1.0.1000` with `1.1.0`, so a backward merge across that boundary passes clean; the comparison
-is component-wise, which has no place-value ceiling. Pinned by R6/R6b. A plain string
-comparison is wrong in a nearer way — it calls `0.10.0` *behind* `0.9.0`, which this repo will
-hit on its next minor. Pinned by R5/R5b.
+Two obvious forms are wrong at the outset. `major*1000000 + minor*1000 + patch` silently
+**ties** `1.0.1000` with `1.1.0`, so a backward merge across that boundary passes clean
+(R6/R6b). A plain string comparison is wrong in a nearer way — it calls `0.10.0` *behind*
+`0.9.0`, which this repo hits on its next minor (R5/R5b). The fix was component-wise
+`$((10#$x))`, and the comment written above it said that form "has no such ceiling".
+
+**That comment was false, and this branch's own security review falsified it in one command.**
+Bash arithmetic is fixed-width signed 64-bit, so a component at or above 2^63 wraps
+two's-complement — and nothing upstream bounded what reached it, because the validating regex
+accepts a digit run of ANY length. Demonstrated end to end: base `18446744073709551617.0.0`
+(2^64+1), head reverted to `1.0.0` — a drastic backward move, the exact hazard this file exists
+to stop — printed `ok ... not behind` and exited 0. The ceiling had moved from 10^3 to 2^63; it
+had not gone away.
+
+Two things follow, and neither is "add a bounds check". First, the remedy is
+`num_lt`: strip leading zeros, compare lengths, then compare bytes under `LC_ALL=C`. It uses no
+arithmetic at all, so the claim the comment makes is now structurally true rather than true up
+to a bound nobody had measured. Second, **R6 passed throughout**. It was written against the
+comparator already chosen, so it pinned the ceiling that had been thought about and was blind to
+the one that had not — the same shape as V5/V6 passing while the jq/python3 divergence shipped
+underneath them. An assertion cannot find a ceiling nobody suspected; a reviewer running the
+arithmetic on adversarial input can, and did.
+
+**What else the gate's own review changed.** `actions/checkout` moved from the `v4` tag to
+`11d5960a326750d5838078e36cf38b85af677262`. The tag pin had been recorded as a deliberate
+trade-off — no SHA had been verified, and an unverified SHA from memory is worse than a
+first-party tag — but the reviewer simply *resolved* it (`git ls-remote --tags`, re-run
+independently here), which turns a defensible deferral into an unnecessary one. `TODOS.md`
+carries the refresh obligation instead, since a SHA pin without one decays into a stale-action
+problem. `persist-credentials: false` was added on the same step: the workflow holds only
+`contents: read` and references no secrets, so this is depth rather than a live hole, but the
+script that runs next is checked out from the PR head and on a fork PR that is contributor
+content.
 
 The version validator's first draft was `printf | grep -qx`, which is **the P1 defect this
 repo already paid for once**: `grep -q` exits on match and can SIGPIPE the `printf` still
@@ -60,12 +88,28 @@ nothing. `grep -c` and `grep -o` in the same function drain to EOF and are unaff
 an early-exit reader can orphan its writer. The comment at that line says so, because the
 tempting edit is to put `grep -q` back.
 
-**Verification.** `test/version-check-test.sh`, 15 assertions, wired into `npm test`. All ten
-mutations reddened exactly the assertions naming them and nothing else — and mutation testing
-**earned its place here**: the zero-comparison floor (Decision 4) reddened *nothing* until R12
-was written for it, so that guard was unpinned and would have read as covered. The live
-direction was proven on this repo rather than only in fixtures: the three manifests were
-edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1.
+**Verification.** `test/version-check-test.sh`, 19 assertions, wired into `npm test`. Thirteen
+of fourteen mutations reddened exactly the assertions naming them and nothing else, and the two
+that reddened *nothing* are the entries to carry forward:
+
+- The zero-comparison floor (Decision 4) was unpinned until R12 was written for it. Mutation
+  testing is what found that; reading did not.
+- **`LC_ALL=C` in `num_lt` is NOT pinned and cannot be**, on this machine. Removing it reddens
+  nothing, because no locale here collates ASCII digits out of code-point order. It stays as
+  hardening with its effect unobservable — the same disclosure the `print()`/CRLF half of the
+  0.7.6 `marker_get` fix carries, and stated for the same reason: an unobservable guard that is
+  silently assumed covered is worse than one labelled.
+
+A third mutation (`M6`, dropping the base-ref resolve guard) reported vacuous on the first pass
+and was a **harness escaping artifact** — applied properly it reddens R11 exactly. Worth
+recording: a mutation reporting "nothing reddened" is a claim to verify, not a finding to
+accept, and treating it as the latter would have added a test for a guard that was already
+pinned.
+
+The live direction was proven on this repo rather than only in fixtures: the three manifests
+were edited 0.9.0 → 0.8.0 and the check named `package.json` and exited 1. The security
+review's 2^64 repro was likewise re-run here after the fix, and now exits 1 naming the same
+file.
 
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 

@@ -321,13 +321,25 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
   awk-based design. Decide whether to keep it as an archaeological record or drop
   it. (PR #8, 2026-08-01) **Priority:** P4
-- **`actions/checkout` is pinned to the `v4` tag, not a commit SHA.** A SHA pin is the
-  stricter supply-chain posture for a third-party action and is the right end state. Not
-  done at authoring time because no SHA had been verified, and an unverified SHA typed from
-  memory is strictly worse than a tag from the first-party publisher — the fix is to look
-  one up and pin it, in a commit that says which release it corresponds to. Note the pin
-  also needs a refresh policy, or it becomes a stale-action problem instead.
-  (CI version check, 2026-08-06) **Priority:** P3
+- **The `actions/checkout` SHA pin has no refresh policy, which is the other half of pinning.**
+  `.github/workflows/version-check.yml` pins `11d5960a326750d5838078e36cf38b85af677262` (`v4`,
+  resolved by `git ls-remote --tags` on 2026-08-06, not recalled). A SHA cannot be repointed
+  under us — and equally cannot pick up a security fix, so an unrefreshed pin decays into a
+  stale-action problem, which is the failure mode a tag does not have. Nothing currently
+  notices when GitHub cuts a new `v4.x`. Dependabot's `github-actions` ecosystem is the
+  standard answer and would be this repo's second CI-adjacent config; the cheap manual version
+  is re-running that `ls-remote` at release time. Undecided which. (CI version check,
+  2026-08-06) **Priority:** P3
+- **`LC_ALL=C` in `num_lt` is hardening whose effect is not observable here, so nothing pins
+  it.** `ci/check-version-monotonic.sh` sets it so the equal-length byte comparison is bytes
+  rather than ambient collation. Removing it reddens no assertion — no locale on this machine
+  collates ASCII digits out of code-point order, and none was found that does. Same shape as
+  the `print()`/CRLF half of the 0.7.6 `marker_get` fix (not observable on POSIX, covered only
+  indirectly), and recorded for the same reason: an unobservable guard silently assumed covered
+  is worse than one labelled. Note this is the *third* locale-pinning entry in this file —
+  `forgeward-detect-environment.sh:112`'s bare `awk` is still unpinned (P3, below). If a fourth
+  appears, the answer is probably a repo-wide convention rather than another bullet.
+  (CI version check, 2026-08-06) **Priority:** P4
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
   version-check 15) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
@@ -358,19 +370,29 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   checked, so the comparison would be against itself and green vacuously), and
   `test/version-check-test.sh` (R1–R12, wired into `npm test`).
 
-  Two comparator traps are pinned rather than merely avoided. `major*1000000 +
+  Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
-  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b). And the version
-  validator's first draft was `printf | grep -qx` — the P1 SIGPIPE/pipefail defect already
-  paid for once here — now a fork-free `[[ =~ ]]` with a comment at the line saying why the
-  tempting edit is wrong.
+  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b); and the
+  component-wise `$((10#$x))` that replaced both **wrapped at 2^63**, which this branch's own
+  security review demonstrated end to end — base `18446744073709551617.0.0`, head reverted to
+  `1.0.0`, `ok ... not behind`, exit 0 (R13/R13b). The comparator now uses no arithmetic at
+  all. And the version validator's first draft was `printf | grep -qx` — the P1
+  SIGPIPE/pipefail defect already paid for once here — now a fork-free `[[ =~ ]]` with a
+  comment at the line saying why the tempting edit is wrong.
 
-  **Mutation testing earned its place and should not be skipped on the next one like it:**
-  the zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that
-  read as covered was in fact unpinned. Nine of the ten mutations reddened exactly the
-  assertions naming them; the tenth was a harness-escaping artifact and reddens R11 correctly
-  when applied properly — which is its own reminder that a mutation reporting "vacuous" is a
-  claim to verify, not a finding to accept.
+  **The 2^63 wrap is the entry to re-read before writing the next comparator.** R6 pinned the
+  10^3 ceiling and stayed green throughout, because it was written against the comparator
+  already chosen — it could only see the ceiling that had been thought about. Same shape as
+  V5/V6 passing while the jq/python3 divergence shipped underneath them. The comment above the
+  fix asserted "no such ceiling" and was simply false; the assertion beside it could not tell.
+
+  **Mutation testing earned its place and should not be skipped on the next one like it:** the
+  zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
+  as covered was in fact unpinned. Thirteen of fourteen mutations reddened exactly the
+  assertions naming them; the exception is the `LC_ALL=C` pin, filed above as unobservable
+  rather than counted as covered. One earlier "vacuous" result was a harness-escaping artifact
+  and reddens R11 correctly when applied properly — a mutation reporting nothing is a claim to
+  verify, not a finding to accept.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
