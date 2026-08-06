@@ -141,6 +141,17 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   above `_env_ok` first. Revisit if the probe grows past a handful of fields: at that point the
   regex stops being readable and taking the parser dependency becomes the better trade.
   (security review, 2026-08-06) **Priority:** P2
+- **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
+  `[ -L ]`/`[ -f ]`/`[ -r ]` run at `forgeward-detect-environment.sh:97-99`, but `wc -c` and
+  `awk` read the file afterwards, so a process with concurrent write access to the checked-out
+  tree could swap a regular file for a symlink inside that window. Raised by the 0.8.0 security
+  review as informational and explicitly *not* filed as a finding: the attacker must already
+  have local write access to the same checkout while the gate runs, which implies code
+  execution, and the outcome is still bounded by the 64-byte/32-item/ASCII-only sanitizer and
+  the marker's own `_env_ok` gate downstream. Recorded here only so a future reader finds the
+  decision instead of rediscovering the gap and assuming it was missed. Closing it properly
+  means opening the file once and working from that handle — not worth the portability cost
+  today. (security review, 2026-08-06) **Priority:** P4
 - **The symlink refusal knowingly breaks a legitimate configuration.** A monorepo that
   symlinks `.forgeward/config.yml` to a shared config elsewhere in the tree is now ignored
   (reads `unreadable`, so the disclosure still fires) and must use a regular file. This is
@@ -151,7 +162,7 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   portability (`readlink -f` is absent from the bash 3.2/macOS environments this repo targets),
   not on principle; a portable resolver would reopen it. (security review, 2026-08-06)
   **Priority:** P3
-- **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E17
+- **Disclosure is specified in a skill, so nothing tests that it actually happens.** E1–E18
   pin the *probe*; the decision to print `NOT COVERED: quality` lives in
   `skills/gate/SKILL.md` Step 1c and is executed by a model. The same is true of every
   other instruction in that file, so this is not a new class of gap — but it is the reason
@@ -320,14 +331,16 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `forgeward-gate-check.sh`'s halt message promised it "ships in one motion". All three
   corrected in place. Full reasoning in `DECISIONS.md`.
 
-  E1–E17, each mutation-tested in both directions where a direction exists. E2 is E1's
+  E1–E18, each mutation-tested in both directions where a direction exists. E2 is E1's
   positive control and is load-bearing: gstack is installed on the author's machine and
   the probe is not a PATH lookup, so an assertion that forgets any of its three roots
   finds the real gstack and greens vacuously. E12–E17 were added *after* E1–E11 were
   green, for the two Medium findings of the 0.8.0 security review (a followed config
   symlink; a character allowlist mistaken for structural validation) — a reminder that
-  a passing suite is evidence about the assertions in it and nothing else. Suites: gate
-  161/161, pre-push 15/15.
+  a passing suite is evidence about the assertions in it and nothing else. E18 pins that
+  a CRLF config parses identically to an LF one — not a security case, a regression guard
+  for the trailing-CR class that already shipped once in 0.7.6. Suites: gate 162/162,
+  pre-push 15/15.
 
 - **P1: unparseable hook input was ALLOWED through the PreToolUse gate — and the #11 fix
   that was supposed to prevent it had been silently cancelled by the branch it fell

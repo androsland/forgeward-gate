@@ -87,14 +87,14 @@ which is how the gap survived this long:
 push is refused over it. Bumping 2 → 3 is therefore free, and must not be mistaken for a
 compatibility mechanism. The same is true of the `environment` object beside it.
 
-**Evidence.** E1–E17 in `test/gate-test.sh`, each mutation-tested. E2 exists specifically as
+**Evidence.** E1–E18 in `test/gate-test.sh`, each mutation-tested. E2 exists specifically as
 E1's positive control: gstack is installed on the author's machine, and
 `forgeward-detect-environment.sh` is not a PATH lookup, so the suite's PATH-shim helpers do
 nothing to it — an assertion that forgets any of its three roots (`$CLAUDE_CONFIG_DIR/skills`,
 `<git toplevel>/.claude/skills`, `$CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills`) finds the real
 gstack and passes vacuously. E5 pins that a substitute name carrying JSON metacharacters is
 *dropped* rather than escaped, since that value is the only marker field originating in a repo
-file. Suites: gate 161/161, pre-push 15/15.
+file. Suites: gate 162/162, pre-push 15/15.
 
 **Two findings from the 0.8.0 security review, both Medium, both fixed here.** Worth recording
 because each is an instance of a rule this repo already had and each got past a green suite —

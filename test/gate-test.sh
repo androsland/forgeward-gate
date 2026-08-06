@@ -2196,6 +2196,27 @@ E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack
   && ok "env: a valid-prefix-plus-appendix splice is rejected (the shape match is anchored at BOTH ends)" \
   || nok "env E17" "marker '$E17M'"
 
+# E18: a CRLF config parses identically to an LF one. Not a security case — a regression
+# guard for a class this repo has already shipped twice. 0.7.6 fixed `marker_get` reading
+# a trailing CR off the marker's `base`, which made a FRESH marker read as stale on
+# Windows; the same shape reaches here through `.forgeward/config.yml`, which a Windows
+# checkout with `core.autocrlf=true` will hand to awk with `\r` on every line.
+#
+# It currently works, and the reason is worth pinning rather than trusting: `\r` is in
+# `[[:space:]]`, so the section header matches `standalone:\r` and the trailing-strip
+# removes the CR before the charset test. That is load-bearing and entirely implicit — an
+# edit that tightened either pattern to a literal space or `[ \t]` would drop every
+# substitute a Windows user configured, and the failure is SILENT in the worst way: the
+# config reads `present` with an empty list, which is indistinguishable from "the user
+# configured nothing" and looks exactly like working software.
+mkdir -p "$ER/.forgeward"
+printf 'standalone:\r\n  substitutes:\r\n    - quality\r\n    - deep-audit\r\n' > "$ER/.forgeward/config.yml"
+E18J="$(envprobe "$EMPTY_CFG")"
+[ "$(jfield "$E18J" config)" = present ] && [ "$(jfield "$E18J" substitutes)" = "quality,deep-audit" ] \
+  && ok "env: a CRLF config parses identically to LF (no CR reaches the marker, none dropped)" \
+  || nok "env E18" "got '$E18J'"
+rmcfg
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]
