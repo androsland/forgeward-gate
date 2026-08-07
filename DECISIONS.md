@@ -445,6 +445,26 @@ mutations redden exactly what names them — either note moved to the wrong stre
 pair that owns it, statting the worktree reddens R23/R23b/R23c/R23f/R24c, and letting
 `require_blob` accept an absent path reddens R9/R12/R23f/R25/R25b.
 
+**Round 9 re-fired because the round-8 PASS was on a tree that no longer existed.** Two commits
+had landed since, and a marker written against an artifact the reviewer never saw is exactly the
+false PASS this whole apparatus is for. It returned PASS with no findings, and it did two things
+worth keeping. It traced every stdout-writing statement rather than sampling: on any exit-0 path
+the only write to the script's real stdout is the final summary, everything else is stderr or is
+captured inside a substitution. And it verified the invariant on a combination no assertion
+covers — base missing *two* manifests plus a dirty worktree, three notes firing at once — with
+`od -c` and `wc -l` rather than a pattern match.
+
+Its one informational nit is filed rather than fixed, and the reasoning is recorded because the
+instinct to fix it is strong: `run_split` reads its captured streams back with `$(cat …)`, the
+same lossy channel rounds 5 and 6 hardened the production script against. The reviewer could not
+construct a false pass and neither could I — the verdict payload is `^[0-9]+\.[0-9]+\.[0-9]+$`
+by the time it is printed, and the note text is built from the hardcoded `$MANIFESTS` literals,
+`$BASE` and an integer. So it is a posture inconsistency in a test harness, not a defect. The
+reason to leave it is that changing it re-invalidates the PASS and buys nothing; the reason to
+write it down is that "no live input can reach it" is a property of today's message strings, and
+the next person to interpolate something richer into a note needs to find this paragraph rather
+than rediscover rounds 5 and 6.
+
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 
 **Date:** 2026-08-06 · **Version:** 0.9.0

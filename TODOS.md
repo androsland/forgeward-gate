@@ -427,6 +427,20 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   as its own change with its own gate run, and add an assertion per site — the precedent from
   rounds 2–6 is that an unpinned fix is a fix that quietly comes back out.
   (security review round 6, 2026-08-07) **Priority:** P2
+- **`run_split` in `test/version-check-test.sh` reads its captured streams back with `$(cat …)`,
+  the same lossy channel rounds 5 and 6 hardened the production script against.** Command
+  substitution deletes NUL bytes and strips trailing newlines. It cannot mask a defect *today*:
+  the verdict payload is constrained to `^[0-9]+\.[0-9]+\.[0-9]+$` before it is printed, and the
+  note text is assembled from the hardcoded `$MANIFESTS` literals plus `$BASE` and an integer, so
+  there is no live input that could differ before and after the transform — verified in round 9,
+  not assumed. It is filed because that safety is a property of **today's message strings**, and
+  the next person who interpolates a manifest-derived value into a note inherits a harness that
+  cannot see what it did. Two ways to close it: compare stdout byte-for-byte against an expected
+  file with `cmp` instead of pattern-matching a shell string, or read the streams with `mapfile`.
+  The first is better and would also pin a combination nothing currently asserts — base missing
+  two manifests *and* a dirty worktree, three notes at once, which round 9 verified by hand with
+  `od -c`. Deliberately not done on this branch: it would re-invalidate a PASS for a test-harness
+  tidy-up. (security review round 9, 2026-08-07) **Priority:** P3
 - **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
