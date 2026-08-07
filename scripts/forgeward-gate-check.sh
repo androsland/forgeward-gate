@@ -515,11 +515,27 @@ _pub_re='(^|[^A-Za-z0-9_-])(git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+crea
 # same class the file header already defers to the pre-push hook; this branch neither
 # narrows it nor widens it. Anything it cannot see keeps denying, which costs a reword,
 # and the pre-push hook is what decides whether the push actually happens.
-_is_delete_only() { # _is_delete_only <trusted-residue> -> 0 iff it can only DELETE refs
-  local s="$1" t del=0 colon=0 plain=0 i
+_is_delete_only() { # _is_delete_only <trusted-residue> <raw-command> -> 0 iff it can only DELETE refs
+  local s="$1" raw="$2" t del=0 colon=0 plain=0 i first_colon=-1 plain_i=-1
   local _meta_re='[;&|()<>{}$`]'
   [[ "$s" =~ $_meta_re ]] && return 1
   case "$s" in *$'\n'*) return 1 ;; esac
+  # THE RESIDUE'S WORD BOUNDARIES ARE NOT BASH'S. `strip_quoted` BLANKS a quote or a
+  # backslash to a space rather than deleting it (the residue-length guard depends on
+  # that 1:1 mapping), so an empty quote pair or an escape sitting INSIDE one real argv
+  # token splits it into two tokens that bash never produced. Found by the 0.9.1 security
+  # review, demonstrated end to end: `git push /pub/repo'':x.git` is ONE repository
+  # argument to bash, but blanks to `… /pub/repo  :x.git`, which counts as plain=1 colon=1
+  # and was ALLOWED — while really pushing the current branch and publishing it.
+  # Every other consumer of the residue is a boolean word match that extra spaces cannot
+  # fool (`_pub_re` uses `[[:space:]]+`); this function is the first that depends on exact
+  # token COUNTS and BOUNDARIES, so it needs its own precondition.
+  # Refusing on the three characters is a COMPLETE cover, not a heuristic: `strip_quoted`
+  # maps every character to itself or to a space and never removes one, so a boundary can
+  # only ever be ADDED, and every path that adds one (lines ~434-452) requires a `'`, a
+  # `"` or a `\` in the input. It costs an over-denial on a quoted branch name, which is
+  # the direction this file always fails in.
+  case "$raw" in *"'"*|*'"'*|*'\'*) return 1 ;; esac
   # The command word must BE the verb, so `sudo git push -d …` and `time git push -d …`
   # deny. (`git -C <path> push -d …` never reaches here at all — `_pub_re` wants `git`
   # and `push` adjacent, so it is allowed one step earlier by the under-match A4
@@ -544,12 +560,19 @@ _is_delete_only() { # _is_delete_only <trusted-residue> -> 0 iff it can only DEL
       # to the `-*` arm below and denies.
       -q|--quiet|-v|--verbose|--verify|--no-verify|--progress|--no-progress|--porcelain|--dry-run|-n|--atomic|-4|--ipv4|-6|--ipv6) ;;
       -*)          return 1 ;;
-      :?*)         colon=$((colon + 1)) ;;
-      *)           plain=$((plain + 1)) ;;   # the remote, or a refspec that PUBLISHES
-    esac
+      :?*)         colon=$((colon + 1)); if [ "$first_colon" -lt 0 ]; then first_colon=$i; fi ;;
+      *)           plain=$((plain + 1));  if [ "$plain_i" -lt 0 ];    then plain_i=$i;    fi ;;
+    esac                                  # a plain token is the remote, or a refspec that PUBLISHES
   done
   [ "$del" = 1 ] && return 0
-  [ "$colon" -ge 1 ] && [ "$plain" -le 1 ]
+  # The colon form allows at most ONE plain token, and it must come FIRST, because that is
+  # the only position where git reads it as the REPOSITORY. Order matters and the count
+  # alone does not say so: git takes the first bare positional as the repo wherever the
+  # colon refspecs sit, so `git push :x origin` has `origin` as a refspec, not a remote.
+  # That one happens to fail in git today (`:x` resolves as an empty-host ssh target), but
+  # the exemption must not rest on someone else's error path.
+  [ "$colon" -ge 1 ] && [ "$plain" -le 1 ] &&
+    { [ "$plain" = 0 ] || [ "$plain_i" -lt "$first_colon" ]; }
 }
 
 # Two cases where the residue is not trusted and the RAW text is matched instead. Both
@@ -629,7 +652,7 @@ shopt -s nocasematch
 # A push that can only DELETE remote refs publishes no code, so there is nothing to gate
 # and no marker could ever attest to it — the enforced pre-push hook skips these too.
 # Offered only on a trusted residue; see _is_delete_only for why, and for its limits.
-[ "$_residue_trusted" = 1 ] && _is_delete_only "$_scan" && exit 0
+[ "$_residue_trusted" = 1 ] && _is_delete_only "$_scan" "$_cmd_j" && exit 0
 
 # best-effort: evaluate the worktree a `cd`-prefixed push runs in
 tgt="$(honor_cd "$cmd")"

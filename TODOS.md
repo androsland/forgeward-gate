@@ -33,12 +33,14 @@ write-once and effectively gone after merge, which is why they live here now.
   rather than latent; the right fix, if any, is a first-class opt-out with its own audit
   trail, not a matcher hole. (0.9.1 deletion exemption, 2026-08-07) **Priority:** P3
 - **The deletion exemption knowingly over-denies five shapes.** All fail CLOSED, all cost
-  the user a `gh api -X DELETE` or a gate run, none let a publish through: a quoted flag
-  (`git push origin '--delete' x` — `strip_quoted` blanks the span, so by the time the
-  exemption looks there is nothing there); a `$VAR`/`$(…)`/backtick anywhere in the
-  command (the residue is untrusted, so the exemption is refused outright); bundled short
-  flags (`-qd` is one token and matches neither `-q` nor `-d`); any option outside the
-  whitelist, e.g. `-o ci.skip` or `--force-with-lease`; and a `sudo`/`time`/`env` prefix.
+  the user a `gh api -X DELETE` or a gate run, none let a publish through: ANY `'`, `"` or
+  `\` anywhere in the command (the blanking scanner can synthesize a word boundary bash
+  never had — this one was a real ALLOW on a real publish before the 0.9.1 security review
+  caught it, so the refusal is deliberately blunt); a `$VAR`/`$(…)`/backtick anywhere in
+  the command (the residue is untrusted, so the exemption is refused outright); bundled
+  short flags (`-qd` is one token and matches neither `-q` nor `-d`); any option outside
+  the whitelist, e.g. `-o ci.skip` or `--force-with-lease`; and a `sudo`/`time`/`env`
+  prefix.
   Widening any of them means either parsing quoting the layer has deliberately refused to
   parse, or enumerating git's full option table with its value-taking arity — both are the
   structural modeling `DECISIONS.md` calls a dead end. Kept as a record of the boundary,
@@ -502,6 +504,15 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   one — the remote); and `--tags origin :d2` deletes `d2` and PUBLISHES a tag on an
   unpublished commit (so unrecognised options DENY instead of being skipped, which the
   first draft got wrong). An option can send refs the argument list never names.
+
+  **The branch's own security review found a real bypass in the first draft.** `strip_quoted`
+  BLANKS a quote or backslash to a space instead of deleting it, so an empty quote pair inside
+  one real argv token splits it into two tokens bash never produced: `git push /pub/repo'':x.git`
+  is ONE repository argument, the classifier saw plain=1 colon=1, exempted it, and it really
+  published `refs/heads/main`. `_is_delete_only` was the first consumer of that residue to depend
+  on exact token boundaries rather than on "does this word appear". Closed by refusing the
+  exemption on any `'`, `"` or `\` — a complete cover, since blanking can only ever ADD a
+  boundary and every path that adds one needs one of those three characters.
 
   **Mutation testing changed the code twice, and one of the two was a fail-OPEN.** Every
   deny case was already green before the fix — the old matcher denied everything — so the

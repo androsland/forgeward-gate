@@ -426,6 +426,23 @@ fi
 # "--delete is incompatible with --all, --mirror and --tags" — but the colon form is not,
 # and that asymmetry is invisible from the text.)
 #
+# The QUOTE cases are the ones the first draft got wrong, and they were a real ALLOW on a
+# real publish. `strip_quoted` BLANKS a quote or backslash to a space instead of removing
+# it, so `git push /pub/repo'':x.git` — ONE repository argument to bash — reaches the
+# classifier as `… /pub/repo  :x.git`, counts plain=1 colon=1, and was exempted while
+# actually pushing the current branch. Reproduced against a real remote before the fix
+# (`refs/heads/main` appeared on a target that had no refs), which is why the same shape
+# appears here in three spellings: `''`, `""` and `\`. They are the whole blanking set —
+# `strip_quoted` maps every character to itself or a space and never deletes one, so a
+# word boundary can only be ADDED, and every path that adds one needs one of those three.
+# `git push origin\ --delete x` is the same defect aimed at the OTHER branch: bash reads
+# one token, the residue shows a `--delete` flag that was never issued as one.
+#
+# `git push :x origin` pins ORDER, not count. git takes the first bare positional as the
+# repository wherever the colon refspecs sit, so `origin` there is a refspec. It fails in
+# git today for an unrelated reason (`:x` resolves as an empty-host ssh target) — the
+# exemption must not rest on someone else's error path, so the classifier refuses it.
+#
 # The compound-command denials are the load-bearing half. A stacked-branch workflow that
 # interleaves deletions with real pushes must keep being gated, so ANY shell
 # metacharacter refuses the exemption outright rather than trying to work out which
@@ -457,6 +474,11 @@ deny|sudo git push origin --delete x
 deny|time git push origin --delete x
 deny|cd /x && git push origin --delete y
 deny|git push origin '--delete' x
+deny|git push /pub/repo'':x.git
+deny|git push /pub/repo\"\":x.git
+deny|git push /pub/repo\\:x.git
+deny|git push origin\\ --delete x
+deny|git push :x origin
 deny|git push origin --delete $B
 deny|git push origin --delete $(cat b)
 deny|git push origin --delete `cat b`

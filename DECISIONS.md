@@ -86,6 +86,35 @@ issued through indirection — `bash -c "$CMD"`, an alias, a function, a script 
 layer and always will be. That is the same class the file header already defers to the
 pre-push hook; this branch neither narrows it nor widens it.
 
+**The gate's own security review caught a real bypass in the first draft, and it is the
+most useful thing on this page.** `strip_quoted` BLANKS a quote or backslash to a space
+rather than deleting it — the residue-length guard depends on that 1:1 mapping — so an
+empty quote pair sitting inside one real argv token splits it into two tokens bash never
+produced. `git push /pub/repo'':x.git` is ONE repository argument; the classifier saw
+`… /pub/repo  :x.git`, counted plain=1 colon=1, and exempted it. Reproduced end to end:
+the matcher returned ALLOW and the command really published `refs/heads/main` to a target
+that had no refs.
+
+Every other consumer of the residue is a boolean word match that extra spaces cannot fool
+(`_pub_re` uses `[[:space:]]+`). `_is_delete_only` is the FIRST that depends on exact
+token boundaries and counts, and blanking does not preserve those. That is the general
+lesson, not the specific string: **a scanner built to answer "does this word appear?"
+does not automatically answer "what are the arguments?"** — a new consumer of an old
+sanitizer inherits its guarantees, not its intentions.
+
+The fix refuses the exemption when the ORIGINAL text contains any `'`, `"` or `\`, and
+that is a complete cover rather than a patch on the observed string: `strip_quoted` maps
+every character to itself or to a space and never removes one, so a word boundary can only
+ever be ADDED, and every path that adds one requires one of those three characters. The
+cost is an over-denial on a quoted branch name, which is the direction this file always
+fails in.
+
+The same review also found the colon form's invariant was stated as a COUNT when git
+treats it as a POSITION: git takes the first bare positional as the repository wherever
+the colon refspecs sit, so `git push :x origin` reads `origin` as a refspec. It fails in
+git today for an unrelated reason — `:x` resolves as an empty-host ssh target — which is
+exactly why it was tightened. An exemption must not rest on someone else's error path.
+
 **Method note — the assertions were mutation-tested, and that changed the code twice.**
 Every deny case in A23 was already green before the fix (the old matcher denied
 everything), so the deny half proves nothing on its own; only the mutation run shows it

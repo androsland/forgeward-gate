@@ -317,7 +317,12 @@ scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
   `git push origin :x main` and `git push --tags origin :x` still deny, because both were
   observed publishing alongside the deletion. Compound commands (`… --delete x && git push`),
   prefixes, quoted flags, and `$`-built arguments all deny, and the exemption is refused
-  outright when the residue is untrusted (broken `awk`, or a command bearing `$(`).
+  outright when the residue is untrusted (broken `awk`, or a command bearing `$(`). A
+  command containing any `'`, `"` or `\` is refused too: the quote-blanking scanner
+  substitutes a space rather than deleting, so it can hand the classifier a word boundary
+  bash never had — `git push /pub/repo'':x.git` is one repository argument, and the gap
+  let it publish. Found by this branch's own security review and reproduced against a
+  real remote; three spellings of it are pinned.
 - **Allow on a fresh PASS marker**; **version-bump invariance** (a version-field-only bump keeps
   the marker); **dependency change** and **stale code** force a re-gate.
 - **Non-publish commands are never touched**; **outside a git repo it fails open**.
