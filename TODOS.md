@@ -438,7 +438,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 47) and every one of them is run by hand before a release. The new
+  version-check 51) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
   documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
   because that sensitivity was measured, not guessed — and a flaky *required* check is worse
@@ -465,7 +465,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
   repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
   checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R24c, 47 assertions, wired into `npm test`).
+  `test/version-check-test.sh` (R1–R25c, 51 assertions, wired into `npm test`).
 
   Three comparator traps are pinned rather than merely avoided. `major*1000000 +
   minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
@@ -558,9 +558,19 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   uncommitted edits, which is stated as blind spot 10 and mitigated by a stderr note naming the
   files (R24b).
 
-  Seven rounds, seven defects, each in the layer the previous round had just hardened — the
-  operative lesson is that **an adversarial reader found all seven and the test suite found none
-  of them**, which is an argument about how much review a comparator is worth, not about the
+  Round 8 was the first PASS: five distinct attempts on round 7's fix (non-canonical tree modes,
+  clean/smudge filter divergence, `core.symlinks=false`, replace-refs, ref-name injection through
+  `github.base_ref`) all failed closed for the reason the code claims, so that round checked the
+  comments against the machine rather than against themselves. Its one Low was a channel slip —
+  the base-side "manifest absent" note went to stdout while its sibling went to stderr — invisible
+  to all 47 assertions because `run()` folds the streams, which is the suite's blind spot in
+  miniature and is now pinned by R25. It also surfaced, as a *safe* case, a second pre-round-7
+  bypass worth an assertion: `.claude-plugin` itself committed as a symlink to an external
+  directory (R23f).
+
+  Seven rounds produced seven defects, each in the layer the previous round had just hardened —
+  the operative lesson is that **an adversarial reader found all seven and the test suite found
+  none of them**, which is an argument about how much review a comparator is worth, not about the
   tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
   status, because two of them failed closed for an unrelated reason and would have passed an
   exit-status check.

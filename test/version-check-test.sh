@@ -629,6 +629,33 @@ case "$out" in
   *) nok "R23e symlink positive control" "st=$st out=$out" ;;
 esac
 
+# The parent DIRECTORY committed as a symlink -- a second mechanism, not a variation.
+# Here `.claude-plugin` itself is the link and the manifests inside it are perfectly
+# ordinary files on the other end. Verified that the worktree really does resolve it
+# (`cat .claude-plugin/plugin.json` returns the forged content), so pre-round-7 this was
+# an independent bypass; the object-store read closes it for a different reason than R23
+# -- once the parent is not a tree, no entry exists at that path at all, so `require_blob`
+# answers "absent" and the head loop dies. Asserted because a future "optimisation" that
+# stats the worktree to skip work would reopen exactly this one while R23 stayed green.
+R="$(mkfixture link-parent 9.0.0 9.0.0 9.0.0)"
+mkdir -p "$TMP/outside-plugin-dir"
+printf '{"version":"13.37.0"}\n' > "$TMP/outside-plugin-dir/plugin.json"
+printf '{"plugins":[{"version":"13.37.0"}]}\n' > "$TMP/outside-plugin-dir/marketplace.json"
+( cd "$R" && git rm -rq --cached .claude-plugin && rm -rf .claude-plugin \
+   && ln -s "$TMP/outside-plugin-dir" .claude-plugin ) >/dev/null 2>&1
+setv_pkg_only() { printf '{\n  "version": "%s"\n}\n' "$2" > "$1/package.json"; }
+setv_pkg_only "$R" 1.0.0
+commit_head "$R"
+case "$( cd "$R" && cat .claude-plugin/plugin.json 2>/dev/null )" in
+  *13.37.0*) ;;
+  *) nok "R23f fixture precondition" "the worktree did not resolve the parent symlink -- the case is not being tested" ;;
+esac
+run "$R"
+case "$out" in
+  *'plugin.json does not exist at HEAD'*) ok "R23f a symlinked parent DIRECTORY is refused (no tree entry exists)" ;;
+  *) nok "R23f parent-directory symlink refused" "st=$st out=$out" ;;
+esac
+
 # --- R24: reading HEAD, and saying so when the worktree disagrees ------------------
 # Reading the committed tree is what closes R23, and it costs something real: a hand-run
 # no longer sees uncommitted edits. R24 pins the behaviour (the verdict is about HEAD)
@@ -665,6 +692,51 @@ out="$( cd "$R/.claude-plugin" && bash "$CHK" master 2>&1 )"; st=$?
 case "$out" in
   ok:*9.1.0*) ok "R24c the check works from a subdirectory (paths resolve against the repo root)" ;;
   *) nok "R24c subdirectory cwd" "st=$st out=$out" ;;
+esac
+
+# --- R25: stdout carries the verdict, notes go to stderr ---------------------------
+# Round 8. The two notes disagreed about which stream they belonged on, which made
+# "read the last stdout line as the answer" true by accident rather than by rule. This
+# asserts the rule from both sides -- a note is on stderr, and stdout holds the summary
+# and nothing else -- because a one-line channel slip is invisible to every other
+# assertion here: `run` folds the streams, so all 47 of them would stay green either way.
+# That is the same shape as the six defects the suite missed, in miniature.
+run_split() { # run_split <repo> [base] -> sets $so, $se, $st
+  local o e
+  o="$TMP/.so.$$"; e="$TMP/.se.$$"
+  ( cd "$1" && bash "$CHK" "${2:-master}" ) >"$o" 2>"$e"; st=$?
+  so="$(cat "$o")"; se="$(cat "$e")"; rm -f "$o" "$e"
+}
+
+# A base that is missing one manifest: passes, and emits the blind-spot-4 note.
+R="$(mkfixture note-stream 9.0.0 9.0.0 9.0.0)"
+( cd "$R" && git checkout -q master && git rm -q .claude-plugin/marketplace.json \
+   && git commit -qm "drop one" && git checkout -q feature ) >/dev/null 2>&1
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+run_split "$R"
+case "$se" in
+  *'does not exist on master'*) ok "R25 the absent-manifest note is written to stderr" ;;
+  *) nok "R25 absent-manifest note on stderr" "st=$st stderr=$se" ;;
+esac
+case "$so" in
+  ok:*'2 manifest(s) compared'*) ok "R25b stdout holds the verdict alone (the note is not on it)" ;;
+  *) nok "R25b stdout is verdict-only" "st=$st stdout=$so" ;;
+esac
+
+# And the other note, from the other side: dirty worktree, clean stdout.
+R="$(mkfixture note-stream-dirty 9.0.0 9.0.0 9.0.0)"
+setv "$R" 9.1.0 9.1.0 9.1.0
+commit_head "$R"
+setv "$R" 1.0.0 1.0.0 1.0.0
+run_split "$R"
+case "$se$so" in
+  *'uncommitted edits to'*) ;;
+  *) nok "R25c fixture precondition" "no dirty note was emitted at all" ;;
+esac
+case "$so" in
+  ok:*) ok "R25c the dirty note stays off stdout too" ;;
+  *) nok "R25c dirty note on stderr" "st=$st stdout=$so" ;;
 esac
 
 # R21: EVERY tracked file in this repo must be plain text -- NUL-free and valid UTF-8.

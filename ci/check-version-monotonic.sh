@@ -449,7 +449,13 @@ for f in $MANIFESTS; do
   # died one step later with "could not read a version", blaming the parser for something
   # the tree entry decided, and the next person would debug the wrong layer.
   require_blob "$BASE" "$f" "$BASE:$f" || {
-    printf 'note: %s does not exist on %s -- no prior version to compare (blind spot 4)\n' "$f" "$BASE"
+    # `>&2`, added in round 8. This note went to STDOUT while its sibling at the dirty
+    # check goes to stderr, and the split is the point: stdout carries the verdict and
+    # nothing else, so a caller can read the last stdout line as the answer. Not
+    # exploitable and not a behaviour change for any current consumer -- CI gates on the
+    # exit status and the suite folds the streams -- but "notes are diagnostics, the
+    # summary is the result" is only a rule if both notes obey it. R25 pins the channel.
+    printf 'note: %s does not exist on %s -- no prior version to compare (blind spot 4)\n' "$f" "$BASE" >&2
     continue
   }
   bv="$(git show "$BASE:$f" | read_version "$BASE:$f")" || die "could not read a version from $BASE:$f"

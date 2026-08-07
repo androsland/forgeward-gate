@@ -181,7 +181,7 @@ on this machine. The comment above it was **rewritten to say exactly that** rath
 carrying its original justification. A line that reads as load-bearing for a reason that has
 since expired is the precise failure round 3 recorded, one round after recording it.
 
-**Verification.** `test/version-check-test.sh`, 47 assertions, wired into `npm test`. Of the
+**Verification.** `test/version-check-test.sh`, 51 assertions, wired into `npm test`. Of the
 twenty-one mutations written through round 4, twenty
 reddened exactly the assertions naming them and nothing else — including
 every one added by the review rounds: reverting the counter to `grep -c` reddens R8b alone,
@@ -417,6 +417,33 @@ cases, reverting the base side to `cat-file -e` reddens R23d alone, inverting th
 condition reddens R24b (plus three assertions that then see a spurious note — an artifact of the
 mutant printing when clean, not extra coverage), dropping `--full-tree` reddens R24c alone, and
 round 6's `-I` regression check still reddens R22–R22d.
+
+**Round 8 returned PASS, and the two things it produced are worth more than a seventh defect
+would have been.** The reviewer tried five distinct ways to get past round 7's fix — a
+non-canonical tree mode, a clean/smudge filter divergence, `core.symlinks=false`, replace-refs,
+and ref-name injection through `github.base_ref` — and each failed closed for the reason the code
+claims. That is the first round where the comments were checked against the machine and survived.
+
+The Low it did find was a one-line channel slip: the base-side "manifest absent" note printed to
+**stdout** while its sibling printed to stderr, so "read the last stdout line as the verdict" was
+true by accident rather than by rule. Not exploitable — CI gates on the exit status — and it is
+recorded here for the reason it was invisible: `run()` folds the streams, so all 47 assertions
+stayed green either way. A one-line slip that no assertion can see is the same shape as the six
+defects the suite missed, in miniature, which is why the fix came with **R25** rather than alone.
+
+The second thing is a case the reviewer reported as *safe* and which turned out to be a second
+bypass in the pre-round-7 code: `.claude-plugin` committed as a symlink to an external directory,
+with ordinary manifests on the far side. The object-store read closes it for a **different**
+reason than R23 does — once the parent is not a tree, no entry exists at that path at all — so a
+future optimisation that stats the worktree to skip work would reopen it while every R23
+assertion stayed green. Verified the worktree genuinely resolves the link before asserting, so
+the fixture cannot pass by failing to set the case up. Pinned as **R23f**, and mutation `M37`
+(exactly that optimisation) reddens it.
+
+Round 8 verification: 51 assertions; gate 171/171 and pre-push 15/15 re-run green. Four more
+mutations redden exactly what names them — either note moved to the wrong stream reddens the R25
+pair that owns it, statting the worktree reddens R23/R23b/R23c/R23f/R24c, and letting
+`require_blob` accept an absent path reddens R9/R12/R23f/R25/R25b.
 
 ## RESOLVED — two documented config keys were parsed by nothing, and 0.8.0 made that worse
 
