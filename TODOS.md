@@ -39,8 +39,12 @@ write-once and effectively gone after merge, which is why they live here now.
   caught it, so the refusal is deliberately blunt); a `$VAR`/`$(…)`/backtick anywhere in
   the command (the residue is untrusted, so the exemption is refused outright); bundled
   short flags (`-qd` is one token and matches neither `-q` nor `-d`); any option outside
-  the whitelist, e.g. `-o ci.skip` or `--force-with-lease`; and a `sudo`/`time`/`env`
-  prefix.
+  the whitelist, e.g. `-o ci.skip` or `--force-with-lease`; a `sudo`/`time`/`env` prefix;
+  and any token outside `^[A-Za-z0-9_.:/@+=-]+$`, which over-denies `~`/`^` rev syntax, a
+  `%` in a ref name, and a `?` query in a remote URL. That last one is an ALLOWLIST rather
+  than a longer blocklist because the same class of bug was found twice in one branch — a
+  blocklist is only as good as the author's memory of every construct bash uses to
+  synthesize a word.
   Widening any of them means either parsing quoting the layer has deliberately refused to
   parse, or enumerating git's full option table with its value-taking arity — both are the
   structural modeling `DECISIONS.md` calls a dead end. Kept as a record of the boundary,
@@ -513,6 +517,13 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   on exact token boundaries rather than on "does this word appear". Closed by refusing the
   exemption on any `'`, `"` or `\` — a complete cover, since blanking can only ever ADD a
   boundary and every path that adds one needs one of those three characters.
+
+  **The re-gate then found the same shape again through globbing, which is what turned the
+  token test into an allowlist.** `read -ra` does not glob, so `git push [os]* :newcode` is
+  one token to the classifier and several words to bash — reproduced against a real remote,
+  where it deleted `newcode` and PUBLISHED `secretbranch`. Two misses of the same kind in
+  one branch is the argument for inverting the test: every token must now match
+  `^[A-Za-z0-9_.:/@+=-]+$`, so the construct nobody thought of fails closed.
 
   **Mutation testing changed the code twice, and one of the two was a fail-OPEN.** Every
   deny case was already green before the fix — the old matcher denied everything — so the

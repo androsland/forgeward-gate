@@ -552,8 +552,25 @@ _is_delete_only() { # _is_delete_only <trusted-residue> <raw-command> -> 0 iff i
   [[ "$s" =~ $_head_re ]] || return 1
   local tk=()
   read -ra tk <<< "$s"   # `read` does no globbing, and the residue has no newline by now
+  # EVERY TOKEN MUST BE INERT, and this is an ALLOWLIST on purpose. `read -ra` does not
+  # glob, so an unquoted `[os]*` is ONE token here and however many files it matches when
+  # bash runs it: the 0.9.1 review demonstrated `git push [os]* :newcode` reaching this
+  # layer as plain=1 colon=1, being exempted, and then publishing a branch the text never
+  # named. That was the SECOND finding of the same shape as the quote-blanking one above —
+  # the classifier's word boundaries are not bash's — and two misses is the argument for
+  # inverting the test. A blocklist is only as good as my memory of every construct that
+  # can synthesize a word (glob, brace, substitution, process substitution, …); an
+  # allowlist fails closed on the one I have not thought of yet.
+  # The set is what a remote name, a URL, a path and a refspec are actually made of. It is
+  # not a guess about git: `git check-ref-format` REJECTS `*`, `?` and `[` in a ref name,
+  # so nothing nameable is lost. `~` `^` `%` and `?` in a URL query are excluded too, which
+  # over-denies a handful of exotic-but-legal spellings — the direction this file fails in.
+  # `_meta_re` above stays as the structural check even though this subsumes much of it:
+  # it refuses a second COMMAND before tokenizing, which is a different claim.
+  local _inert_re='^[A-Za-z0-9_.:/@+=-]+$'
   for ((i = 2; i < ${#tk[@]}; i++)); do
     t="${tk[i]}"
+    [[ "$t" =~ $_inert_re ]] || return 1
     case "$t" in
       --delete|-d) del=1 ;;
       # Flags that neither generate refs nor take a separate value. Anything else falls

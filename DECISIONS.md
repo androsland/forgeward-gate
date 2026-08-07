@@ -109,6 +109,27 @@ ever be ADDED, and every path that adds one requires one of those three characte
 cost is an over-denial on a quoted branch name, which is the direction this file always
 fails in.
 
+**Then the re-gate found the same shape a second time, through a different bash feature,
+and THAT is what changed the design.** `read -ra` does not glob, so an unquoted
+`git push [os]* :newcode` is ONE token to the classifier and however many files it matches
+when bash runs it. Reproduced against a real remote: allowed, and it deleted `newcode`
+while publishing `secretbranch` — a ref the command text never named.
+
+The first fix had been a blocklist, and a blocklist is only ever as good as my memory of
+every construct bash uses to synthesize a word: globbing, brace expansion, substitution,
+process substitution, and whichever one is missing from that list. Being wrong twice in
+one branch is the argument for inverting the test. Every token now has to match
+`^[A-Za-z0-9_.:/@+=-]+$` — what a remote name, a URL, a path and a refspec are actually
+made of — so the unknown construct fails CLOSED instead of sailing through. That set is
+not a guess about git either: `git check-ref-format` rejects `*`, `?` and `[` in a ref
+name, checked rather than assumed, so nothing nameable is lost. `~`, `^`, `%` and a `?`
+in a URL query are excluded too and over-deny a few legal-but-exotic spellings.
+
+**The generalisable lesson is one sentence: a scanner built to answer "does this word
+appear?" does not answer "what are the arguments?".** Both Criticals were the same
+mistake — a text layer's word boundaries are not the shell's — and neither was visible
+from reading the function. Both were found by running the command.
+
 The same review also found the colon form's invariant was stated as a COUNT when git
 treats it as a POSITION: git takes the first bare positional as the repository wherever
 the colon refspecs sit, so `git push :x origin` reads `origin` as a refspec. It fails in

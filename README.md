@@ -321,8 +321,11 @@ scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
   command containing any `'`, `"` or `\` is refused too: the quote-blanking scanner
   substitutes a space rather than deleting, so it can hand the classifier a word boundary
   bash never had — `git push /pub/repo'':x.git` is one repository argument, and the gap
-  let it publish. Found by this branch's own security review and reproduced against a
-  real remote; three spellings of it are pinned.
+  let it publish. And every argument token must match `^[A-Za-z0-9_.:/@+=-]+$` — an
+  allowlist, because `read -ra` does not glob, so `git push [os]* :newcode` is one token
+  to the matcher and several words to bash (it published a branch the text never named).
+  Both were found by this branch's own security review and reproduced against a real
+  remote, which is why the token test fails closed on constructs nobody has thought of yet.
 - **Allow on a fresh PASS marker**; **version-bump invariance** (a version-field-only bump keeps
   the marker); **dependency change** and **stale code** force a re-gate.
 - **Non-publish commands are never touched**; **outside a git repo it fails open**.

@@ -438,6 +438,15 @@ fi
 # `git push origin\ --delete x` is the same defect aimed at the OTHER branch: bash reads
 # one token, the residue shows a `--delete` flag that was never issued as one.
 #
+# The GLOB cases are the same defect a second time, via a different bash feature, and
+# they are why the token test is an ALLOWLIST rather than a longer list of bad characters.
+# `read -ra` does not glob, so `git push [os]* :newcode` is ONE token here and however many
+# files it matches when bash runs it. Reproduced against a real remote: allowed by the
+# matcher, and it deleted `newcode` while PUBLISHING `secretbranch`, a ref the command text
+# never named. Nothing legitimate is lost — `git check-ref-format` rejects `*`, `?` and `[`
+# in a ref name, verified rather than assumed. `git push origin~1 :x` is the same rule
+# catching a character that is merely exotic rather than dangerous, which is the cost side.
+#
 # `git push :x origin` pins ORDER, not count. git takes the first bare positional as the
 # repository wherever the colon refspecs sit, so `origin` there is a refspec. It fails in
 # git today for an unrelated reason (`:x` resolves as an empty-host ssh target) — the
@@ -479,6 +488,11 @@ deny|git push /pub/repo\"\":x.git
 deny|git push /pub/repo\\:x.git
 deny|git push origin\\ --delete x
 deny|git push :x origin
+deny|git push [os]* :newcode
+deny|git push * :newcode
+deny|git push origin --delete stale-?
+deny|git push origin --delete [ab]-stale
+deny|git push origin~1 :x
 deny|git push origin --delete $B
 deny|git push origin --delete $(cat b)
 deny|git push origin --delete `cat b`
