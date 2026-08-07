@@ -4,6 +4,6 @@
   "private": true,
   "description": "Tooling/test metadata for the forgeward gate plugin (the plugin manifest is .claude-plugin/plugin.json).",
   "scripts": {
-    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh"
+    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh && bash test/version-check-test.sh"
   }
 }

@@ -321,26 +321,303 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
   awk-based design. Decide whether to keep it as an archaeological record or drop
   it. (PR #8, 2026-08-01) **Priority:** P4
-- **Nothing checks that a merge moves the version FORWARD, so merge order is load-bearing
-  whenever two version-bumping PRs are open.** Raised by the supply-chain reviewer on the
-  0.7.6 branch: #17 bumped to 0.7.5 and #18 to 0.7.6, so #17 merging *second* would have
-  taken the marketplace manifest 0.7.6 → 0.7.5, and most plugin-manager update logic reads a
-  backward version as no-op-or-worse rather than as an upgrade. **That instance was avoided
-  by merging #17 first (2026-08-06), by hand — the hazard is not fixed, only dodged.** The
-  version lives in three manifests and the only thing keeping them monotonic is whoever is
-  paying attention at merge time. A CI assertion that `plugin.json`'s version is strictly
-  greater than the base branch's would catch it without anyone having to remember. Note what
-  will NOT catch it: V1–V3 deliberately neutralize a version-only bump in the diff hash so a
-  release does not force a spurious re-gate, and that neutralization is direction-blind — a
-  backward bump is just as invisible to the hash as a forward one. The gate is structurally
-  the wrong layer for this; it belongs in CI. (0.7.6 supply-chain review, 2026-08-06)
-  **Priority:** P2
+- **The `actions/checkout` SHA pin has no refresh policy, which is the other half of pinning.**
+  `.github/workflows/version-check.yml` pins `11d5960a326750d5838078e36cf38b85af677262` (`v4`,
+  resolved by `git ls-remote --tags` on 2026-08-06, not recalled). A SHA cannot be repointed
+  under us — and equally cannot pick up a security fix, so an unrefreshed pin decays into a
+  stale-action problem, which is the failure mode a tag does not have. Nothing currently
+  notices when GitHub cuts a new `v4.x`. Dependabot's `github-actions` ecosystem is the
+  standard answer and would be this repo's second CI-adjacent config; the cheap manual version
+  is re-running that `ls-remote` at release time. Undecided which. (CI version check,
+  2026-08-06) **Priority:** P3
+- **Locale pinning should be a repo-wide convention, not a per-script decision — this file now
+  has four entries about it and one of them was a High.** The `num_lt` bullet that used to sit
+  here said `LC_ALL=C` was hardening whose effect was unobservable, at P4. That framing was
+  wrong, and round 3 of the security review showed how: the *collation* effect really was
+  unobservable, but the same variable also governs whether `grep` will match `[^"]*` across
+  invalid UTF-8, and under the ambient locale it will not — which was a complete bypass of the
+  ambiguity guard (fixed, see `DECISIONS.md`). An "unobservable" label on a locale pin is
+  therefore only ever a statement about the *one* effect that was measured. Still unpinned:
+  `forgeward-detect-environment.sh:112`'s bare `awk`. The convention to settle on is probably
+  `export LC_ALL=C` at the top of every non-interactive script in this repo, since none of them
+  produce human-language output; `ci/check-version-monotonic.sh` is the first to do it.
+  **Round 4 sharpened this rather than settling it:** replacing that script's `grep` reader with
+  a JSON parser removed the invalid-UTF-8 effect entirely (parsers are locale-independent), so
+  the pin there is back to guarding only the unobservable collation case. Read the wrong way
+  that is an argument to drop it; read correctly it is the argument *for* the convention — the
+  pin's value was never in any one measured effect, it is that a non-interactive script should
+  not have its behaviour depend on the invoker's environment at all. The next script to be
+  bitten will be bitten by a third effect nobody has enumerated either.
+  (security review round 3, 2026-08-07; updated round 4, 2026-08-07) **Priority:** P2
+- **Manifest *validity* is now covered as a side effect, and nothing covers manifest
+  *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
+  `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
+  now refused by name for all three files — that half is **done**, and the previous framing
+  ("no jq dependency, so this can't be cheap") no longer describes the code. What remains is
+  narrower and worth keeping separate: the check validates the version *field*, not the
+  document. A manifest can parse cleanly, carry a perfectly ordered version, and be semantically
+  nonsense — `plugin.json` missing `name`, `marketplace.json` with an empty `plugins` array,
+  a `source` pointing somewhere that does not exist. Nothing in this repo would notice. Schema
+  validation is a different job from direction checking and should be a separate CI step if it
+  is wanted at all; the argument against is that these three files change perhaps twice a
+  release and a bad one is caught the first time the plugin is installed.
+  (security review round 3, 2026-08-07; re-scoped after round 4, 2026-08-07) **Priority:** P3
+- **`ci/check-version-monotonic.sh` now requires `python3`, and that obligation is documented
+  in exactly one place — its own header.** It is the only external tool any script in this repo
+  needs, and it is deliberate (see `DECISIONS.md`: stdlib `json` only, one arm, no `jq`
+  fallback, because two readers of the same JSON that can disagree is the diff-hash divergence
+  bug rebuilt on purpose). The check fails closed with a named message when it is absent, so
+  nothing silently skips. What is *not* settled: `README.md` and `CONTRIBUTING`-equivalent docs
+  do not mention it, so a contributor running `npm test` on a python-less box gets a clear
+  failure from the check and no prior warning. Also worth deciding once rather than per-script:
+  whether python3 is now an accepted repo-wide dependency for **CI-only** code while
+  user-machine scripts stay tool-free — that split is the actual rule being followed, and it is
+  currently implicit. Round 6 narrowed the dependency slightly: the call is now `python3 -I`, so
+  the floor is Python 3.4 (2014). An interpreter too old to accept the flag fails closed with
+  its own error plus `returned no usable answer` — verified against a PATH shim that rejects
+  `-I`, not assumed. (CI version check rounds 4 and 6, 2026-08-07) **Priority:** P3
+- **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
+  investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
+  ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
+  invalid-byte behaviour, which nearly inverted the round-3 fix (`DECISIONS.md`). (2) A **single
+  NUL byte** anywhere in a file makes GNU grep answer `binary file matches` instead of the
+  matching lines, and makes the ugrep shim return **nothing at all** — indistinguishable from
+  "no matches", which is exactly how a grep of `test/version-check-test.sh` came back empty and
+  produced a wrong conclusion about its own contents.
+  **Half of this is closed and half is not, and the split matters.** The NUL half is pinned:
+  R21 sweeps **every tracked file** via `git ls-files` (41 files, no binary member) and asserts
+  the enumeration is live before trusting the sweep. It was scoped to two files first, then
+  five, and a new NUL landed outside the list *both* times -- the trigger is "someone is writing
+  about control bytes", not "someone is editing the check", so any narrower scope is the wrong
+  shape. A repo that later adds a real binary asset needs an allowlist there.
+  **What is still open:** R21 runs only inside `test/version-check-test.sh`, which runs only
+  when someone runs `npm test` by hand -- see the CI item below, which is the real dependency.
+  And nothing pins the *shim* half at all: a script and a prompt resolving `grep` to different
+  binaries is a property of this machine that no assertion in this repo can see. The habits that
+  prevent both are spelling a control byte as `\u0000` and never as itself, and reaching for
+  `/usr/bin/grep` explicitly when the answer matters. (security review rounds 3 and 5,
+  2026-08-07) **Priority:** P3
+- **Nothing else in this repo that reads a repo-relative path has been audited for symlink
+  following, and round 7 says that is the wrong state to leave it in.** The CI check now reads
+  manifests out of the object store; `scripts/forgeward-gate-check.sh`,
+  `scripts/forgeward-pre-push.sh`, `scripts/forgeward-diff-hash.sh` and the marker machinery all
+  still open paths off the filesystem. **The threat model is genuinely different and that is the
+  reason this is P3 and not P2:** those run on the user's own machine against the user's own
+  checkout, where an attacker who can plant a symlink can also edit the file directly, forge a
+  marker, or pass `--no-verify` — all of which this file already documents as defeating the local
+  gate. The CI check was the escalation because a *fork* author can commit a symlink and has no
+  other access. So this is a sweep for consistency and for the day one of those scripts moves
+  into CI, not a live bypass. Whoever does it should check the marker path too: a marker file
+  replaced by a symlink is the shape most likely to matter. (security review round 7, 2026-08-07)
+  **Priority:** P3
+- **Four shipped `python3 -c` sites outside this branch have the same CWD-on-`sys.path`
+  exposure that round 6 closed in the CI check, and none of them carries `-I`.**
+  `scripts/forgeward-diff-hash.sh:100`, `scripts/forgeward-gate-check.sh:75` and `:119`, and
+  `scripts/forgeward-pre-push.sh:72` all run `python3 -c` with an `import json` from whatever
+  directory the user's repo happens to be. A `json.py` at that repo's root is then the module
+  parsing forgeward's own state. **Their exposure is genuinely smaller than the CI check's, and
+  the difference is worth stating rather than assuming:** the python arm in each is only reached
+  when `jq` is absent or broken (verified by reading `json_get`'s arm ordering, not inferred),
+  and reaching it at all requires write access to the user's checkout — which `TODOS.md` already
+  discloses as defeating the local gate outright via marker forgery or `--no-verify`. The CI
+  check was the real escalation because a **fork** PR author has no other access and needs none.
+  So this is a hardening item, not a live bypass. The fix is one flag per site and is trivial;
+  it is filed rather than done because the round-6 branch is scoped to the CI check and a
+  drive-by edit to four hook scripts would ship untested under a version-monotonicity PR. Do it
+  as its own change with its own gate run, and add an assertion per site — the precedent from
+  rounds 2–6 is that an unpinned fix is a fix that quietly comes back out.
+  (security review round 6, 2026-08-07) **Priority:** P2
+- **`run_split` in `test/version-check-test.sh` reads its captured streams back with `$(cat …)`,
+  the same lossy channel rounds 5 and 6 hardened the production script against.** Command
+  substitution deletes NUL bytes and strips trailing newlines. It cannot mask a defect *today*:
+  the verdict payload is constrained to `^[0-9]+\.[0-9]+\.[0-9]+$` before it is printed, and the
+  note text is assembled from the hardcoded `$MANIFESTS` literals plus `$BASE` and an integer, so
+  there is no live input that could differ before and after the transform — verified in round 9,
+  not assumed. It is filed because that safety is a property of **today's message strings**, and
+  the next person who interpolates a manifest-derived value into a note inherits a harness that
+  cannot see what it did. Two ways to close it: compare stdout byte-for-byte against an expected
+  file with `cmp` instead of pattern-matching a shell string, or read the streams with `mapfile`.
+  The first is better and would also pin a combination nothing currently asserts — base missing
+  two manifests *and* a dirty worktree, three notes at once, which round 9 verified by hand with
+  `od -c`. Deliberately not done on this branch: it would re-invalidate a PASS for a test-harness
+  tidy-up. (security review round 9, 2026-08-07) **Priority:** P3
+- **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
+  security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
+  rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
+  that would actually parse the language this repo is written in was the one that was absent.
+  The reviewer's finding this round was found by hand, not by a scanner. This repo is ~all bash
+  — quoting, `[ ]` vs `[[ ]]`, unset-variable and subshell-scope bugs are its native failure
+  modes, and it has already shipped two of them (the `grep -q`/pipefail P1, and the `grep -c`
+  line-vs-occurrence miscount below). Adding `shellcheck` to the reviewer's scanner set is
+  cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
+  where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
+- **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
+  version-check 51) and every one of them is run by hand before a release. The new
+  `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
+  documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
+  because that sensitivity was measured, not guessed — and a flaky *required* check is worse
+  than no check, because the first red teaches everyone to re-run rather than to read. Wiring
+  them in means first establishing they are green on a shared runner under CI's own load, not
+  just on this machine. Until then "the suite passed" rests on the author remembering.
+  (CI version check, 2026-08-06) **Priority:** P2
 - **The three merged PR bodies #1, #2 and #3 carry a `🤖 Generated with Claude Code`
   byline.** Cosmetic and historical; noted only so it is a deliberate choice to
   leave them rather than an oversight. Newer PRs do not carry it.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P2: nothing checked that a merge moved the version FORWARD, so merge order was
+  load-bearing whenever two version-bumping PRs were open.** Fixed 2026-08-06. Full
+  reasoning in `DECISIONS.md`.
+
+  The live instance — #17 to 0.7.5 and #18 to 0.7.6, where merging #17 second walks the
+  marketplace manifest backward — was avoided by merging #17 first, by hand. Nothing was
+  keeping three manifests monotonic except whoever was paying attention at merge time.
+
+  Shipped: `ci/check-version-monotonic.sh` (never-backward across all three manifests, plus
+  a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
+  repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
+  checked, so the comparison would be against itself and green vacuously), and
+  `test/version-check-test.sh` (R1–R25c, 51 assertions, wired into `npm test`).
+
+  Three comparator traps are pinned rather than merely avoided. `major*1000000 +
+  minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
+  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b); and the
+  component-wise `$((10#$x))` that replaced both **wrapped at 2^63**, which this branch's own
+  security review demonstrated end to end — base `18446744073709551617.0.0`, head reverted to
+  `1.0.0`, `ok ... not behind`, exit 0 (R13/R13b). The comparator now uses no arithmetic at
+  all. And the version validator's first draft was `printf | grep -qx` — the P1
+  SIGPIPE/pipefail defect already paid for once here — now a fork-free `[[ =~ ]]` with a
+  comment at the line saying why the tempting edit is wrong.
+
+  **The 2^63 wrap is the entry to re-read before writing the next comparator.** R6 pinned the
+  10^3 ceiling and stayed green throughout, because it was written against the comparator
+  already chosen — it could only see the ceiling that had been thought about. Same shape as
+  V5/V6 passing while the jq/python3 divergence shipped underneath them. The comment above the
+  fix asserted "no such ceiling" and was simply false; the assertion beside it could not tell.
+
+  **It happened a second time in the same file, which is what makes it a pattern rather than an
+  anecdote.** Round 2 of the security review found the ambiguity guard counting with a bare
+  `grep -c` — matching *lines*, not *occurrences* — so two version keys on one line counted as
+  1 and skipped the guard entirely. R8 was green throughout, because R8's fixture puts the two
+  keys on separate lines: the one arrangement `grep -c` gets right. The input still failed
+  closed, one check later and citing the wrong reason, so an assertion reading only the exit
+  status would also have stayed green. R8b pins the one-line arrangement and asserts on the
+  *message*. Generalized: an assertion written alongside a mechanism inherits that mechanism's
+  blind spot, and only an outside reader — or a mutation — sees past it.
+
+  **And a third time, as a High.** Round 3 found that under a UTF-8 locale GNU grep will not
+  match `[^"]*` across invalid UTF-8 and silently drops the line, so a fork PR author could
+  commit a clean forward *decoy* `"version"` key plus a poisoned real one and the poisoned key
+  became invisible to the script while every JSON parser took it (duplicate keys are last-wins).
+  Base 0.9.0, decoy 0.9.1, poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0. A
+  complete bypass of the file's whole purpose from a one-line hex edit. Fixed at the time with a
+  script-wide `export LC_ALL=C`.
+
+  **A fourth round, and it is the one that changed the design.** JSON `\uXXXX` escapes are legal
+  in **key names**: `{"version":"0.9.1","version":"0.1.0"}` contains exactly one literal
+  `"version"` byte sequence, so the guard counted 1 and passed while every parser decoded two
+  keys and took the second. Same bypass, same one-line edit, and `LC_ALL=C` is irrelevant to an
+  escape that is pure ASCII — verified end to end: `ok: version 0.9.1, not behind master`, exit
+  0, while `node` and `python3` both read `0.1.0`.
+
+  **Rounds 2, 3 and 4 defeated the same textual reader by three unrelated mechanisms, so the
+  reader was deleted rather than patched a third time.** Versions are now read by `python3`'s
+  stdlib `json` with `object_pairs_hook` refusing duplicate keys by name. Three independent
+  evasions of one approach is not three bugs — the class is *text tools do not parse JSON*, its
+  members cannot be enumerated, and a fourth patch would only have been the third demonstration
+  that patching does not converge. The repo's two earlier declines of "just use jq or python3"
+  both stand and neither reaches here: PyYAML is not stdlib (`json` is), and the marker writer
+  runs on arbitrary user machines (this runs on `ubuntu-latest`). Their shared principle — one
+  arm everybody gets beats a better arm some people get — is why there is a **single** python3
+  arm and no `jq` fallback: two readers that can disagree is the diff-hash divergence rebuilt on
+  purpose. Absent python3 is a named FAIL, never a skip (R18/R18b).
+
+  **A fifth round, and it is the round-4 fix looked at from the other end.** Round 4 piped the
+  manifest to the parser on **stdin** so the bytes arrived unaltered, and wrote a comment there
+  naming both transforms a command substitution performs. The parser's *answer* still came back
+  through `out="$(python3 …)"`, which performs both: `$(...)` **deletes NUL bytes** (warning on
+  stderr, exit status untouched) and **strips trailing newlines**, and both are legal inside a
+  JSON string. So the `X.Y.Z` check validated a value the file did not contain. Committed
+  `"version":"1\u00009.0.0"`; python3 and node both read a version with an embedded NUL; the check printed
+  `ok: version 19.0.0, not behind master` and exited 0. Fixed the way round 4 was fixed — close
+  the channel, not the instance: the shape check moved *inside* the parser, so only digits and
+  dots ever cross. `re.fullmatch`, not `re.match(…$)`, because Python's `$` also matches before a
+  single trailing newline and the anchored form would have rebuilt half the bypass inside its own
+  fix. A `RecursionError` escaping `except ValueError` was the same round's Low.
+
+  Round 6 went one layer below all of that: `python3 -c` puts the **current working directory**
+  on `sys.path`, and this script runs from the root of the checkout it is judging — so
+  `import json` resolved against repo content, and a fork author's five-line `json.py` at the
+  repo root made `json.loads` return whatever they liked. Reproduced with base `9.0.0` and head
+  manifests genuinely `1.0.0`: `ok: version 999.999.999, not behind master`, exit 0. Rounds 2–5
+  hardened how the manifest is *parsed*; this replaced the *parser*, so every earlier guard was
+  intact and irrelevant. Fixed with `python3 -I`, chosen over a `sys.path` edit because the CWD
+  entry is one of four channels the audited repo has into the interpreter — `-I` also implies
+  `-E` (PYTHONPATH and friends) and `-s` (user site-packages, hence `usercustomize`) — and
+  patching one channel at a time is exactly how rounds 2 through 5 went. R22/R22b/R22c pin one
+  channel each; R22d is the positive control.
+
+  Round 7 went out one layer instead of down: the head side read each manifest off the
+  **filesystem** (`read_version "$f" < "$f"` — a plain `open(2)`, which follows symlinks) while
+  the base side read it out of the **object store** via `git show`, which returns a symlink's
+  target text and never dereferences it. Git tracks symlinks as mode `120000`, so a fork PR
+  author commits the three manifests as links to a file outside the checkout and gets
+  `ok: version 13.37.0, not behind master (3 manifest(s) compared, all three agree)`, exit 0 —
+  a pass asserted about a commit containing no version field at all. The asymmetry was written
+  down in the script's own header as a neutral implementation detail. Both sides now go through
+  one `require_blob` and one object-store read, so the bytes parsed are the blob in the commit
+  by construction; reading HEAD rather than the worktree also means a hand-run ignores
+  uncommitted edits, which is stated as blind spot 10 and mitigated by a stderr note naming the
+  files (R24b).
+
+  Round 8 was the first PASS: five distinct attempts on round 7's fix (non-canonical tree modes,
+  clean/smudge filter divergence, `core.symlinks=false`, replace-refs, ref-name injection through
+  `github.base_ref`) all failed closed for the reason the code claims, so that round checked the
+  comments against the machine rather than against themselves. Its one Low was a channel slip —
+  the base-side "manifest absent" note went to stdout while its sibling went to stderr — invisible
+  to all 47 assertions because `run()` folds the streams, which is the suite's blind spot in
+  miniature and is now pinned by R25. It also surfaced, as a *safe* case, a second pre-round-7
+  bypass worth an assertion: `.claude-plugin` itself committed as a symlink to an external
+  directory (R23f).
+
+  Seven rounds produced seven defects, each in the layer the previous round had just hardened —
+  the operative lesson is that **an adversarial reader found all seven and the test suite found
+  none of them**, which is an argument about how much review a comparator is worth, not about the
+  tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
+  status, because two of them failed closed for an unrelated reason and would have passed an
+  exit-status check.
+
+  **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local
+  LC_ALL=C` is not passed to a spawned child unless the name was already exported — verified
+  directly: `local` gives the child `<unset>`, a command prefix and `export` both give `C`. It
+  works for a bash builtin like `[[ x < y ]]` and does nothing for `grep`. `num_lt`'s own `local`
+  was removed rather than kept beside the export, because the redundant mechanism was precisely
+  the ineffective one.
+
+  **Verifying a claim about a tool means invoking the binary the code invokes.** The first attempt
+  to check round 3's finding appeared to refute it. That was wrong: `grep` at an interactive
+  prompt here is a shell function shimming to **ugrep 7.5.0**, while a script gets `/usr/bin/grep`
+  = **GNU grep 3.7**, and shell functions are not inherited by a non-interactive child. The ad-hoc
+  check and the code under test were different programs with different invalid-byte behaviour.
+  Use `type -a` and an absolute path.
+
+  **Mutation testing earned its place and should not be skipped on the next one like it:** the
+  zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
+  as covered was in fact unpinned. Twenty of twenty-one mutations reddened exactly the
+  assertions naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as
+  unobservable — though round 3 showed that label covers only the effect that was measured, not
+  the pin, and round 4 then made the measured effect moot, which is the same trap twice.
+
+  **Four "vacuous" results, none of them a coverage gap, and they split into two causes.** Three
+  were harness artifacts that never applied — `M6`, the `grep -c` revert, and the walk-recursion
+  mutation — reddening R11, R8b and thirteen assertions respectively once applied properly. The
+  fourth, `M21`, **applied cleanly and was still a no-op**: it added an `ok:*)` arm after the
+  real one, and `case` takes the first match, so the mutant was unreachable. An `assert count ==
+  1` on the anchor (now the harness's standing shape) catches the first cause and structurally
+  cannot catch the second. A mutation reporting nothing is a claim to verify, not a finding to
+  accept — accepting any of the four would have added a test for a guard that was already pinned.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
