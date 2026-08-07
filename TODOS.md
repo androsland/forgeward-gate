@@ -24,16 +24,66 @@ write-once and effectively gone after merge, which is why they live here now.
   against that history. Revisit only if the length arithmetic ever needs to be exact
   rather than one-sided. (0.7.3 security review, 2026-08-03) **Priority:** P3
 
-- **`git push origin --delete <branch>` is denied when the current branch has no
-  marker.** Deleting a ref is still a push, and the matcher deliberately does not
-  parse command structure, so it cannot tell a ref deletion from a code publish.
-  Hit for real on 2026-08-03 cleaning up two merged branches. Workaround needing
-  no code change: `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branch>`,
-  which carries none of the matcher's verbs, then `git fetch origin --prune`.
-  A fix means distinguishing `--delete` and `:refspec` from a code push — i.e.
-  parsing flags and refspecs, the structural modeling `DECISIONS.md` calls a dead
-  end after three failed rounds. Undecided whether the friction is worth it.
-  (checkpoint item 3, 2026-08-02; confirmed live 2026-08-03) **Priority:** P3
+- **The deletion exemption's whole defence against the quote class rests on ONE line.**
+  `case "$raw" in *"'"*|*'"'*|*'\'*) return 1` in `_is_delete_only` is the only guard that
+  sees a quoted token at all: `strip_quoted` blanks the span, so a quoted *publishing*
+  refspec is not merely mis-split, it is ABSENT from the residue — `git push origin :x
+  'main'` reaches the classifier as `origin :x`, a textbook delete-only push, while bash
+  still passes `main` to git. `_inert_re` and the colon/plain counters never get a chance,
+  because they only ever see tokens that survived blanking. Demonstrated against a mutant
+  with the line removed: `git push origin :x secretbranch2` really created the branch.
+  Not exploitable as shipped, and the line is mutation-pinned by the three A23 splitting
+  cases plus `git push origin :x 'main'`. Its sibling `git push origin ':x' main` denies
+  through a DIFFERENT guard — blanking removes the colon token outright, so `colon=0` and
+  the aggregation check refuses it — which is worth recording rather than glossing:
+  adjacent guards catch adjacent shapes, and only a mutation run says which one caught
+  what. Accepted rather than fixed: the suggested
+  backstop (compare a whitespace word-count of the residue against one of the raw text)
+  is defeated by the same blanking it is meant to police, so it would add a mechanism
+  harder to reason about than the one-line proof it backs up. Revisit if a second consumer
+  of the residue ever needs token-exact boundaries. (0.9.1 security review round 3,
+  2026-08-07) **Priority:** P3
+- **`_head_re` accepts VT, FF and CR as the separator between `git` and `push`, where bash
+  does not.** `[[:space:]]` is broader than bash's IFS-driven word splitting, so
+  `git<VT>push origin :x` is considered for the exemption although bash would never run it
+  as a `git push` (it fails as command-not-found, or the subcommand token is not `push`).
+  Over-matches in the SAFE direction — it widens what is considered, not what executes —
+  so no ref can move. Left alone because narrowing it to space/tab would diverge from the
+  same `[[:space:]]` the verb matcher above it uses, and one consistent class is easier to
+  reason about than two. (0.9.1 security review round 3, 2026-08-07) **Priority:** P4
+- **The single permitted plain token may be an arbitrary scp-syntax host.**
+  `git push attacker.example.com:evil/repo.git :y` satisfies the exemption, and git
+  contacts that host. Confirmed to transmit no object data for any shape the exemption
+  accepts, so nothing is exfiltrated — it is a network handshake, not a publish. Out of
+  threat model besides: composing that text already requires the ability to run arbitrary
+  commands, which this layer never claimed to stop. Closing it would mean resolving the
+  token against configured remotes, which this layer deliberately does not do.
+  (0.9.1 security review round 3, 2026-08-07) **Priority:** P4
+- **`git push --no-verify` is denied by the fast reminder even though the pre-push hook
+  documents it as a deliberate, visible opt-out.** The same direction of disagreement the
+  deletion exemption just fixed: the enforced layer offers an escape hatch and the fast
+  layer refuses to let you type it. Deliberately NOT fixed in 0.9.1 — exempting it in the
+  text layer turns "bypass the gate" into four words with no reviewer and no marker, which
+  is a strictly worse trade than the friction. Recorded so the asymmetry is disclosed
+  rather than latent; the right fix, if any, is a first-class opt-out with its own audit
+  trail, not a matcher hole. (0.9.1 deletion exemption, 2026-08-07) **Priority:** P3
+- **The deletion exemption knowingly over-denies five shapes.** All fail CLOSED, all cost
+  the user a `gh api -X DELETE` or a gate run, none let a publish through: ANY `'`, `"` or
+  `\` anywhere in the command (the blanking scanner can synthesize a word boundary bash
+  never had — this one was a real ALLOW on a real publish before the 0.9.1 security review
+  caught it, so the refusal is deliberately blunt); a `$VAR`/`$(…)`/backtick anywhere in
+  the command (the residue is untrusted, so the exemption is refused outright); bundled
+  short flags (`-qd` is one token and matches neither `-q` nor `-d`); any option outside
+  the whitelist, e.g. `-o ci.skip` or `--force-with-lease`; a `sudo`/`time`/`env` prefix;
+  and any token outside `^[A-Za-z0-9_.:/@+=-]+$`, which over-denies `~`/`^` rev syntax, a
+  `%` in a ref name, and a `?` query in a remote URL. That last one is an ALLOWLIST rather
+  than a longer blocklist because the same class of bug was found twice in one branch — a
+  blocklist is only as good as the author's memory of every construct bash uses to
+  synthesize a word.
+  Widening any of them means either parsing quoting the layer has deliberately refused to
+  parse, or enumerating git's full option table with its value-taking arity — both are the
+  structural modeling `DECISIONS.md` calls a dead end. Kept as a record of the boundary,
+  not as work. (0.9.1 deletion exemption, 2026-08-07) **Priority:** P4
 - **Five disclosed under-matches remain by design**, pinned in test A4 so a
   behavior change fails the suite rather than quietly outdating the comment:
   the shell-wrapper family (`bash -c 'git push'`, eval/ssh/trap — the one genuine
@@ -466,6 +516,57 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (observed 2026-08-03) **Priority:** P4
 
 ## Completed
+
+- **P3: `git push origin --delete <branch>` was denied when the current branch had no
+  marker, even though the enforced pre-push hook already allows it.** Fixed 2026-08-07.
+  Full reasoning in `DECISIONS.md`.
+
+  The finding was the asymmetry, not the friction. `forgeward-pre-push.sh` skips any ref
+  whose local SHA is all-zero — verified against real git, which writes
+  `(delete) 0000000… refs/heads/x <remote-sha>` on the hook's stdin for BOTH the
+  `--delete` and `:refspec` forms — while the PreToolUse matcher went straight to `deny`
+  without asking what was being pushed. The layer whose own header calls itself "a fast
+  best-effort reminder" was stricter than the thing it reminds you about, and its advice
+  ("run the gate") was unactionable: a deletion publishes no code, so no reviewer could
+  review it and no marker could ever attest to it.
+
+  Shipped: `_is_delete_only()` in `scripts/forgeward-gate-check.sh`, taken only on a
+  TRUSTED residue (quoted spans already blanked), only on ONE simple command, only when
+  `git push` is the literal command word, matching flags as whole argv tokens. Plus
+  `_residue_trusted`, which records which scan path answered — the verb test is fail-safe
+  either way, but this is the one decision here that can turn a deny into an allow. Tests
+  A23 (31 cases) and A24 (degrades closed when `awk` is unavailable) in `test/gate-test.sh`.
+
+  **Three real pushes at a real remote wrote the design; reading git-push(1) would not
+  have.** `--delete y z` deletes both (so `--delete` alone settles it); `:q newcode`
+  deletes `q` and PUBLISHES `newcode` (so the colon form additionally caps plain tokens at
+  one — the remote); and `--tags origin :d2` deletes `d2` and PUBLISHES a tag on an
+  unpublished commit (so unrecognised options DENY instead of being skipped, which the
+  first draft got wrong). An option can send refs the argument list never names.
+
+  **The branch's own security review found a real bypass in the first draft.** `strip_quoted`
+  BLANKS a quote or backslash to a space instead of deleting it, so an empty quote pair inside
+  one real argv token splits it into two tokens bash never produced: `git push /pub/repo'':x.git`
+  is ONE repository argument, the classifier saw plain=1 colon=1, exempted it, and it really
+  published `refs/heads/main`. `_is_delete_only` was the first consumer of that residue to depend
+  on exact token boundaries rather than on "does this word appear". Closed by refusing the
+  exemption on any `'`, `"` or `\` — a complete cover, since blanking can only ever ADD a
+  boundary and every path that adds one needs one of those three characters.
+
+  **The re-gate then found the same shape again through globbing, which is what turned the
+  token test into an allowlist.** `read -ra` does not glob, so `git push [os]* :newcode` is
+  one token to the classifier and several words to bash — reproduced against a real remote,
+  where it deleted `newcode` and PUBLISHED `secretbranch`. Two misses of the same kind in
+  one branch is the argument for inverting the test: every token must now match
+  `^[A-Za-z0-9_.:/@+=-]+$`, so the construct nobody thought of fails closed.
+
+  **Mutation testing changed the code twice, and one of the two was a fail-OPEN.** Every
+  deny case was already green before the fix — the old matcher denied everything — so the
+  deny half proves nothing on its own. The command-word check was two lines and *neither
+  could be killed alone*, because `_pub_re` already guarantees `git push` adjacent; they
+  were collapsed into one regex. And the newline refusal was unpinned: without it
+  `read -ra` sees only the first line, so `--delete x\ngit push origin main` would have
+  been ALLOWED. Found by mutation, not by review.
 
 - **P2: nothing checked that a merge moved the version FORWARD, so merge order was
   load-bearing whenever two version-bumping PRs were open.** Fixed 2026-08-06. Full

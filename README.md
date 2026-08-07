@@ -110,7 +110,12 @@ seo:
      and not on lookalikes (`shipment`, `airship`).
   2. `PreToolUse` on `Bash` → two things. A **best-effort reminder**: on a `git push` /
      `gh pr create` / `glab mr create`, it denies when the current checkout's branch has no fresh
-     marker. And an **artifact guard**: it denies a scanner invoked with a drive-letter output
+     marker. A push that can only **delete** remote refs is exempt — `git push origin --delete
+     <branch>` and `git push origin :<branch>` publish no code, so no reviewer could ever have
+     reviewed them and no marker could attest to them; the `pre-push` hook already skips them
+     for the same reason. The exemption is narrow on purpose: any second command, any shell
+     metacharacter, a `sudo`/`time` prefix, or a `--delete` that is quoted or built from a
+     variable all keep denying. And an **artifact guard**: it denies a scanner invoked with a drive-letter output
      path (`semgrep … -o C:/Users/…`), which in a POSIX shell is a *relative* path and writes a
      `C:` directory tree into the repo under review — untracked, matched by no common
      `.gitignore`, and committed by any `git add -A`. That guard is deliberately narrow: a
@@ -305,9 +310,22 @@ see limits.
 **Automated suites — `npm test`.** Both are framework-free and exercise the **real plugin
 scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
 
-`test/gate-test.sh` (74 assertions) — the in-editor layer:
+`test/gate-test.sh` (173 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
+- **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
+  `git push origin :x main` and `git push --tags origin :x` still deny, because both were
+  observed publishing alongside the deletion. Compound commands (`… --delete x && git push`),
+  prefixes, quoted flags, and `$`-built arguments all deny, and the exemption is refused
+  outright when the residue is untrusted (broken `awk`, or a command bearing `$(`). A
+  command containing any `'`, `"` or `\` is refused too: the quote-blanking scanner
+  substitutes a space rather than deleting, so it can hand the classifier a word boundary
+  bash never had — `git push /pub/repo'':x.git` is one repository argument, and the gap
+  let it publish. And every argument token must match `^[A-Za-z0-9_.:/@+=-]+$` — an
+  allowlist, because `read -ra` does not glob, so `git push [os]* :newcode` is one token
+  to the matcher and several words to bash (it published a branch the text never named).
+  Both were found by this branch's own security review and reproduced against a real
+  remote, which is why the token test fails closed on constructs nobody has thought of yet.
 - **Allow on a fresh PASS marker**; **version-bump invariance** (a version-field-only bump keeps
   the marker); **dependency change** and **stale code** force a re-gate.
 - **Non-publish commands are never touched**; **outside a git repo it fails open**.
@@ -328,7 +346,7 @@ scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
   platform whether the contamination is even stageable before asserting — a POSIX-only test would
   pass while the bug remained, because the bug *is* the path translation.
 
-`test/pre-push-test.sh` (10 assertions) — the enforcement layer, driven exactly as git drives
+`test/pre-push-test.sh` (15 assertions) — the enforcement layer, driven exactly as git drives
 it (refs on stdin, so no command parsing):
 - gated ref allowed; ungated ref blocked (names it); multi-ref one-ungated blocked / all-gated
   allowed; branch deletion allowed; stale blocked; version-only bump allowed; tag allowed; **a
