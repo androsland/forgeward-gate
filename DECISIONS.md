@@ -4,6 +4,100 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## RESOLVED — the fast reminder denied branch deletions the enforced hook already allows
+
+**Date:** 2026-08-07 · **Version:** 0.9.1
+
+**Repro.** After merging a PR on GitHub and pulling, cleaning up the merged branch:
+
+```
+git checkout main && git pull --ff-only
+git branch -d fix/my-branch
+git push origin --delete fix/my-branch     ->  DENIED
+```
+
+with `forgeward gate: the current branch (main @ 5f93b2a) has not passed /forgeward:gate.`
+Fired on `main` immediately after a fast-forward pull, when `main` and `origin/main` are
+identical and the gate's own Step 0 would say "nothing to gate".
+
+**The advice was not merely annoying, it was unactionable.** Deleting a ref publishes no
+code, so there is nothing for a reviewer to review and nothing a marker could attest to.
+The only way through was to gate an *unrelated* branch first. Two shapes hit it: cleaning
+up a branch you just merged, and dropping a stale branch that never had a PR — for which
+no marker will ever exist.
+
+**The finding is the ASYMMETRY, not the friction.** `forgeward-pre-push.sh` — the
+ENFORCED layer — already handles this, at the top of its ref loop:
+
+```
+[ "$local_sha" = "$ZERO" ] && continue    # branch deletion -> publishes no code
+```
+
+It gets it right because git hands it resolved refs and SHAs, where a deletion is
+unambiguous. Verified against real git rather than inferred: for **both**
+`git push origin --delete x` and `git push origin :refs/heads/x`, git writes
+`(delete) 0000000… refs/heads/x <remote-sha>` on the hook's stdin. So the layer whose own
+header calls itself "a fast best-effort reminder; the enforced check is the pre-push
+hook" was refusing a command the pre-push hook waves through. **A reminder stricter than
+the thing it reminds you about is a bug in the reminder, not a policy.** The two layers
+are allowed to differ in PRECISION — one reads text, one reads refs — but not in
+DIRECTION.
+
+**Decision — relax the matcher, not the message.** The alternative considered was to
+leave the matcher alone and route the deny message to an escape hatch. Rejected: there is
+no escape hatch to route to. `--no-verify` bypasses the *pre-push* hook, not a PreToolUse
+`deny`, so the only recourse was the `gh api -X DELETE` workaround TODOS.md had been
+carrying — i.e. telling the user to stop using git. Fixing the message would have
+documented the disagreement rather than removed it.
+
+**What settled the design was running real pushes at a real remote and diffing the ref
+list, not reading git-push(1).** Three observations, and each one changed the code:
+
+```
+git push origin --delete y z    ->  y and z both deleted, nothing published
+git push origin :q newcode      ->  q deleted AND newcode PUBLISHED
+git push --tags origin :d2      ->  d2 deleted AND a tag on an unpublished commit PUBLISHED
+```
+
+- The first is why `--delete` alone settles it: the flag makes *every* listed ref a
+  deletion, and git itself refuses `--delete` together with `--all`/`--mirror`/`--tags`.
+- The second is why the `:<ref>` form additionally requires that **no plain refspec** is
+  present — at most one non-option token (the remote) may sit beside the colon refspecs.
+  A "contains a colon refspec" test would have allowed a real publish.
+- The third is why unrecognised **options deny** instead of being skipped. The first
+  draft skipped anything starting with `-` and would have allowed `--tags origin :d2`.
+  An option can send refs the argument list never names, and it can consume a separate
+  VALUE token that would otherwise be counted as a refspec. Only flags that do neither
+  are whitelisted.
+
+**Everything ambiguous denies, and the list is short enough to audit.** The exemption is
+offered only on a TRUSTED residue (quoted spans already blanked, so a quoted or
+`$`-built `--delete` cannot open it); the residue must be ONE SIMPLE COMMAND (any of
+`;&|(){}<>$` a backtick or a newline refuses it outright, so
+`git push origin --delete x && git push` and the two-line form keep denying); `git push`
+must be the literal command word; and flags are matched as WHOLE argv tokens, so
+`--delete-this-is-not-a-flag` opens nothing. The stacked-branch workflow that interleaves
+deletions with real pushes therefore keeps being gated — that is the point, not a
+casualty.
+
+**The blind spot is unchanged and is stated in the code rather than implied.** A deletion
+issued through indirection — `bash -c "$CMD"`, an alias, a function, a script file,
+`git -C <path> push --delete x`, flags arriving in a variable — is invisible to this
+layer and always will be. That is the same class the file header already defers to the
+pre-push hook; this branch neither narrows it nor widens it.
+
+**Method note — the assertions were mutation-tested, and that changed the code twice.**
+Every deny case in A23 was already green before the fix (the old matcher denied
+everything), so the deny half proves nothing on its own; only the mutation run shows it
+is load-bearing. Two findings came out of it. The command-word check was originally two
+lines — `tk[0]` is `git`, `tk[1]` is `push` — and *neither could be killed alone*,
+because `_pub_re` has already guaranteed the words appear adjacent, so any command where
+they are not the first two tokens is caught by whichever check the other one missed. They
+were collapsed into one regex so a deletion of it is actually caught. And the newline
+refusal was genuinely unpinned: without it, `read -ra` reads only the FIRST line of the
+residue, so a two-line command whose first line is a deletion and whose second is a real
+push would have been allowed. That is a fail-OPEN, found by mutation and not by review.
+
 ## DECISION — version monotonicity is enforced in CI, because the gate structurally cannot see it
 
 **Date:** 2026-08-06 · **Version:** unchanged (0.9.0 — this touches no shipped file)

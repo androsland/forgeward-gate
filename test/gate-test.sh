@@ -402,6 +402,90 @@ else
       "issued=$(denies "$noawk_issued" && echo deny || echo allow) mention=$(denies "$noawk_mention" && echo deny || echo allow) other=${noawk_other:-empty}"
 fi
 
+# A23: A PUSH THAT ONLY DELETES REMOTE REFS PUBLISHES NO CODE, so it is allowed.
+#
+# The two layers disagreed here, and the FAST one was the stricter: pre-push skips any
+# ref whose local sha is all-zero (`forgeward-pre-push.sh`, "branch deletion -> publishes
+# no code"), which is exactly what git sends for both `--delete` and `:refspec`, while
+# this layer matched `git push` as a word and denied. A reminder that refuses what the
+# enforcement it reminds you about waves through is a bug in the reminder. Worse, the
+# advice it gave was unactionable: nothing is published, so there is nothing for a
+# reviewer to review and no marker could ever attest to it — the only way through was to
+# gate an unrelated branch first.
+#
+# Two unrelated cases this must serve: post-merge cleanup of a branch you just merged,
+# and dropping a stale branch that never had a PR (no marker will EVER exist for it).
+#
+# The verdicts below are not read off git's manual. Every ALLOW was executed against a
+# real remote and the remote's ref list compared before and after; every DENY that could
+# publish was executed too, and two of them did:
+#   git push origin :x main    -> deleted x AND published main
+#   git push --tags origin :x  -> deleted x AND published a tag on an unpublished commit
+# The second is why unrecognised OPTIONS deny rather than being skipped: `--tags` sends
+# refs the argument list never names. (`--delete` is safe from that — git itself refuses
+# "--delete is incompatible with --all, --mirror and --tags" — but the colon form is not,
+# and that asymmetry is invisible from the text.)
+#
+# The compound-command denials are the load-bearing half. A stacked-branch workflow that
+# interleaves deletions with real pushes must keep being gated, so ANY shell
+# metacharacter refuses the exemption outright rather than trying to work out which
+# command the verb belongs to — that is the grammar-enumeration dead end this file's
+# header exists to warn about.
+matrix "deletion exemption misclassifies a push (it must allow ONLY what publishes nothing)" \
+  "publish matcher: a push that can only DELETE remote refs is allowed (no code is published, so no marker could attest to it), while anything that might also publish still denies" <<'CASES'
+allow|git push origin --delete fix/my-branch
+allow|git push origin -d fix/my-branch
+allow|git push -d origin fix/my-branch
+allow|git push origin --delete stale-a stale-b
+allow|git push -q --no-verify origin --delete stale
+allow|git push --atomic origin --delete stale
+allow|git push origin :refs/heads/x
+allow|git push origin :x
+allow|git push origin :x :y
+deny|git push origin --delete x && git push
+deny|git push origin --delete x; git push origin main
+deny|git push origin --delete x\ngit push origin main
+deny|git push origin --delete x && gh pr create --base main
+deny|git push origin :x main
+deny|git push --tags origin :x
+deny|git push --all origin
+deny|git push --mirror origin
+deny|git push --delete-this-is-not-a-flag origin x
+deny|git push origin --deletex
+deny|git push -o ci.skip origin --delete x
+deny|sudo git push origin --delete x
+deny|time git push origin --delete x
+deny|cd /x && git push origin --delete y
+deny|git push origin '--delete' x
+deny|git push origin --delete $B
+deny|git push origin --delete $(cat b)
+deny|git push origin --delete `cat b`
+deny|echo 'git push origin --delete x'; git push
+deny|gh pr create -d --base main
+deny|glab mr create -d -b main
+deny|git push origin main
+deny|git push
+CASES
+
+# A24: the exemption is only ever taken on a TRUSTED residue.
+#
+# The whole reason a quoted `--delete` cannot open it is that strip_quoted has already
+# blanked the span by the time the token check runs. On the paths where the residue is
+# NOT trusted — a command bearing `$(`/backtick/`${ `, or an awk that failed — the raw
+# text still carries its quotes and that guarantee is gone, so the exemption is refused
+# and the pre-existing deny stands. Same direction as A7: degrade closed, never open.
+#
+# Asserted rather than reasoned about, because the trust flag is one variable away from
+# being dropped in a refactor and nothing else in the suite would notice.
+noawk_del="$(pretool_noawk "$R" "git push origin --delete x")"
+noawk_colon="$(pretool_noawk "$R" "git push origin :refs/heads/x")"
+if denies "$noawk_del" && denies "$noawk_colon"; then
+  ok "A24: with awk unavailable the deletion exemption is NOT taken (an untrusted residue cannot tell a quoted --delete from an issued one) — degrades closed"
+else
+  nok "A24: the deletion exemption fires on an UNTRUSTED residue, where a quoted flag is indistinguishable from an issued one" \
+      "delete=$(denies "$noawk_del" && echo deny || echo allow) colon=$(denies "$noawk_colon" && echo deny || echo allow)"
+fi
+
 # A13/A14/A15: a helper that FAILS AT RUNTIME must not open the gate.
 #
 # A7 above covers awk MISSING — exit 127, empty output, rescued by the raw-text

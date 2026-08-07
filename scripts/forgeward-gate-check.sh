@@ -460,6 +460,98 @@ strip_quoted() {
 # the one thing the bare substring got wrong in the other direction.
 _pub_re='(^|[^A-Za-z0-9_-])(git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+create|glab[[:space:]]+mr[[:space:]]+create)([^A-Za-z0-9_-]|$)'
 
+# --- a push that only DELETES remote refs publishes no code -------------------
+# The ENFORCED layer already allows this: forgeward-pre-push.sh skips any ref whose
+# LOCAL sha is all-zero, which is precisely what git writes on the hook's stdin for a
+# deletion (verified against real git for both `--delete` and `:refspec`). This layer
+# denied it, so the "fast best-effort reminder" refused what the thing it reminds you
+# about waves through — and the advice it gave was unactionable, because a push that
+# publishes nothing gives a reviewer nothing to review and no marker can ever attest to
+# it. Post-merge branch cleanup and dropping a stale branch that never had a PR both had
+# to gate an UNRELATED branch to get through. This closes that gap from the text side.
+#
+# It cannot close it the same WAY, and that shapes every line below. pre-push reads
+# resolved refs and SHAs; this layer reads TEXT. So the exemption is narrow and every
+# ambiguity resolves to DENY:
+#
+#   - TRUSTED RESIDUE ONLY (enforced at the call site). strip_quoted has already blanked
+#     quoted spans, so a `--delete` inside an argument or a commit message is spaces by
+#     the time this sees it and cannot open the exemption. On the raw-text paths — a
+#     command bearing `$(`/backtick/`${ `, or a failed awk — that guarantee is gone, so
+#     the exemption is not offered at all and the old deny stands.
+#   - ONE SIMPLE COMMAND. Any shell metacharacter (`;&|(){}<>`, a newline, `$`, a
+#     backtick) means a second command could run or a word could be synthesised at
+#     runtime, so the exemption is refused outright rather than working out which command
+#     the verb belongs to — that is the grammar-enumeration dead end the file header
+#     warns about. `git push origin --delete x && git push` denies for this reason, and
+#     so does a stacked-branch workflow interleaving deletions with real pushes. That is
+#     the point, not a casualty.
+#   - `git push` must be the literal command word. `sudo`/`time`/`env` prefixes and a
+#     leading `cd … &&` all deny. `gh`/`glab` are never exempt — they always publish, and
+#     `-d` means `--draft` there.
+#   - flags are WHOLE argv tokens, so `--delete-this-is-not-a-flag` and `--deletex` are
+#     ordinary options and open nothing.
+#
+# The two forms are checked DIFFERENTLY, and that was settled by running real pushes at a
+# real remote and diffing the remote's ref list, not by reading git-push(1):
+#   `--delete`/`-d`  ALL listed refs become deletions — `git push origin --delete y z`
+#                    removed both and published nothing — so the flag alone settles it.
+#   `:<ref>`         only the colon-prefixed refspecs are deletions. `git push origin :q
+#                    newcode` deleted `q` AND published `newcode`. So this form also
+#                    requires that no PLAIN refspec is present: at most one non-option
+#                    token (the remote) may sit beside the colon refspecs.
+#
+# Unrecognised options DENY rather than being skipped, and that is not mere caution —
+# `git push --tags origin :d2` was observed deleting `d2` and publishing a tag pointing
+# at an unpublished commit. An option can send refs the argument list never names, and it
+# can also consume a separate VALUE token that would otherwise be counted as a refspec.
+# The whitelist below is therefore restricted to flags that do neither. (`--delete` is
+# immune to the first — git itself refuses "--delete is incompatible with --all, --mirror
+# and --tags" — but the colon form is not, and nothing in the text says so.)
+#
+# BLIND SPOT, stated rather than implied: a deletion issued through INDIRECTION is
+# invisible here and always will be — `bash -c "$CMD"`, an alias, a function, a script
+# file, `git -C <path> push --delete x`, or flags arriving in a variable. That is the
+# same class the file header already defers to the pre-push hook; this branch neither
+# narrows it nor widens it. Anything it cannot see keeps denying, which costs a reword,
+# and the pre-push hook is what decides whether the push actually happens.
+_is_delete_only() { # _is_delete_only <trusted-residue> -> 0 iff it can only DELETE refs
+  local s="$1" t del=0 colon=0 plain=0 i
+  local _meta_re='[;&|()<>{}$`]'
+  [[ "$s" =~ $_meta_re ]] && return 1
+  case "$s" in *$'\n'*) return 1 ;; esac
+  # The command word must BE the verb, so `sudo git push -d …` and `time git push -d …`
+  # deny. (`git -C <path> push -d …` never reaches here at all — `_pub_re` wants `git`
+  # and `push` adjacent, so it is allowed one step earlier by the under-match A4
+  # already pins. This branch neither causes that nor fixes it.)
+  # Deliberately ONE test rather than a separate
+  # check on each of the first two tokens: written as two, a mutation run showed neither
+  # could be killed on its own, because `_pub_re` has already guaranteed the words `git
+  # push` appear adjacent, so any command where they are not the first two tokens is
+  # rejected by whichever check the other one missed. As one line it is pinned by A23's
+  # `sudo git push origin --delete x` case. The PROGRAM name is matched
+  # case-insensitively and the SUBCOMMAND is not — the same asymmetry the verb test above
+  # is built on, and the reason A12's `GIT push` stays a deny.
+  local _head_re='^[[:space:]]*[Gg][Ii][Tt][[:space:]]+push([[:space:]]|$)'
+  [[ "$s" =~ $_head_re ]] || return 1
+  local tk=()
+  read -ra tk <<< "$s"   # `read` does no globbing, and the residue has no newline by now
+  for ((i = 2; i < ${#tk[@]}; i++)); do
+    t="${tk[i]}"
+    case "$t" in
+      --delete|-d) del=1 ;;
+      # Flags that neither generate refs nor take a separate value. Anything else falls
+      # to the `-*` arm below and denies.
+      -q|--quiet|-v|--verbose|--verify|--no-verify|--progress|--no-progress|--porcelain|--dry-run|-n|--atomic|-4|--ipv4|-6|--ipv6) ;;
+      -*)          return 1 ;;
+      :?*)         colon=$((colon + 1)) ;;
+      *)           plain=$((plain + 1)) ;;   # the remote, or a refspec that PUBLISHES
+    esac
+  done
+  [ "$del" = 1 ] && return 0
+  [ "$colon" -ge 1 ] && [ "$plain" -le 1 ]
+}
+
 # Two cases where the residue is not trusted and the RAW text is matched instead. Both
 # over-deny, which costs a reword; the other direction costs a missed gate silently.
 #   1. the command can substitute — see "why substitutions are not modelled";
@@ -482,6 +574,12 @@ _pub_re='(^|[^A-Za-z0-9_-])(git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+crea
 #
 # The patterns are single-quoted so `$(`, `${` and the backtick are matched literally
 # rather than expanded or treated as glob syntax.
+#
+# `_residue_trusted` records WHICH of the two paths answered. It is not used by the verb
+# test — that one is fail-safe either way, since the raw-text path only ever over-denies.
+# It gates the deletion exemption below, which is the one decision here that can turn a
+# deny into an ALLOW, and which relies on quoted spans actually having been blanked.
+_residue_trusted=0
 case "$_cmd_j" in
   *'$('*|*'${'[[:space:]]*|*'${|'*|*'`'*) _scan="$_cmd_j" ;;
   *) _scan="$(strip_quoted "$_cmd_j")"
@@ -512,7 +610,7 @@ case "$_cmd_j" in
      # input, every command starts taking the raw-text path and the quoted-mention ALLOW
      # assertions (A2/A4/A16) go red — so the property is pinned from the other side,
      # not merely asserted in this comment.
-     [ "${#_scan}" -lt "${#_cmd_j}" ] && _scan="$_cmd_j" ;;
+     if [ "${#_scan}" -lt "${#_cmd_j}" ]; then _scan="$_cmd_j"; else _residue_trusted=1; fi ;;
 esac
 
 # Case-insensitively, because the PROGRAM name resolves case-insensitively on an
@@ -527,6 +625,11 @@ shopt -s nocasematch
 [[ "$_scan" =~ $_pub_re ]]; _pub_hit=$?
 [ "$_ncm_was_set" = 1 ] || shopt -u nocasematch
 [ "$_pub_hit" = 0 ] || exit 0   # not a publish command
+
+# A push that can only DELETE remote refs publishes no code, so there is nothing to gate
+# and no marker could ever attest to it — the enforced pre-push hook skips these too.
+# Offered only on a trusted residue; see _is_delete_only for why, and for its limits.
+[ "$_residue_trusted" = 1 ] && _is_delete_only "$_scan" && exit 0
 
 # best-effort: evaluate the worktree a `cd`-prefixed push runs in
 tgt="$(honor_cd "$cmd")"
