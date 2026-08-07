@@ -24,6 +24,37 @@ write-once and effectively gone after merge, which is why they live here now.
   against that history. Revisit only if the length arithmetic ever needs to be exact
   rather than one-sided. (0.7.3 security review, 2026-08-03) **Priority:** P3
 
+- **The deletion exemption's whole defence against the quote class rests on ONE line.**
+  `case "$raw" in *"'"*|*'"'*|*'\'*) return 1` in `_is_delete_only` is the only guard that
+  sees a quoted token at all: `strip_quoted` blanks the span, so a quoted *publishing*
+  refspec is not merely mis-split, it is ABSENT from the residue — `git push origin :x
+  'main'` reaches the classifier as `origin :x`, a textbook delete-only push, while bash
+  still passes `main` to git. `_inert_re` and the colon/plain counters never get a chance,
+  because they only ever see tokens that survived blanking. Demonstrated against a mutant
+  with the line removed: `git push origin :x secretbranch2` really created the branch.
+  Not exploitable as shipped, and the line is mutation-pinned by three A23 cases plus the
+  two quoted-refspec cases added for it. Accepted rather than fixed: the suggested
+  backstop (compare a whitespace word-count of the residue against one of the raw text)
+  is defeated by the same blanking it is meant to police, so it would add a mechanism
+  harder to reason about than the one-line proof it backs up. Revisit if a second consumer
+  of the residue ever needs token-exact boundaries. (0.9.1 security review round 3,
+  2026-08-07) **Priority:** P3
+- **`_head_re` accepts VT, FF and CR as the separator between `git` and `push`, where bash
+  does not.** `[[:space:]]` is broader than bash's IFS-driven word splitting, so
+  `git<VT>push origin :x` is considered for the exemption although bash would never run it
+  as a `git push` (it fails as command-not-found, or the subcommand token is not `push`).
+  Over-matches in the SAFE direction — it widens what is considered, not what executes —
+  so no ref can move. Left alone because narrowing it to space/tab would diverge from the
+  same `[[:space:]]` the verb matcher above it uses, and one consistent class is easier to
+  reason about than two. (0.9.1 security review round 3, 2026-08-07) **Priority:** P4
+- **The single permitted plain token may be an arbitrary scp-syntax host.**
+  `git push attacker.example.com:evil/repo.git :y` satisfies the exemption, and git
+  contacts that host. Confirmed to transmit no object data for any shape the exemption
+  accepts, so nothing is exfiltrated — it is a network handshake, not a publish. Out of
+  threat model besides: composing that text already requires the ability to run arbitrary
+  commands, which this layer never claimed to stop. Closing it would mean resolving the
+  token against configured remotes, which this layer deliberately does not do.
+  (0.9.1 security review round 3, 2026-08-07) **Priority:** P4
 - **`git push --no-verify` is denied by the fast reminder even though the pre-push hook
   documents it as a deliberate, visible opt-out.** The same direction of disagreement the
   deletion exemption just fixed: the enforced layer offers an escape hatch and the fast

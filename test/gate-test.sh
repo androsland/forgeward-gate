@@ -447,6 +447,15 @@ fi
 # in a ref name, verified rather than assumed. `git push origin~1 :x` is the same rule
 # catching a character that is merely exotic rather than dangerous, which is the cost side.
 #
+# `git push origin :x 'main'` is the WORST shape of the quote defect and the reason the
+# quote refusal is pinned by more than the splitting spellings. Here the quoting does not
+# split a token, it DELETES one: `strip_quoted` blanks the span, so the publishing refspec
+# `main` is simply absent from the residue, leaving `origin :x` — a textbook delete-only
+# push — while bash still hands `main` to git as a live argument. Every guard downstream is
+# defeated by a token it never sees, so the raw-text refusal is the only thing that catches
+# it. Surfaced by the third security review, which found it exploitable against a mutant
+# with that line removed (`git push origin :x secretbranch2` really created the branch).
+#
 # `git push :x origin` pins ORDER, not count. git takes the first bare positional as the
 # repository wherever the colon refspecs sit, so `origin` there is a refspec. It fails in
 # git today for an unrelated reason (`:x` resolves as an empty-host ssh target) — the
@@ -493,6 +502,8 @@ deny|git push * :newcode
 deny|git push origin --delete stale-?
 deny|git push origin --delete [ab]-stale
 deny|git push origin~1 :x
+deny|git push origin :x 'main'
+deny|git push origin ':x' main
 deny|git push origin --delete $B
 deny|git push origin --delete $(cat b)
 deny|git push origin --delete `cat b`
