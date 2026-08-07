@@ -32,8 +32,12 @@ write-once and effectively gone after merge, which is why they live here now.
   still passes `main` to git. `_inert_re` and the colon/plain counters never get a chance,
   because they only ever see tokens that survived blanking. Demonstrated against a mutant
   with the line removed: `git push origin :x secretbranch2` really created the branch.
-  Not exploitable as shipped, and the line is mutation-pinned by three A23 cases plus the
-  two quoted-refspec cases added for it. Accepted rather than fixed: the suggested
+  Not exploitable as shipped, and the line is mutation-pinned by the three A23 splitting
+  cases plus `git push origin :x 'main'`. Its sibling `git push origin ':x' main` denies
+  through a DIFFERENT guard — blanking removes the colon token outright, so `colon=0` and
+  the aggregation check refuses it — which is worth recording rather than glossing:
+  adjacent guards catch adjacent shapes, and only a mutation run says which one caught
+  what. Accepted rather than fixed: the suggested
   backstop (compare a whitespace word-count of the residue against one of the raw text)
   is defeated by the same blanking it is meant to police, so it would add a mechanism
   harder to reason about than the one-line proof it backs up. Revisit if a second consumer

@@ -455,6 +455,11 @@ fi
 # defeated by a token it never sees, so the raw-text refusal is the only thing that catches
 # it. Surfaced by the third security review, which found it exploitable against a mutant
 # with that line removed (`git push origin :x secretbranch2` really created the branch).
+# Its sibling `git push origin ':x' main` is here as a NEAR MISS, not a duplicate: quoting
+# the colon token instead removes it entirely, so `colon=0` and the aggregation check
+# refuses it while the raw-text refusal never comes into play. Both were run against a
+# real remote and both really delete `x` AND publish `main`; they simply die at different
+# guards, which is only visible from a mutation run and not from reading either one.
 #
 # `git push :x origin` pins ORDER, not count. git takes the first bare positional as the
 # repository wherever the colon refspecs sit, so `origin` there is a refspec. It fails in
