@@ -1698,3 +1698,131 @@ plugin has none.
 
 **Coverage.** `test/gate-test.sh` M1 (assertion 24): static guard that `plugin.json`'s
 `hooks` value does not point at the auto-loaded `hooks.json` — a re-add fails the suite.
+
+## RESOLVED — the secrets scanner read untracked files and put them in a persisted transcript
+
+**Date:** 2026-08-10
+
+**Symptom.** `security-reviewer`'s documented Gitleaks invocation read a developer's
+local, gitignored `.env` — a private key plus three service credentials — during a real
+gate run. The reviewer noticed and kept the values out of its returned report, but by
+then they had already been written to disk in the subagent's persisted transcript at
+`~/.claude/projects/<project>/subagents/*.jsonl`: outside the repo, outside every cleanup
+this plugin performs, and outside the user's line of sight. An untracked file was never
+committed, so it cannot be the leak a secrets scanner exists to catch; reading it is
+pure downside.
+
+**Two causes, and the first one hid the second.**
+
+*Defect 1 — the documented invocation passed N paths to a 1-path command.*
+`agents/security-reviewer.md` read
+`forgeward-scan.sh gitleaks dir <changed-paths> --no-banner`. `<changed-paths>` is plural;
+`gitleaks dir [flags] [path]` is singular. Mechanism, from the source rather than inferred
+(`cmd/directory.go`, v8.30.1):
+
+```go
+source := "."
+if len(args) == 1 { source = args[0]; if source == "" { source = "." } }
+```
+
+There is no cobra `Args` validator, so a second positional is **not** an error — `len(args)`
+is simply != 1 and `source` STAYS `"."`, the current working directory. The extra argument
+is neither rejected nor dropped-with-the-first-honoured; the whole target is silently
+replaced by the cwd. Verified against the real binary: one path scanned 15 bytes, two paths
+scanned 176 — byte-identical to `gitleaks dir .` — and run from a parent directory the
+two-path form reported the leaks in a gitignored `.env` two levels down.
+
+*Defect 2 — `dir` mode is a filesystem scan at all.* Fixing defect 1 alone does not fix
+this: a correctly-scoped `gitleaks dir .` reads the same `.env`, and any changed-path list
+containing a directory re-triggers it. Whether the value then reaches stdout is an
+output-mode question with an unhelpful answer — `--no-banner` alone prints counts only, but
+`-v` prints `Secret: <value>` and `-f json -r -` prints `"Secret": "<value>"`, and a
+reviewer needs one of those to report `file:line` at all. The count-only mode is not a
+mitigation, it is a mode in which the reviewer cannot do its job.
+
+**Fix.** The scanner must only ever see paths that are actually in the reviewed diff.
+
+1. **Primary shape is the commit range**, not the filesystem:
+   `gitleaks git --log-opts="<base>...HEAD" --no-banner --redact -f json -r -`. `git` mode
+   scans the patches in that range, so untracked files are structurally out of scope — not
+   excluded by a rule that could be wrong, but unreachable. Where working-tree state is
+   genuinely needed, `dir` runs **once per changed FILE**.
+2. **`--redact` always.** It replaces every `Secret`/`Match` with `REDACTED` while keeping
+   `RuleID`, `File`, `StartLine` and `Fingerprint` — everything needed to report and rotate.
+   This closes the value half; (3) closes the read half. Neither is sufficient alone.
+3. **`forgeward-scan.sh` layer 4** enforces it rather than asking: for the `dir`/`file`/
+   `directory` family it requires **exactly one existing regular file that git tracks**.
+   Zero paths, two paths, a directory, and an untracked file are all refused with exit 2.
+   The argv parse skips flag values from an enumerated table, and an unlisted value-taking
+   flag is the only way it can diverge from cobra's. After the subcommand that direction is
+   already safe — the stray value looks like a positional, the count hits 2, refused. Before
+   it, it is not: `gitleaks --unlisted V dir .` makes `V` look like the subcommand, and a
+   "pos[0] isn't dir, nothing to guard" reading would wave the directory scan through. So
+   the subcommand is checked against an enumerated set and anything unrecognized is refused,
+   which also covers the pre-8.19 `detect --no-git` — the same filesystem walk under an
+   older name. Caught while reviewing the first version of this guard, whose comment claimed
+   "fails closed" when that held in only one of the two directions.
+4. **Trivy loses `secret` from `--scanners`.** `trivy fs <dir>` is the same filesystem walk
+   with the same exposure. Vuln and misconfig need the repo tree and do not emit secret
+   values; gitleaks owns the secrets axis, diff-scoped. (Trivy has no analogue of defect 1:
+   per its source, `filesystem`'s `PreRunE` calls `validateArgs`, which errors on a second
+   positional rather than silently rescoping. Read from source — trivy is not installed
+   here, so that half is unverified against a binary.)
+5. **Short `-r` closed for gitleaks.** A bare `-r` is a stated blind spot in this wrapper
+   because it means "recursive" in some tools — true in general, false for gitleaks, whose
+   help reads `-r, --report-path string  report file`. Only the long form was enumerated,
+   so `gitleaks dir x -r evil.json` reached the write the long form exists to refuse. Now
+   per-tool, like the existing `-o` format/destination exemption; every other tool's `-r`
+   is untouched.
+
+**Why not a `.env` exclusion.** Because a **committed** `.env` is a genuine, valuable
+finding and must keep firing. The line is tracked vs untracked, not the filename — and a
+filename allowlist would both miss the real finding and fail to cover the next untracked
+credential file that is not called `.env`.
+
+**Known scope of the fix, stated so its absence is not read as coverage.** `tracked` is a
+proxy for "in the reviewed diff": the wrapper gets an argv, not a base ref, so a tracked
+file the diff never touched still passes. Diff scoping stays the reviewer's job. The guard
+is gitleaks-only and deliberately does not fire on `trivy fs .`, `semgrep scan <many
+files>`, or `gitleaks git <repo>` — a directory is the correct target for all three. A bare
+`gitleaks git` with no `--log-opts` scans full history and is allowed on purpose: auditing
+a repo's history for leaked secrets is legitimate, and everything it reads is committed.
+A tracked symlink pointing outside the repo passes `-f` and, under `--follow-symlinks`,
+gitleaks reads the target. Layer 1 matches flag tokens and cannot see inside a flag's
+value, so `--log-opts="--output=x"` — using the very flag this change starts recommending
+— forwards `--output` to `git log` and writes the file; layer 3 catches it and exits 3
+naming the path, which is the containment layer 3 exists to provide. The check-then-exec
+sequence is TOCTOU: a process with
+concurrent write access to that exact path can swap the tracked file for a symlink in the
+window. Accepted, not fixed — that attacker already has local write access to the repo,
+which dwarfs the misaimed-scanner threat this guard addresses. Both are now in the
+script's own NON-GOALS block, so their absence is not read as coverage.
+
+**Considered and declined: a `PreToolUse` text deny for `gitleaks dir`.** The hook matches
+command TEXT and therefore cannot tell whether a target is a directory, a file, or tracked
+— the fact that decides the case. It would also over-deny this repo's own docs and tests,
+which quote the defective shape. The wrapper sees the real argv and the real filesystem;
+that is where the check belongs.
+
+**Exposure already on disk.** Present from 0.2.0 (2026-07-13, the commit that added
+`security-reviewer`) through 0.9.1, unchanged. Anyone who ran the gate in a repo with a
+local `.env` may have those values in `~/.claude/projects/<project>/subagents/*.jsonl`.
+That path is outside the repo and no cleanup in this plugin touches it, so it is called out
+in README under *Security scope* with a filenames-only grep and an instruction to rotate —
+deleting the transcript is housekeeping, not remediation.
+
+**Coverage.** `test/gate-test.sh` P8i (short `-r`, separated and cuddled, with `-r -` still
+allowed), P8j (the argv rules: zero/two paths, a directory, `.`, and an untracked file all
+refused; one tracked file in any argv position and every `git`-mode shape allowed;
+`detect --no-git`, `detect --no-git --source .env`, `protect`,
+`--baseline-path x frobnicate .` and a bare `frobnicate` all refused as unrecognized
+subcommands — the first three are the exact argv a security review reproduced against the
+real binary through the pre-fix wrapper), and P8k
+(end-to-end against the real binary, on the observed fixture: a gitignored `.env` with a
+fake AWS key and two clean tracked files). P8k carries a **control leg** that bypasses the
+wrapper and asserts the raw two-path scan DOES leak — without it the other assertions could
+pass with the guard ripped out, since `--no-banner` alone prints no values. Verified by
+mutation: with layer 4 disabled, P8j and P8k both fail, P8k reporting
+`[SECRET LEAKED by two-path scan]`; and separately, softening the unrecognized-subcommand
+branch back to `return 0` fails P8j on all three of its legs. P8i's target changed from `.` to a tracked file so it
+still exercises the dash-led-flag guard rather than passing on the new target guard.

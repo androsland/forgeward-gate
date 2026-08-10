@@ -85,7 +85,9 @@ When invoked:
    **Known vulnerabilities (CVEs) in added or version-changed dependencies:**
    - Prefer a scanner that reads the lockfile without touching it, run through the
      wrapper so nothing lands in the repo:
-     `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-scan.sh" trivy fs --format json --scanners vuln --exit-code 0 --quiet <manifest-or-lockfile paths>`
+     `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-scan.sh" trivy fs --format json --scanners vuln --exit-code 0 --quiet <ONE manifest-or-lockfile path>`
+     `trivy fs` takes exactly **one** positional path — pass a second and it errors out
+     instead of scanning it. Run it once per manifest.
      (`osv-scanner --format json <path>` through the same wrapper is an equivalent
      substitute). **Never** `npm audit fix`, `npm install`, or anything else that
      resolves or writes — `npm audit` itself is acceptable only where a lockfile is

@@ -146,6 +146,52 @@ write-once and effectively gone after merge, which is why they live here now.
   the file-write strictly weaker than what they already hold. Probing `--version`
   would not close it — a spoofed binary can print anything. In the script header as
   a blind spot. (PR #6, sixth security pass, 2026-08-01) **Priority:** —
+- **`trivy fs`'s one-path arity is verified from SOURCE, not from a binary.** Per
+  `pkg/commands/app.go`, `filesystem`'s `PreRunE` calls `validateArgs`, which errors when
+  `len(args) > 1` — so trivy fails loudly where gitleaks silently rescoped to the cwd.
+  trivy is not installed on the machine that fixed this, so that half is unconfirmed
+  against a running binary, and the version read was `main` rather than a pinned tag.
+  Re-verify where trivy is present. gitleaks 8.30.1 and semgrep were both confirmed
+  empirically (semgrep genuinely takes many paths: two given, two in `paths.scanned`).
+  (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
+- **The per-tool arities the reviewers document are unverified for `phpcs`,
+  `osv-scanner`, `grype` and `syft`** — none of the four is installed here. The
+  gitleaks defect was exactly this shape (a documented plural where the tool takes one),
+  and it survived three releases because nobody ran the arity check. Do the same pass on
+  each when a machine has them. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
+- **`forgeward-scan.sh` layer 4 uses TRACKED as a proxy for "in the reviewed diff".**
+  It gets an argv, not a base ref, so a tracked file the diff never touched still passes.
+  That is the whole gap between what the wrapper enforces and what the constraint
+  actually asks for. Closing it means handing the wrapper the base (an env var set by the
+  gate, say `FORGEWARD_BASE`) and checking membership in `git diff --name-only
+  "$BASE...HEAD"` — cheap, but it couples the wrapper to the gate's notion of a base and
+  needs a defined behaviour when the var is absent. Deliberately deferred, not forgotten.
+  (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
+- **Nothing in forgeward can scrub a subagent transcript.** `~/.claude/projects/<project>/
+  subagents/*.jsonl` is outside the repo and outside every cleanup this plugin performs,
+  which is why the untracked-`.env` read was durable rather than transient. The gate can
+  prevent a write; it has no remediation path for one that already happened, and the
+  README notice can only tell users to rotate. Worth deciding whether forgeward should
+  ship a `forgeward-transcript-audit.sh` that greps its own project's transcripts for
+  credential-shaped strings by NAME and reports filenames only — never values, since
+  printing them is the exposure. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P2
+- **Layer 1 cannot see inside a flag's VALUE, and `--log-opts` is now a recommended flag.**
+  Verified against gitleaks 8.30.1: `gitleaks git --log-opts="--output=x"` forwards
+  `--output` to `git log` and writes `x`, because layer 1 matches whole tokens and this one
+  begins `--log-opts`. Layer 3 contains it — the run exits 3 naming the new path — so it is
+  loud rather than silent, which is why this is a P3 and not a blocker. Deliberately not
+  fixed by pattern-matching inside the value: `--output` is the one git-log write flag I
+  verified, and encoding that single sample as the rule is how a guard ends up looking
+  complete while missing the next one. If it is fixed, the shape should be an allowlist on
+  the value (a commit range only), not a denylist of flags. (security review follow-up,
+  2026-08-10) **Priority:** P3
+- **Layer 4's target check is TOCTOU and is documented as an accepted gap, not fixed.**
+  `_gl_target_guard` validates the path, then `forgeward-scan.sh` execs the tool, which
+  opens it — anything with concurrent write access to that exact path can swap a tracked
+  file for a symlink to an untracked one in the window. Accepted because that attacker
+  already has local write access to the repo, which dwarfs the misaimed-scanner threat
+  the guard addresses. Revisit only if forgeward ever runs scanners against a tree a
+  less-trusted process can write. (security review, 2026-08-10) **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 

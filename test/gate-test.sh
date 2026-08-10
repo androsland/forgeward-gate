@@ -1529,16 +1529,180 @@ done
 
 # P8i: the same shape end-to-end against a REAL scanner, where one is installed — the
 # proof that matters is that nothing lands in the repo, not that a string was matched.
+# The target is a TRACKED FILE, not '.', on purpose: since P8k the wrapper refuses a
+# directory target for gitleaks outright, and with '.' this assertion would pass on the
+# target guard without ever exercising the dash-led-flag guard it exists to test.
 if command -v gitleaks >/dev/null 2>&1; then
   DR="$TMP/dashrepo"; mkrepo "$DR"
   ( cd "$DR"; echo x > a.txt; git add -A; git commit -qm base ) >/dev/null 2>&1
-  ( cd "$DR" && "$SCAN" gitleaks dir . --report-path -evil.json --no-banner ) >/dev/null 2>&1
+  ( cd "$DR" && "$SCAN" gitleaks dir a.txt --report-path -evil.json --no-banner ) >/dev/null 2>&1
   rc=$?
   { [ "$rc" = 2 ] && [ ! -e "$DR/-evil.json" ]; } \
     && ok "forgeward-scan: real gitleaks with a dash-led --report-path is refused and the repo stays clean" \
     || nok "forgeward-scan real dash-led write" "rc=$rc, -evil.json present: $([ -e "$DR/-evil.json" ] && echo yes || echo no)"
+  # …and the SHORT spelling of the same flag. gitleaks' own help reads
+  # `-r, --report-path string  report file`, but only the long form was enumerated, so
+  # `-r evil.json` reached the write the long form exists to refuse. Both separated and
+  # cuddled. Bare '-r -' is stdout and must stay allowed.
+  ( cd "$DR" && "$SCAN" gitleaks dir a.txt -r evil.json --no-banner ) >/dev/null 2>&1
+  rc1=$?
+  ( cd "$DR" && "$SCAN" gitleaks dir a.txt -revil2.json --no-banner ) >/dev/null 2>&1
+  rc2=$?
+  # `-r -` needs `-f` alongside it: gitleaks exits 1 with "Unknown report format" when a
+  # report path is given without one. That is gitleaks' rule, not the wrapper's.
+  ( cd "$DR" && "$SCAN" gitleaks dir a.txt -f json -r - --no-banner --redact ) >/dev/null 2>&1
+  rc3=$?
+  { [ "$rc1" = 2 ] && [ "$rc2" = 2 ] && [ "$rc3" = 0 ] \
+    && [ ! -e "$DR/evil.json" ] && [ ! -e "$DR/evil2.json" ]; } \
+    && ok "forgeward-scan: gitleaks SHORT '-r <file>' (separated and cuddled) refused, '-r -' still allowed" \
+    || nok "forgeward-scan gitleaks short -r" "rc=$rc1/$rc2/$rc3, files: $(ls "$DR" | tr '\n' ' ')"
 else
   ok "forgeward-scan real dash-led write: SKIPPED (gitleaks not installed)"
+  ok "forgeward-scan gitleaks short -r: SKIPPED (gitleaks not installed)"
+fi
+
+# P8j: the gitleaks TARGET guard, argv-level. gitleaks takes exactly ONE positional path
+# and, given any other number, does not error — cmd/directory.go keeps `source = "."`, so
+# the scan silently becomes the whole current directory. The documented reviewer
+# invocation passed the entire changed-path list, which is how a two-file scan became a
+# working-tree scan that read a gitignored .env.
+#
+# Unit-level first (no gitleaks needed): the guard runs before the tool does, so a stub
+# `tool` proves the argv rules on their own. Uses the real gitleaks name via a symlink so
+# `basename` dispatch is exercised for real rather than asserted about.
+GLDIR="$TMP/glstub"; mkdir -p "$GLDIR"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$GLDIR/gitleaks"; chmod +x "$GLDIR/gitleaks"
+GT="$TMP/gtrepo"; mkrepo "$GT"
+( cd "$GT"; echo x > a.txt; echo y > b.txt; mkdir -p sub; echo z > sub/c.txt
+  printf 'a.local\n' > .gitignore; echo untracked > a.local
+  git add -A; git commit -qm base ) >/dev/null 2>&1
+gl() { ( cd "$GT" && "$SCAN" "$GLDIR/gitleaks" "$@" >/dev/null 2>&1; echo $? ); }
+tgt_bad=""
+# refused: two paths (the reported defect), zero paths, a directory, '.', an untracked file
+for _c in 'dir|a.txt|b.txt' 'dir|--no-banner' 'dir|sub' 'dir|.' 'dir|a.local' 'file|a.txt|b.txt' 'directory|.'; do
+  IFS='|' read -r -a _a <<< "$_c"
+  [ "$(gl "${_a[@]}")" = 2 ] || tgt_bad="$tgt_bad [refuse:${_c//|/ }]"
+done
+# allowed: exactly one tracked regular file, in any argv position, and `git` mode — whose
+# target is a commit range, so untracked files are structurally out of scope. A bare
+# `gitleaks git` with no --log-opts scans full history and stays allowed on purpose:
+# auditing a repo's history for leaked secrets is a legitimate thing to want.
+for _c in 'dir|a.txt' 'dir|a.txt|--no-banner' 'dir|--redact|a.txt' 'dir|-f|json|-r|-|a.txt' 'dir|sub/c.txt' 'git|--log-opts=HEAD~1...HEAD' 'git|.' 'git' 'stdin' 'version' '--version'; do
+  IFS='|' read -r -a _a <<< "$_c"
+  [ "$(gl "${_a[@]}")" = 0 ] || tgt_bad="$tgt_bad [allow:${_c//|/ }]"
+done
+# An UNRECOGNIZED subcommand is refused, not waved through. This is the one place the
+# argv parse can diverge from cobra's in the fail-OPEN direction: an unlisted
+# value-taking flag placed BEFORE the subcommand makes its value look like the
+# subcommand, and `gitleaks --unlisted V dir .` would otherwise reach a directory scan
+# on a "pos[0] isn't dir, nothing to guard" reading. Also covers the pre-8.19
+# `detect --no-git`, which is the same filesystem walk under an older name.
+# The `detect` legs are the exact argv a security review reproduced against the real
+# 8.30.1 binary through the pre-fix wrapper: `detect --no-git` with no target defaults
+# to the cwd and scanned byte-identically to the refused `dir .`, and with `--source
+# .env` it read the untracked file outright. `--source` is deliberately NOT in the
+# value-taking table — it does not need to be, because `detect` never reaches the
+# target checks. `protect` is its staged-changes sibling and dies at the same gate.
+for _c in 'detect|--no-git|.' 'detect|--no-git|--no-banner' \
+          'detect|--no-git|--source|.env|--no-banner' 'protect|--no-banner' \
+          '--baseline-path|x|frobnicate|.' 'frobnicate'; do
+  IFS='|' read -r -a _a <<< "$_c"
+  [ "$(gl "${_a[@]}")" = 2 ] || tgt_bad="$tgt_bad [refuse-unknown-subcmd:${_c//|/ }]"
+done
+[ -z "$tgt_bad" ] \
+  && ok "forgeward-scan: gitleaks dir target must be ONE tracked regular file; directory / multi-path / untracked refused, 'git' mode untouched" \
+  || nok "forgeward-scan gitleaks target guard" "wrong verdict on:$tgt_bad"
+
+# P8k: the exposure itself, end-to-end against the REAL binary. A repo with a gitignored
+# .env holding a fake AWS key and two clean tracked files as the changed paths — exactly
+# the shape observed on a real gate run. Four things must hold at once:
+#   0. the defect still REPRODUCES without the wrapper — otherwise the rest is vacuous;
+#   1. the documented two-path invocation is refused and prints no secret;
+#   2. the endorsed shapes (one file at a time, and `git --log-opts`) never see the
+#      untracked .env;
+#   3. a COMMITTED secret still fires. That is what stops the fix from degenerating into
+#      a blanket .env exclusion: the line is tracked vs untracked, not the filename.
+#
+# NOTE ON OUTPUT MODE, because it decides whether this test can fail at all. In gitleaks
+# 8.30.1 `--no-banner` alone prints COUNTS ONLY — no file, no value. The value reaches
+# stdout under `-v` or a JSON report, which is precisely what a reviewer must ask for to
+# report `file:line` at all. So the legs below use `-f json -r -`; asserting against the
+# count-only shape would pass with the guard ripped out and prove nothing.
+if command -v gitleaks >/dev/null 2>&1; then
+  ER="$TMP/envrepo"; mkrepo "$ER"
+  # Split literal: assembled at runtime so no complete credential exists in this file and
+  # a gitleaks run over forgeward's own repo cannot flag its own regression fixture.
+  FAKE_AWS="AKIA""QYLPMN5HGZTHHFPQ"
+  ( cd "$ER"
+    printf '.env\n'                      > .gitignore
+    printf 'AWS_ACCESS_KEY_ID=%s\n' "$FAKE_AWS" > .env      # untracked, gitignored
+    printf 'clean one\n'                 > app.php          # the changed paths:
+    printf '# todos\n'                   > TODOS.md         # both clean, both tracked
+    git add -A; git commit -qm base ) >/dev/null 2>&1
+  env_bad=""
+  # 0. Control: BYPASS the wrapper and run the documented invocation raw. It must leak,
+  #    or this fixture is not reproducing the defect and every assertion below is
+  #    vacuous. If this ever fails, re-derive the defect against the installed gitleaks
+  #    BEFORE weakening the guard — do not just delete the leg.
+  out="$( cd "$ER" && gitleaks dir app.php TODOS.md --no-banner -f json -r - 2>&1 )"
+  case "$out" in
+    *"$FAKE_AWS"*) ;;
+    *) env_bad="$env_bad [control: raw two-path scan did NOT leak — fixture no longer reproduces the defect]" ;;
+  esac
+  # 1. the documented shape THROUGH the wrapper: refused, and nothing from .env anywhere.
+  out="$( cd "$ER" && "$SCAN" gitleaks dir app.php TODOS.md --no-banner -f json -r - 2>&1 )"; rc=$?
+  [ "$rc" = 2 ] || env_bad="$env_bad [two-path not refused rc=$rc]"
+  case "$out" in *"$FAKE_AWS"*) env_bad="$env_bad [SECRET LEAKED by two-path scan]" ;; esac
+  # 2a. one tracked file at a time — the endorsed dir shape. Never reaches .env.
+  for _f in app.php TODOS.md; do
+    out="$( cd "$ER" && "$SCAN" gitleaks dir "$_f" --no-banner --redact -f json -r - 2>&1 )"
+    case "$out" in *"$FAKE_AWS"*) env_bad="$env_bad [SECRET LEAKED by per-file scan of $_f]" ;; esac
+  done
+  # 2b. commit-range mode — the primary shape. Untracked files are structurally excluded.
+  out="$( cd "$ER" && "$SCAN" gitleaks git --log-opts="HEAD" --no-banner --redact -f json -r - 2>&1 )"
+  case "$out" in *"$FAKE_AWS"*) env_bad="$env_bad [SECRET LEAKED by git-range scan]" ;; esac
+  # 3. the other half of the contract: a COMMITTED secret is a real finding and must
+  #    still fire. Tracked vs untracked is the line, not the filename — so commit the
+  #    very same .env and require a hit.
+  ( cd "$ER"
+    : > .gitignore
+    git add -A; git commit -qm "oops: commit the .env" ) >/dev/null 2>&1
+  out="$( cd "$ER" && "$SCAN" gitleaks git --log-opts="HEAD~1..HEAD" --no-banner --redact -f json -r - 2>&1 )"
+  case "$out" in
+    *'"RuleID": "aws-access-token"'*) ;;
+    *) env_bad="$env_bad [committed .env NOT detected — fix over-reaches]" ;;
+  esac
+  case "$out" in *"$FAKE_AWS"*) env_bad="$env_bad [--redact did not redact]" ;; esac
+  [ -z "$env_bad" ] \
+    && ok "forgeward-scan: an untracked gitignored .env is never read by any endorsed gitleaks shape, and a COMMITTED .env still fires (redacted)" \
+    || nok "forgeward-scan gitleaks untracked-.env exposure" "$env_bad"
+else
+  ok "forgeward-scan gitleaks untracked-.env exposure: SKIPPED (gitleaks not installed)"
+fi
+
+# P8l: layer 1 refuses output-file FLAGS, but it matches whole tokens and therefore cannot
+# see inside a flag's VALUE. `--log-opts` is forwarded verbatim to `git log`, so
+# `--log-opts="--output=x"` really does write `x` — and `--log-opts` is the flag the
+# reviewers are now told to use, which is what puts this in scope here.
+#
+# This is pinned as ACCEPTED-AND-CONTAINED, not as a refusal: the assertion is that
+# layer 3 notices (exit 3, path named), i.e. that the gap stays LOUD. Asserting rc=2
+# would be asserting a fix that deliberately was not made — the value-allowlist that
+# would close it properly is a TODO, not this change. If someone later closes it, this
+# leg should be rewritten to expect refusal, not deleted.
+if command -v gitleaks >/dev/null 2>&1; then
+  LR="$TMP/logopts"; mkrepo "$LR"
+  ( cd "$LR"; printf 'x\n' > a.txt; git add -A; git commit -qm base ) >/dev/null 2>&1
+  lo_bad=""
+  out="$( cd "$LR" && "$SCAN" gitleaks git --log-opts="--output=pwned.txt" --no-banner 2>&1 )"; rc=$?
+  [ -f "$LR/pwned.txt" ] || lo_bad="$lo_bad [precondition: git log did not write the file, so this no longer tests anything]"
+  [ "$rc" = 3 ] || lo_bad="$lo_bad [layer 3 did not flag the write: rc=$rc, expected 3]"
+  case "$out" in *pwned.txt*) ;; *) lo_bad="$lo_bad [the new path was not named in the report]" ;; esac
+  [ -z "$lo_bad" ] \
+    && ok "forgeward-scan: a write smuggled through --log-opts is not refused by layer 1 but IS caught and named by layer 3 (exit 3)" \
+    || nok "forgeward-scan --log-opts write containment" "$lo_bad"
+else
+  ok "forgeward-scan --log-opts write containment: SKIPPED (gitleaks not installed)"
 fi
 
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.

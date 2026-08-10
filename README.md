@@ -410,6 +410,44 @@ itself when `/cso` is absent. The gate's final `/ship` handoff is established st
 a handoff that did not happen. Treat the `ci-gate` CI scanners as your unskippable floor. A gate
 PASS means the reviewed change is clean, not that the running application is secure.
 
+### 0.9.2 — if you ran the gate before this release, check for exposed secrets
+
+**Affects 0.2.0 through 0.9.1** (the line was introduced with `security-reviewer` on
+2026-07-13 and never changed until now). **Fixed in 0.9.2.**
+
+`security-reviewer`'s documented Gitleaks invocation passed the whole changed-path list to
+`gitleaks dir`, which takes exactly **one** positional path. Given any other number it does
+not error — it silently scans the **current directory** instead. So a scan that read as
+"these two changed files" was a walk of your entire working tree, including untracked,
+gitignored files. If your repo has a local `.env` or any other untracked credential file,
+its plaintext values may have been read and written into the reviewer subagent's
+**persisted transcript**.
+
+**Where to look.** Those transcripts live outside your repo, so nothing in git, in
+forgeward, or in any cleanup this plugin performs has touched them:
+
+```
+~/.claude/projects/<project-slug>/subagents/*.jsonl
+```
+
+(On Windows: `%USERPROFILE%\.claude\projects\…`.) List the files that match a credential
+name — `-l` prints filenames only, so this does not put the value back on your screen:
+
+```bash
+grep -rl --include='*.jsonl' -e 'BEGIN .* PRIVATE KEY' -e 'SECRET' -e 'TOKEN' -e 'PASSWORD' \
+  ~/.claude/projects/*/subagents/ 2>/dev/null
+```
+
+**What to do.** **Rotate anything that appears.** Deleting the transcript afterwards is
+housekeeping, not remediation — a credential that was written to disk is exposed, and only
+rotation undoes that.
+
+**What changed in 0.9.2.** The reviewer now scans the **commit range**
+(`gitleaks git --log-opts="<base>...HEAD" --redact`), so untracked files are structurally
+out of scope, and `forgeward-scan.sh` refuses a `gitleaks dir` target that is a directory,
+a path list, or an untracked file. A **committed** `.env` is still a finding and still
+fires — the line is tracked vs untracked, not the filename.
+
 ## Accepted design gaps (documented, not bugs)
 
 - **Pre-push local mutations aren't gated.** gstack's version bump, CHANGELOG, and commit
