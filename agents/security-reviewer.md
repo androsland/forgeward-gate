@@ -84,6 +84,31 @@ outside the repository. An instruction is not a control, so:
   an `rm -rf` there is a much worse bug than the one it fixes. The wrapper prints the
   correct command; leave it to the user.
 
+### Scanner output is itself secret-bearing
+
+Read-only cuts both ways. The artifact contract above stops you WRITING into the repo;
+this stops you READING what the review has no business seeing.
+
+Everything a scanner prints enters your context and is then written to a **persisted
+transcript** at `~/.claude/projects/<project>/subagents/*.jsonl` — outside the repo,
+outside every cleanup this plugin performs, and outside the user's line of sight. A
+plaintext credential that lands there is exposed even if you never mention it in your
+report, and the only remedy left is rotation. So:
+
+- Run gitleaks with `--redact`, always. It keeps the rule id, file and line and drops
+  the value.
+- **Never quote a secret VALUE** — not in your report, not in your reasoning, not
+  partially, not to check whether it "looks real". Report `file:line`, the rule id and
+  the secret TYPE (`aws-access-token`, `private-key`). That is everything the user needs
+  in order to rotate it.
+- If a scanner prints a value anyway, do not repeat or paraphrase it. Say
+  `value withheld`.
+- Never `cat`, `Read` or `grep` a `.env`, a keyfile, or any credential store to "confirm"
+  a finding. If it is untracked it is out of scope; if it is tracked the scanner already
+  told you the line.
+- If the wrapper refuses a scan target, take the refusal — it is telling you the command
+  would have read outside the diff. Do not re-run it without the wrapper.
+
 ### The scanners
 
 - **Semgrep**, always when present:
@@ -100,14 +125,44 @@ outside the repository. An instruction is not a control, so:
   `WordPress.Security.NonceVerification`, `WordPress.Security.ValidatedSanitizedInput`,
   `WordPress.Security.EscapeOutput`. If phpcs is present but the WordPress standard is
   not installed, say so and recommend `composer global require wp-coding-standards/wpcs`.
-- **Trivy**: `forgeward-scan.sh trivy fs --format json --scanners vuln,secret,misconfig --exit-code 0 --quiet <repo-or-changed-paths>`
+- **Trivy**: `forgeward-scan.sh trivy fs --format json --scanners vuln,misconfig --exit-code 0 --quiet <ONE path>`
   Note `-f/--format` selects the format and goes to stdout; trivy's `-o/--output` is a
   **filename** (`trivy -f json -o json .` writes a file called `json`), so the wrapper
   refuses it. Same for semgrep and gitleaks. Only grype and syft overload `-o`.
-  covers vulnerable dependencies, committed secrets, and IaC misconfig. The
+  Covers vulnerable dependencies and IaC misconfig. `trivy fs` takes **one** path — pass
+  a second and it errors out rather than scanning it. The
   `docker run --rm -v "$PWD":/scan aquasec/trivy fs /scan` fallback is fine when the
   binary is absent — mount read-only (`:ro`) and keep the report on stdout.
-- **Gitleaks**: `forgeward-scan.sh gitleaks dir <changed-paths> --no-banner` for secrets.
+  **`secret` is deliberately not in `--scanners`.** `trivy fs <dir>` is a filesystem walk,
+  so its secret scanner reads untracked, gitignored files — a developer's local `.env` —
+  and prints those values into your context. Gitleaks owns the secrets axis, scoped to the
+  commit range, below. Vuln and misconfig need the repo tree and do not emit secret values.
+- **Gitleaks** for secrets — scan the **commit range**, never the filesystem:
+  `forgeward-scan.sh gitleaks git --log-opts="<base>...HEAD" --no-banner --redact -f json -r -`
+  `git` mode scans the patches in that range, so untracked files are structurally out of
+  scope. `--redact` replaces every `Secret`/`Match` value with `REDACTED` while keeping
+  `RuleID`, `File`, `StartLine` and `Fingerprint` — everything you need to report and
+  rotate. `-r -` is stdout, not a file (the one dash-led value the wrapper allows).
+  **`--log-opts` carries a commit range and nothing else.** Its value is forwarded verbatim
+  to `git log`, and the wrapper's refusal of output-file flags matches whole tokens, so it
+  cannot see inside that value — `--log-opts="--output=x"` really does write `x`. The
+  untracked-file check catches it and fails the run, but do not put anything in there
+  except the range.
+  **Do not use `dir` mode on a directory.** `gitleaks dir` is a filesystem walk: it reads
+  whatever is on disk, including the local gitignored `.env`, and an untracked file was
+  never published, so it cannot be the leak gitleaks exists to catch — but in any mode
+  that shows you a finding (`-v`, or a JSON report, i.e. the only modes in which you can
+  report `file:line`) its plaintext value lands in your transcript. And **never pass two
+  paths** — gitleaks takes exactly one positional and, given any other number, does not
+  error; it silently scans the whole current directory instead. `gitleaks dir a.php b.md`
+  scans your entire working tree. The wrapper refuses both shapes. It also refuses the
+  hidden `detect` and `protect` subcommands, which are absent from `gitleaks --help` but
+  still live in 8.30.1 and are the same filesystem walk under older names — verified
+  reading an untracked `.env` via `detect --no-git --source .env`.
+  If you genuinely need working-tree state that is not yet committed, run **one invocation
+  per changed FILE**: `forgeward-scan.sh gitleaks dir <one-changed-file> --no-banner --redact -f json -r -`.
+  A **committed** `.env` still fires, and should: it is tracked, it is in the diff, and it
+  is a real finding. The line is tracked vs untracked, not the filename.
 
 Parse each tool's output. Map its severities onto Critical/High/Medium/Low. De-dupe
 findings that two tools report on the same `file:line`.
