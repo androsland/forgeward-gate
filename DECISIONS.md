@@ -1707,7 +1707,7 @@ plugin has none.
 local, gitignored `.env` — a private key plus three service credentials — during a real
 gate run. The reviewer noticed and kept the values out of its returned report, but by
 then they had already been written to disk in the subagent's persisted transcript at
-`~/.claude/projects/<project>/subagents/*.jsonl`: outside the repo, outside every cleanup
+`~/.claude/projects/<project>/<session>/subagents/agent-*.jsonl`: outside the repo, outside every cleanup
 this plugin performs, and outside the user's line of sight. An untracked file was never
 committed, so it cannot be the leak a secrets scanner exists to catch; reading it is
 pure downside.
@@ -1806,7 +1806,7 @@ that is where the check belongs.
 
 **Exposure already on disk.** Present from 0.2.0 (2026-07-13, the commit that added
 `security-reviewer`) through 0.9.1, unchanged. Anyone who ran the gate in a repo with a
-local `.env` may have those values in `~/.claude/projects/<project>/subagents/*.jsonl`.
+local `.env` may have those values in `~/.claude/projects/<project>/<session>/subagents/agent-*.jsonl`.
 That path is outside the repo and no cleanup in this plugin touches it, so it is called out
 in README under *Security scope* with a filenames-only grep and an instruction to rotate —
 deleting the transcript is housekeeping, not remediation.
@@ -1826,3 +1826,104 @@ mutation: with layer 4 disabled, P8j and P8k both fail, P8k reporting
 `[SECRET LEAKED by two-path scan]`; and separately, softening the unrecognized-subcommand
 branch back to `return 0` fails P8j on all three of its legs. P8i's target changed from `.` to a tracked file so it
 still exercises the dash-led-flag guard rather than passing on the new target guard.
+
+**Postscript (0.9.3): the rotation notice pointed at a path that does not exist.** The
+transcript location was written as `~/.claude/projects/<project>/subagents/*.jsonl`. The
+real layout has a **session-uuid level** in between:
+`~/.claude/projects/<project>/<session>/subagents/agent-*.jsonl`. The wrong path came in
+verbatim from the defect report and was propagated to README, DECISIONS, TODOS,
+`forgeward-scan.sh`, the agent file, the commit message and the PR body without once being
+run. It was caught only because a reader tried the command and got
+`No such file or directory`.
+
+This is the failure mode a rotation notice can least afford. The glob does not error in a
+way that says "your path is wrong" — it reads as *nothing matched*, i.e. clean, so a user
+who follows the instructions exactly concludes they were unaffected and does not rotate. A
+notice that silently converts "exposed" into "clean" is worse than no notice, because it
+also retires the user's suspicion.
+
+Two corrections, beyond the path itself. The published grep now searches recursively from
+`projects/` so the depth cannot be got wrong again, and it matches credential **value**
+shapes rather than the words `SECRET`/`TOKEN`/`PASSWORD`. On the machine where this was
+found the value-shaped command returned 15 files, of which the genuinely actionable set was
+smaller again — the rest being public-by-design Supabase anon keys, example keys and the
+fix's own test fixture. The notice says so, because a number presented without that caveat
+is read as a leak count.
+
+The word-based net did not survive the same treatment. Case-*sensitive* it returned 660
+files, but a transcript holding `const dbPassword = process.env.password` does not match
+it while the shouty env-var form does — and transcripts capture source and JSON, where the
+lowercase form is the common one. So the case-sensitive version misses the realistic case
+and returns nothing: the original defect again, in a third costume. Adding `-i` fixes the
+correctness and destroys the utility — it then matches **1751 of 1756** transcripts on this
+machine, 99.7%, because those words appear in any conversation that discusses
+authentication at all. It is published with `-i` and scoped to a single project directory
+rather than the whole archive, described as a reading list for a project you already
+suspect. The alternative — publishing it case-sensitive because the number looks more like
+a result — is the failure this entry is about.
+
+The pattern list itself then failed the same test at one remove. The first draft carried
+six shapes, which meant a leaked Stripe, OpenAI, Google or npm credential returned empty —
+"reads as clean" again, relocated from the path to the pattern list. Widening to ten fixed
+that but produced its own version of it: the connection-URL pattern
+(`://user:pass@`) matched **201** files on this machine against **15** for the nine
+prefixed shapes combined, so a single command would have buried three private-key hits
+under two hundred documentation URLs. Under-reaction from noise is the same defect as
+under-reaction from a broken path. The notice therefore runs the prefixed shapes first and
+the URL shape second, labelled as a skim, and states outright that the list is not
+exhaustive and an empty result is not a clean bill.
+
+The gate's privacy reviewer then found the same shape a third time, one step further out:
+the notice invites the reader to judge whether a match is a real leak, but every published
+command is `-l` and the triage step that follows had no guidance at all — so the safety
+property stops exactly where the user starts opening files. Its recommended remedy was
+`grep -ohE <pattern> <file>`, "prints only the matched substring rather than the whole
+line". That is rejected, and the reason is worth recording because the suggestion is
+superficially the safer option: the matched substring **is** the credential. `-o` is a
+narrower way of printing the secret, not an alternative to printing it. The notice instead
+tells the reader to narrow by **type** — re-run the block one `-e` pattern at a time, so
+the filename carries the credential shape and the value is never rendered — and, where
+that is not decisive, to rotate rather than look. Rotating a credential that turns out to
+have been public costs minutes; confirming it by eye costs an exposure.
+
+The re-review then caught that fix committing the same error one layer down: the narrowing
+step was given in prose while the commands around it were given in full, and a
+reader retyping it by hand is exactly as likely to drop the `-l` as the hand-rolled word
+net that had just been published for that reason. Worse, dropping `-l` is *more* exposing
+than the `-o` the same paragraph forbids — plain `grep` prints the entire matching line,
+so the credential comes back wrapped in its context. It is now a complete command with the
+flag-dropping hazard named. Three passes, three instances of one shape: guidance that
+stops one step short of where the reader actually is.
+
+The third pass found the fourth. Scoping the word net to one project introduced a
+`<project-slug>` placeholder, and pasted literally that command prints nothing and exits 2
+— under the `2>/dev/null` the notice itself prescribes, the error is swallowed and the
+result is indistinguishable from a clean scan. The notice had hand-held carefully through
+the `<session-uuid>` glob gotcha and then reproduced the identical failure one paragraph
+later with a path segment it never explained how to construct. It now says how to find the
+slug and states that no output from that one command means check the slug first. It is the
+only command in the notice that can fail that way; the others point at
+`~/.claude/projects/` itself, which exists as soon as Claude Code has run once.
+
+And the fourth pass found the fifth, inside that fix. The guidance told the reader the slug
+was "the repo's absolute path with the separators turned into `-`", which is close enough
+to true to be dangerous and false in the case at hand: the slug is keyed to the directory
+the **session was launched from**, not the repo. This repo sits one level below the
+directory its own session was launched from, so its transcripts are keyed to the parent and
+a reader following the stated formula would have scanned a directory that does not exist — silently,
+exit 2, swallowed by the prescribed `2>/dev/null`. A wrong formula stated as fact is worse
+than a placeholder, because the placeholder at least looks unfilled. The notice now says to
+read the slug out of `ls` and not to derive it, names the launch-cwd keying as the reason,
+and drops the claim that only a literal placeholder could fail that way.
+
+Five passes, five instances, each in a different place: the path, the pattern list, the
+triage step, the placeholder, the slug formula. Every individual fix was correct. The shape
+is that a remediation notice grows a new edge every time it is extended, and the edge is
+always the same one — an empty result that reads as clean. The general lesson is narrower
+than "be careful": **any instruction in this section that names a path segment the reader
+must supply is a candidate for it**, because a wrong path and a clean scan are the same
+observation. Check the next one against a real filesystem before it ships.
+
+The rule this violated is the ordinary one: a claim inherited from a report is a lead, not
+a fact, and the check that settles a path is running it. That applies to a reviewer's
+proposed fix as much as to a defect report's path — both arrive sounding authoritative.

@@ -90,7 +90,7 @@ Read-only cuts both ways. The artifact contract above stops you WRITING into the
 this stops you READING what the review has no business seeing.
 
 Everything a scanner prints enters your context and is then written to a **persisted
-transcript** at `~/.claude/projects/<project>/subagents/*.jsonl` — outside the repo,
+transcript** at `~/.claude/projects/<project>/<session>/subagents/agent-*.jsonl` — outside the repo,
 outside every cleanup this plugin performs, and outside the user's line of sight. A
 plaintext credential that lands there is exposed even if you never mention it in your
 report, and the only remedy left is rotation. So:
