@@ -168,7 +168,7 @@ write-once and effectively gone after merge, which is why they live here now.
   needs a defined behaviour when the var is absent. Deliberately deferred, not forgotten.
   (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
 - **Nothing in forgeward can scrub a subagent transcript.** `~/.claude/projects/<project>/
-  subagents/*.jsonl` is outside the repo and outside every cleanup this plugin performs,
+  <session>/subagents/agent-*.jsonl` is outside the repo and outside every cleanup this plugin performs,
   which is why the untracked-`.env` read was durable rather than transient. The gate can
   prevent a write; it has no remediation path for one that already happened, and the
   README notice can only tell users to rotate. Worth deciding whether forgeward should

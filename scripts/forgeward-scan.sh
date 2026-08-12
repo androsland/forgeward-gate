@@ -222,7 +222,7 @@ done
 # `"Secret": "<value>"`. A reviewer needs one of the latter two to report `file:line` at
 # all, so the count-only mode is not a mitigation — it is a mode in which the reviewer
 # cannot do its job. For a reviewer subagent that stdout becomes context and then a
-# PERSISTED transcript under ~/.claude/projects/<project>/subagents/*.jsonl: outside the
+# PERSISTED transcript under ~/.claude/projects/<project>/<session>/subagents/agent-*.jsonl: outside the
 # repo, outside every cleanup this plugin performs, and outside the user's line of sight.
 # Observed on a real gate run — a private key plus three service credentials from an
 # untracked `.env` were read and written to disk that way. The reviewer kept them out of

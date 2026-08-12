@@ -427,16 +427,134 @@ its plaintext values may have been read and written into the reviewer subagent's
 forgeward, or in any cleanup this plugin performs has touched them:
 
 ```
-~/.claude/projects/<project-slug>/subagents/*.jsonl
+~/.claude/projects/<project-slug>/<session-uuid>/subagents/agent-*.jsonl
 ```
 
-(On Windows: `%USERPROFILE%\.claude\projects\…`.) List the files that match a credential
-name — `-l` prints filenames only, so this does not put the value back on your screen:
+Note the **session-uuid** level — a glob that omits it (`projects/*/subagents/`) matches
+nothing and exits `No such file or directory`, which reads exactly like "clean". Search
+recursively from `projects/` instead and let the depth take care of itself.
+
+(On Windows: `%USERPROFILE%\.claude\projects\…`.) `-l` prints filenames only, so this does
+not put a value back on your screen:
 
 ```bash
-grep -rl --include='*.jsonl' -e 'BEGIN .* PRIVATE KEY' -e 'SECRET' -e 'TOKEN' -e 'PASSWORD' \
-  ~/.claude/projects/*/subagents/ 2>/dev/null
+grep -rlE --include='*.jsonl' \
+  -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+  -e 'AKIA[0-9A-Z]{16}' \
+  -e 'ghp_[A-Za-z0-9]{36}' -e 'github_pat_[A-Za-z0-9_]{20,}' \
+  -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
+  -e 'sk-proj-[A-Za-z0-9_-]{20,}' \
+  -e '[sr]k_(live|test)_[A-Za-z0-9]{20,}' \
+  -e 'AIza[0-9A-Za-z_-]{35}' \
+  -e 'npm_[A-Za-z0-9]{36}' \
+  -e 'xox[baprs]-[A-Za-z0-9-]{10,}' \
+  ~/.claude/projects/ 2>/dev/null
 ```
+
+Then, **separately**, credentials with no distinctive prefix — a password inside a
+connection URL. This is kept out of the command above on purpose: on the machine this
+defect was found on it matched 201 files against 15 for all the prefixed shapes combined,
+and folding it in buries the three private-key hits in two hundred `https://user:pass@`
+strings from documentation. Run it second, expecting to skim:
+
+```bash
+grep -rlE --include='*.jsonl' -e '://[^:/@[:space:]]+:[^@/[:space:]]+@' \
+  ~/.claude/projects/ 2>/dev/null
+```
+
+Every pattern is passed with `-e`, and for the PEM one that is load-bearing rather than
+stylistic: it begins with `-`, so without `-e` grep parses it as a flag and errors out.
+
+**This list is not exhaustive, and an empty result does not mean the transcripts are
+clean.** It covers AWS, PEM private keys, GitHub, Anthropic, OpenAI, Stripe, Google, npm,
+Slack, and passwords embedded in connection URLs. Any credential type not on that list —
+and any bearer token with no distinctive prefix — will not match. Treat a clean result as
+"none of *these ten* shapes", never as "nothing was exposed", and add a pattern for
+whatever your own stack issues.
+
+Those match credential **value** shapes. A word-based net — `SECRET`, `TOKEN`,
+`PASSWORD` — is the obvious third pass, and it is published here in full for the same
+reason as the other two, so that nobody hand-rolls one and drops the `-l`. But run it
+**inside one project directory, not across the whole archive**:
+
+```bash
+grep -rliE --include='*.jsonl' -e 'SECRET|TOKEN|PASSWORD|PRIVATE_KEY|CREDENTIAL' \
+  ~/.claude/projects/<project-slug>/ 2>/dev/null
+```
+
+**Get the slug from `ls ~/.claude/projects/`. Do not derive it.** It looks like the repo
+path with the punctuation flattened to `-`, and that resemblance is what makes deriving it
+dangerous: the slug is keyed to the directory the Claude Code **session was launched
+from**, not the repo you are in. Launch from a workspace parent and every repo underneath
+shares the parent's slug: run Claude Code from `~/work` and a session inside
+`~/work/some-repo` writes its transcripts to `-home-you-work`, not `-home-you-work-some-repo`.
+This notice was written in a repo one level below its session's launch directory, and the
+derived-by-formula slug did not exist. The flattening eats dots as well, so a worktree
+under `.claude/` carries a doubled dash.
+
+That matters because **this is the one command here that can print nothing simply because
+the path does not exist** — with the placeholder left in, or with a plausible slug you
+constructed yourself. It exits 2, `2>/dev/null` swallows the message, and the result is
+indistinguishable from a clean scan. The other four target `~/.claude/projects/` itself,
+which exists as soon as Claude Code has run once, so an empty result from those is a real
+result. If this one prints nothing, check the slug against `ls` before believing it — and
+if nothing in that listing matches what you expected, fall back to the four unscoped
+commands, which need no slug at all.
+
+The `-i` is not optional: without it the net is case-*sensitive*, and a transcript holding
+`const dbPassword = process.env.password` does not match, while the shouty env-var form
+does. Transcripts capture source and JSON, where the lowercase form is the common one — so
+the case-sensitive version misses the realistic case and returns nothing, which reads as
+clean. That is this notice's own original defect in a third costume.
+
+With `-i` the net stops being a filter. Pointed at the whole of `~/.claude/projects/` on
+the machine this was found on it returned **1751 of 1756** transcripts — 99.7%, because
+these words appear in any conversation that so much as discusses authentication. That is
+the reason for the scoped path above: this pass is only useful once you already suspect a
+particular project, and even then it is a reading list rather than a result.
+
+Scoped, though, it is still worth running, and that number is not a reason to skip it —
+it is the only pass here that can catch a credential with no recognisable vendor prefix,
+which is exactly the gap the ten shapes admit to. Run the value shapes for signal (15
+files, fewer genuinely actionable) and this one, narrowed to the project you actually ran
+the gate in, for the shapes they cannot see.
+
+Expect false positives from all of them — test fixtures, example keys, and JWTs that are
+public by design (a Supabase anon key is not a leak). The paths they print are the start
+of a triage, not a verdict.
+
+**Triage without ever rendering the value.** Every command here is `-l` on purpose, and
+that property has to survive the step *after* it. Do not `cat` or `less` a matched
+transcript, and do not reach for `grep -o` — `-o` prints the matched substring, and the
+matched substring is the credential. Narrow by **type** instead: re-run the block above
+one `-e` pattern at a time, and the filename tells you which shape matched without
+rendering it — in full, for the same reason the others are in full:
+
+```bash
+grep -rlE --include='*.jsonl' -e 'AIza[0-9A-Za-z_-]{35}' \
+  ~/.claude/projects/ 2>/dev/null
+```
+
+Keep the `-l` when you swap the pattern. Dropping it is worse than the `-o` warned against
+above, not better: plain `grep` prints the **entire matching line**, so a transcript entry
+comes back with the credential embedded in its surrounding context.
+
+Check the surrounding context the same way — with another filenames-only grep against that
+one file, never by opening it:
+
+```bash
+grep -liE -e 'firebase|apiKey|NEXT_PUBLIC_|measurementId' <the matched file>
+```
+
+A hit there says the `AIza…` is a browser-side key that was never secret. No hit does not
+prove the opposite; it just means this shortcut did not settle it, and at that point
+rotate.
+
+Narrowing by type is normally enough to decide — `AIza…` in a file that also mentions
+`firebase` or `NEXT_PUBLIC_` is a browser-side key that was never secret, while a PEM
+header is not ambiguous. When it is still unclear, **rotate anyway**: rotating a
+credential that turns out to be public costs a few minutes, and reading the file to avoid
+that puts the value on your screen, in your scrollback, and in anything recording either.
 
 **What to do.** **Rotate anything that appears.** Deleting the transcript afterwards is
 housekeeping, not remediation — a credential that was written to disk is exposed, and only
