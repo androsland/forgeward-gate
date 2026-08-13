@@ -1,0 +1,158 @@
+# forgeward — environment/config safety rules (JS/TS)
+#
+# NOT SECURITY RULES. These are build-safety and config-correctness: two shapes that
+# turn a blank-or-missing environment variable into a whole-deployment failure rather
+# than a local one. They ship in the security-reviewer because it is the only component
+# with the Semgrep plumbing and the JS/TS diff scope — NOT because the findings are
+# vulnerabilities. `security-reviewer` reports every id in this pack at **Low**, tagged
+# defense-in-depth, and Low never fails a gate on its own. See DECISIONS.md,
+# "env/config rules ship in the security-reviewer's pack but can never fail a gate".
+#
+# WHY A SEPARATE PACK rather than more rules in wp-security.yml: that pack is PHP
+# framework sinks at ERROR, invoked with `--error`. Mixing advisory JS/TS warnings into
+# it would make a findings-exit-code mean two different things. Two packs, two
+# invocations, two severities.
+#
+# NON-GOALS / BLIND SPOTS, stated here so the absence of a limit is not read as coverage.
+# Per-rule limits are repeated in each rule's `message`, because a reader who sees a
+# finding never sees this header:
+#   - Neither rule does interprocedural or cross-file analysis. Semgrep's constant
+#     propagation is intra-file; an env value that reaches the sink through an imported
+#     config module, a helper, or a separate statement is invisible to both rules.
+#   - Neither rule can read intent. Rule 1 in particular cannot distinguish "blank is a
+#     bug" from "blank is a deliberate, meaningful value" — that is a real pattern, it is
+#     the rule's known false-positive class, and it is why this pack is WARNING/Low and
+#     never ERROR. Suppress a deliberate one inline with
+#     `// nosemgrep: forgeward-env-nullish-fallback` and a reason.
+#   - This pack has nothing to say about whether a variable is SET, documented, or
+#     validated at startup. A schema-validated config module (`envSchema.parse(process.env)`)
+#     is the actual fix for the class and is invisible here — correctly, since it is a
+#     plain call, not a `new`.
+#   - Python/Go/Ruby have the same class (`os.getenv("X") or "d"` vs `os.environ.get`),
+#     and are not covered. Scoped to JS/TS because that is where the `??` operator makes
+#     the empty-string case a silent, syntactic trap rather than an explicit choice.
+#   - EXTENSION COVERAGE IS THE ENGINE'S, NOT OURS, AND IT HAS A HOLE. Measured on
+#     semgrep 1.169 with identical content in each file: `.js .mjs .cjs .jsx .ts .tsx`
+#     are scanned; **`.mts` and `.cts` are not** — semgrep reports zero findings AND zero
+#     errors on them, so the miss is silent and looks exactly like a clean file. Nothing
+#     in this pack can fix that; `languages:` selects a language, not an extension map.
+#     If your repo uses `.mts`/`.cts`, this pack does not cover it. Re-measure on upgrade.
+rules:
+  - id: forgeward-env-nullish-fallback
+    languages: [javascript, typescript]
+    # WARNING, never ERROR: the false-positive class below is legitimate code, and this
+    # pack is advisory. security-reviewer maps every finding here to Low regardless.
+    severity: WARNING
+    metadata:
+      category: correctness
+      subcategory: [audit]
+      technology: [javascript, typescript, nodejs, deno, vite]
+      forgeward-axis: build-config
+      forgeward-report-severity: low
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: MEDIUM
+      references:
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing
+    message: >
+      `??` used as an environment-variable fallback: it only falls back on `null`/
+      `undefined`, so a variable that is PRESENT BUT BLANK reaches the consumer as `''`
+      and the default is silently discarded. Blank-but-present is the routine output of a
+      secrets sync and of most CI secret injection (a declared-but-unset GitHub Actions
+      secret, a `ENV FOO=` line in a Dockerfile, an empty Vercel project variable), so
+      this is a deployment-shaped failure, not a theoretical one. Observed: a
+      `process.env.POLAR_SERVER ?? 'sandbox'` produced `new URL('')` and took down a
+      Vercel build at page-data collection. Use `||` instead — it falls back on `''` too,
+      and for `process.env` there is no third case to worry about, since every value is a
+      string or `undefined`.
+      NOT A FINDING when the empty string is legitimately distinct from unset — e.g.
+      `HTTP_PROXY=''` meaning "explicitly no proxy", or an empty prefix that must stay
+      empty. That is real, this rule cannot see it, and it is why the finding is Low:
+      keep the `??` and add `// nosemgrep: forgeward-env-nullish-fallback <reason>`.
+      DELIBERATELY SILENT on the same bug in shapes it cannot match syntactically:
+      a destructuring default (`const { FOO = 'd' } = process.env`, which has the
+      identical empty-string flaw), a fallback split across statements
+      (`const raw = process.env.FOO; raw ?? 'd'`), and any wrapper (`env('FOO') ?? 'd'`)
+      that hides the `process.env` token. Absence of a finding is not evidence of absence.
+    patterns:
+      - pattern-either:
+          - pattern: process.env.$V ?? $D
+          - pattern: process.env[$K] ?? $D
+          - pattern: import.meta.env.$V ?? $D
+          - pattern: Deno.env.get($K) ?? $D
+      # No default is being LOST in these four, so there is nothing to report. The empty
+      # string matters most: for a `process.env` value (always string-or-undefined),
+      # `?? ''` and `|| ''` are behaviourally identical, so the rule has no advice to
+      # give. Verified as a real false-positive class — it was 8 of 16 hits on a
+      # 237-file production codebase before this exclusion.
+      - pattern-not: $E ?? undefined
+      - pattern-not: $E ?? null
+      - pattern-not: '$E ?? ""'
+      - pattern-not: "$E ?? ''"
+      - pattern-not: '$E ?? ``'
+
+  - id: forgeward-env-client-at-module-scope
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: correctness
+      subcategory: [audit]
+      technology: [javascript, typescript, nodejs, deno, nextjs]
+      forgeward-axis: build-config
+      forgeward-report-severity: low
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: MEDIUM
+    message: >
+      Env-dependent client constructed at MODULE SCOPE. Module scope evaluates at import
+      time, so a missing or blank variable throws while the module graph is still loading
+      — which fails the whole build or crashes the process on boot, instead of failing the
+      one route that actually needed the credential. On a framework that imports every
+      route to prerender (Next.js page-data collection, an edge/worker bundle, a service
+      whose health check imports the same module), one unset variable in one preview
+      environment takes down the entire deploy.
+      Fix: construct it lazily — inside the handler, or behind a memoized getter
+      (`let c; export function getClient() { return (c ??= new Foo(process.env.KEY)) }`).
+      Then a missing variable is one failing request with a readable error.
+      DOES NOT FIRE, on purpose, when every `process.env` read in the constructor call
+      already has a `||`/`??` fallback — such a call cannot fail on an unset variable, and
+      firing on it would be noise. TWO KNOWN OVER-SUPPRESSIONS follow from that exclusion,
+      named here rather than left to be discovered: a call MIXING one defaulted read with
+      one bare read is suppressed entirely (the defaulted read wins), and a `?? ''`
+      fallback suppresses the finding even though `new Foo('')` may still throw.
+      DELIBERATELY SILENT on: a module-scope IIFE (`(() => new Foo(process.env.K))()`) —
+      it IS immediate, so it is a true positive, but the function-scope exclusions that
+      spare lazy getters cannot tell it from one; a value reaching the constructor through
+      an imported config object or any variable, since Semgrep's constant propagation does
+      not cross files; and a factory CALL rather than a `new`
+      (`createStripe(process.env.KEY)`), which is the same hazard and is not matched.
+      Scoped to `process.env`/`Deno.env.get` — `import.meta.env` is substituted by the
+      bundler at build time, so it is a different failure mode and is not covered.
+    patterns:
+      - pattern-either:
+          - pattern: new $C(<... process.env ...>)
+          - pattern: new $C(<... Deno.env.get(...) ...>)
+      # "Module scope" = not lexically inside anything that defers evaluation. Semgrep has
+      # no top-level construct, so this is expressed as exclusions. The class exclusion
+      # covers field initialisers and every method body, both of which run at construction
+      # or call time, not at import.
+      #
+      # THE THREE FUNCTION FORMS OVERLAP, measured rather than assumed. Semgrep 1.169
+      # normalises function forms, so deleting any ONE of the two anonymous patterns
+      # changes no result — each already covers arrow-expression, arrow-block AND
+      # `function () {}`. Only `function $F(...)` is uniquely load-bearing: delete it and
+      # a client inside a named declaration starts firing. Both anonymous forms are kept
+      # anyway, because that normalisation is an implementation detail of the engine and
+      # not a documented guarantee — but the redundancy is recorded here so nobody reads
+      # three lines as three distinct protections. test/rules-test.sh pins the one that
+      # matters (r2-negative.ts:3); it cannot pin the redundant pair, by definition.
+      - pattern-not-inside: function $F(...) { ... }
+      - pattern-not-inside: function(...) { ... }
+      - pattern-not-inside: (...) => ...
+      - pattern-not-inside: class $K { ... }
+      - pattern-not: new $C(<... process.env.$V || $D ...>)
+      - pattern-not: new $C(<... process.env.$V ?? $D ...>)
+      - pattern-not: new $C(<... process.env[$K] || $D ...>)
+      - pattern-not: new $C(<... process.env[$K] ?? $D ...>)
+      - pattern-not: new $C(<... Deno.env.get(...) || $D ...>)
+      - pattern-not: new $C(<... Deno.env.get(...) ?? $D ...>)

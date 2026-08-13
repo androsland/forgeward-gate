@@ -4,6 +4,58 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 `RESOLVED` entries record a real bug, its repro, and the fix, so a future regression
 is recognizable from the symptom alone.
 
+## DECISION — env/config rules ship in the security-reviewer's pack but can never fail a gate
+
+**Date:** 2026-08-14 · **Version:** 0.10.0
+
+**The problem the placement had to solve.** `rules/env-config.yml` catches two JS/TS shapes —
+`??` used as an env-var fallback, and an env-dependent SDK client constructed at module scope.
+**Neither is a security finding.** Both are build-safety and config-correctness: a blank
+environment variable failing an entire deploy rather than the one route that needed the
+credential. Putting them in `security-reviewer` risks the thing forgeward should least want,
+which is a security axis that quietly grows into a general code-quality axis until "security
+FAIL" stops meaning anything specific.
+
+**Two placements were genuinely defensible.** (a) Ship them in the security pack and report
+them at Low, flagged defense-in-depth, so they can never fail a gate alone. (b) Route them to
+a reviewer that actually owns build-and-config integrity, and — since no installed component
+does — use the gate's Step 1c "say what this INSTALL cannot cover" mechanism to disclose
+build-config as an unowned axis.
+
+**Decision: (a).** Four reasons, in the order that decided it:
+
+1. **The remit that matters is what a reviewer BLOCKS, not what it prints.** The file already
+   establishes that Critical/High fail a gate and Medium/Low never do. Pinning this pack at Low
+   means the verdict bar is bit-for-bit unchanged: the reviewer's *reporting* surface widens,
+   its *blocking* surface does not. That is the whole of the "don't widen security's remit"
+   concern, and it is addressed structurally rather than by intention.
+2. **(b) is incoherent while the detection exists.** Step 1c discloses axes **no installed tool
+   owns** so the user knows to cover them by hand. Announcing "no tool covers build-config" in
+   the same run that just scanned for build-config problems and found two is a worse lie than
+   the silence it replaces.
+3. **security-reviewer is the only component with the plumbing.** It already has the
+   `forgeward-scan.sh semgrep` invocation, the JS/TS extension scope, the changed-line
+   discipline, and the artifact contract. A new reviewer would duplicate all of it.
+4. **Standing up a build-integrity reviewer for two rules is over-building.** A reviewer is a
+   spawned agent with a verdict, a firing table row, and a place in the parallel fan-out. Two
+   advisory WARNINGs do not justify one. If this pack grows past a handful of rules, or grows a
+   rule that should legitimately block, that is the trigger to revisit — and revisiting means
+   moving the pack, not promoting its severity in place.
+
+**Enforcement, so the choice is not just a comment.** Three places carry it, and they are
+supposed to agree: the rules carry `metadata.forgeward-report-severity: low`; the pack header
+states it in prose with a pointer to this entry; and `agents/security-reviewer.md` Step 2 says
+to report every finding from this pack at Low **regardless of what the JSON says**, and not to
+promote one because its consequence sounds severe. The invocation also omits `--error`, unlike
+`wp-security.yml`, so an advisory finding cannot even present as a failed scan.
+
+**What this decision deliberately does NOT do.** It does not vendor `env-config.yml` into
+`ci-gate`'s security workflow. `ci-gate`'s first core rule is green-on-arrival — "a
+green-looking workflow that's red on arrival is worse than no CI" — and advisory WARNINGs that
+turn a required check red are precisely that failure. The pack runs in the local gate, where a
+Low finding is information; it stays out of CI, where the only signal is pass/fail. Tracked in
+`TODOS.md` as a deferral rather than left as a silent omission.
+
 ## RESOLVED — the fast reminder denied branch deletions the enforced hook already allows
 
 **Date:** 2026-08-07 · **Version:** 0.9.1

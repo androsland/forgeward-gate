@@ -129,6 +129,26 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Reviewers
 
+- **Semgrep 1.169 silently does not scan `.mts`/`.cts`.** Measured with byte-identical
+  content across extensions: `.js .mjs .cjs .jsx .ts .tsx` all produce findings; `.mts`
+  and `.cts` produce **zero findings and zero errors**, so the miss is indistinguishable
+  from a clean file. This bounds every bundled JS/TS pack, not just `env-config.yml`, and
+  nothing in a rulepack can fix it — `languages:` selects a language, not an extension
+  map. Recorded in the pack header; `test/rules-test.sh` deliberately does *not* pin it as
+  expected behaviour, since that would go red when a future semgrep fixes it. Re-measure
+  on semgrep upgrade; if the hole persists, the fix belongs upstream or in an explicit
+  `--lang` invocation, not in the rules. (env/config rulepack, 2026-08-14) **Priority:** P3
+- **`env-config.yml`'s blind spots are structural, and two of them are the same bug the
+  rules exist to catch.** Rule 1 cannot see a destructuring default
+  (`const { FOO = 'd' } = process.env`), which has the identical empty-string flaw, nor a
+  fallback split across statements, nor any wrapper hiding the `process.env` token. Rule 2
+  cannot see a module-scope IIFE (a true positive that is structurally indistinguishable
+  from a lazy getter, so suppressing lazy getters necessarily suppresses it), a value
+  arriving through an imported config object, or a factory *call* rather than a `new`.
+  Each is stated in the rule's own `message` so a reader who sees a finding also sees the
+  limit. Closing the destructuring case is the highest-value one and looks tractable with
+  a dedicated pattern; the rest need dataflow this pack does not have.
+  (env/config rulepack, 2026-08-14) **Priority:** P3
 - **PR #4's two security rules were verified one run per fixture**, which shows the
   rules *can* fire reliably, not that they always will. Five fixtures, each a real
   git repo reviewed end to end, all passed — but repeated-run reliability is
@@ -393,6 +413,17 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   (nutriloop, the only hosted-public repo, was hand-tuned). Already disclosed in
   `README.md:186`. Blocked externally, not by code. (PR #1, 2026-06-25; inherited
   by `ci-gate` via `5d676ba`) **Priority:** P3
+
+- **`rules/env-config.yml` is deliberately NOT vendored into the CI security workflow.**
+  Step 4 of `skills/ci-gate/SKILL.md` copies `rules/wp-security.yml` into `.forgeward/rules/`
+  and runs it with `--error`; the env/config pack is advisory (WARNING, reported at Low) and
+  doing the same would turn a required check red on advice, which is exactly the
+  green-on-arrival failure ci-gate's first core rule forbids. Revisit only if CI grows a
+  non-blocking advisory lane whose result is visible without gating the merge — an
+  `if: always()` step with `continue-on-error`, surfaced as an annotation rather than a
+  status. Until then this is a decision, not an oversight; see `DECISIONS.md`, "env/config
+  rules ship in the security-reviewer's pack but can never fail a gate".
+  (env/config rulepack, 2026-08-14) **Priority:** P3
 
 ## Enforcement boundary
 

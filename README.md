@@ -397,6 +397,16 @@ miss) plus injection/authz reasoning, diff-scoped. `/forgeward:ci-gate` wires **
 check via branch protection. Between them, forgeward does static security review **and**
 CI-enforced SAST merge-gating.
 
+**One bundled pack is deliberately not security.** `rules/env-config.yml` catches two JS/TS
+build-safety shapes — `??` used as an env-var fallback (it doesn't fall back on a
+blank-but-present variable, the routine output of a secrets sync), and an env-dependent SDK
+client built at module scope (one unset variable fails the whole build instead of one route).
+`security-reviewer` runs it because it is the only component with the Semgrep plumbing and
+JS/TS diff scope, and reports every finding at **Low**, tagged defense-in-depth. Low never
+fails a gate on its own, so this widens what the gate *reports* and not what it *blocks*. It
+is also **not** vendored into the `ci-gate` workflow: those findings are advisory, and turning
+CI red on advice would break ci-gate's green-on-arrival rule.
+
 **Honest boundaries.** This is still *static* review — no dynamic/runtime scanning (DAST, e.g.
 OWASP ZAP) and no container-image scanning. The gate's `security-reviewer` is **diff-scoped**: it
 reviews the change, not the whole repo, and one LLM reviewer won't match a dedicated commercial
