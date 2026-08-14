@@ -218,6 +218,22 @@ write-once and effectively gone after merge, which is why they live here now.
   and `cleanupPeriodDays` is user-configurable, so 30 is a default and not a guarantee;
   none of this was checked on Windows. (rotation-notice follow-up, 2026-08-14)
   **Priority:** P2
+- **The rotation notice's search misses `tool-results/`, a second persistence channel that
+  is world-readable and holds MORE than the transcript does.** A large tool result is
+  truncated in the JSONL at 30 000 characters and written in full to
+  `~/.claude/projects/<slug>/<session>/tool-results/<id>.txt`, with the transcript
+  recording only a `persistedOutputPath` pointer. The notice's recommended command carries
+  `--include='*.jsonl'`, so it cannot match a `.txt` and reports nothing for a file that
+  does hold key material. Measured 2026-08-14 on one machine: 277 such files, all `.txt`,
+  **all mode 0644** — the transcripts beside them are 0600, so the copy the notice does not
+  search is also the copy with the weaker permissions. Two of the 277 matched the notice's
+  own pattern set, and one of them held a private key the truncated JSONL copy did not
+  contain. Fix is one flag plus a sentence: widen the include to `*.jsonl` **and** `*.txt`
+  (or drop `--include` and let the path do the work), and say that `tool-results/` exists
+  and why it can hold more than the transcript. **Blind spot:** one machine, one Claude
+  Code version (2.1.232); whether the 30 000-character threshold or the 0644 mode is
+  stable across versions or on Windows was not checked. (rotation-notice follow-up,
+  2026-08-14) **Priority:** P1
 - **Layer 1 cannot see inside a flag's VALUE, and `--log-opts` is now a recommended flag.**
   Verified against gitleaks 8.30.1: `gitleaks git --log-opts="--output=x"` forwards
   `--output` to `git log` and writes `x`, because layer 1 matches whole tokens and this one
