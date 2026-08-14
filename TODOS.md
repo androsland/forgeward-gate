@@ -195,6 +195,29 @@ write-once and effectively gone after merge, which is why they live here now.
   ship a `forgeward-transcript-audit.sh` that greps its own project's transcripts for
   credential-shaped strings by NAME and reports filenames only — never values, since
   printing them is the exposure. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P2
+- **Claude Code *does* expire transcripts — unevenly — so the rotation notice's search can
+  return empty for a file that was never checked.** The entry above is correct that no
+  cleanup *this plugin* performs touches them, but Claude Code's own does:
+  `cleanupPeriodDays` defaults to 30 and deletes session files older than that at startup.
+  The unit it reaps is the **session directory**, aged by the parent's recency rather than
+  by each file. Measured on one machine 2026-08-14 (Claude Code 2.1.232, setting unset so
+  the default applies): 0 of 247 top-level session transcripts survive past 30 days, 0 of
+  207 `subagents/` directories are orphaned, and **20 of 1574 subagent transcripts are
+  older than 30 days** — alive because their parent session was touched more recently. The
+  leak channel this notice is about is therefore exactly the one that outlives the window
+  whenever a session stays in use, while a short-lived session's evidence is gone inside
+  the month. Both directions break the notice: a user greps, finds nothing, and reads it as
+  clean — the same false-clean shape as the 0.9.3 path bug, arriving by a second route —
+  or assumes age took care of it when it did not. This was hit for real: a transcript
+  identified as holding an AKIA-shaped value on 2026-08-13 was gone on 2026-08-14 (mtime
+  Jul 14, day 31) before it could be re-examined, leaving the finding permanently
+  unresolvable. The fix is wording, not code: say that an empty result means
+  *unverifiable*, not *safe*, and that anyone who ran 0.2.0–0.9.1 in a repo holding an
+  untracked credential file should rotate regardless of what the search returns.
+  **Blind spots to state rather than paper over:** one machine, one Claude Code version,
+  and `cleanupPeriodDays` is user-configurable, so 30 is a default and not a guarantee;
+  none of this was checked on Windows. (rotation-notice follow-up, 2026-08-14)
+  **Priority:** P2
 - **Layer 1 cannot see inside a flag's VALUE, and `--log-opts` is now a recommended flag.**
   Verified against gitleaks 8.30.1: `gitleaks git --log-opts="--output=x"` forwards
   `--output` to `git log` and writes `x`, because layer 1 matches whole tokens and this one
