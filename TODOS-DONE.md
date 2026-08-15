@@ -13,6 +13,41 @@ their provenance — grep here before overriding one of them.
 `DECISIONS.md` remains the source of truth for *why* a design is the way it is. This
 file records what was done and what it deliberately left undone.
 
+- **P2: the gate reported a `/ship` handoff it never performed when gstack was absent.**
+  Fixed 2026-08-06, shipped in 0.8.0. Closes the Option B decision, the README quality
+  claim, the marker-environment item, and the "untested handoff" item in one lane.
+
+  The handoff had been flagged as "untested — likely-broken", guessing a hard failure. It
+  was not a hard failure, and the reality was worse: the marker is written *before* the
+  handoff, so the PASS was never at risk and the user was never blocked — the gate simply
+  announced "Handing off to /ship" on a machine where nothing shipped. Same class as the
+  0.7.4–0.7.6 error-path work: the failure surface is identical to the success surface.
+
+  Shipped: `scripts/forgeward-detect-environment.sh` (probes `ship`/`review`/`cso`, reads
+  `standalone.substitutes`, always exits 0, fails toward disclosure); gate Step 1c naming
+  any axis whose owner is absent and then gating normally; Step 3 branching on
+  `gstack_ship`; marker schema 3 carrying the environment. README line **57** (not 45 —
+  the number in this file and in `docs/axis-proposals.md` was wrong, and is corrected in
+  both) now qualifies the quality claim.
+
+  Three documents were also describing behaviour the code did not have, which is how the
+  gap survived: `live-test/LIVE-TEST.md` told testers the gate "tells you it would" hand
+  off standalone; `docs/axis-proposals.md` said "forgeward refuses the `/ship` handoff",
+  conflating this repo's own dev workflow with plugin behaviour; and
+  `forgeward-gate-check.sh`'s halt message promised it "ships in one motion". All three
+  corrected in place. Full reasoning in `DECISIONS.md`.
+
+  E1–E18, each mutation-tested in both directions where a direction exists. E2 is E1's
+  positive control and is load-bearing: gstack is installed on the author's machine and
+  the probe is not a PATH lookup, so an assertion that forgets any of its three roots
+  finds the real gstack and greens vacuously. E12–E17 were added *after* E1–E11 were
+  green, for the two Medium findings of the 0.8.0 security review (a followed config
+  symlink; a character allowlist mistaken for structural validation) — a reminder that
+  a passing suite is evidence about the assertions in it and nothing else. E18 pins that
+  a CRLF config parses identically to an LF one — not a security case, a regression guard
+  for the trailing-CR class that already shipped once in 0.7.6. Suites: gate 162/162,
+  pre-push 15/15.
+
 - **P1: unparseable hook input was ALLOWED through the PreToolUse gate — and the #11 fix
   that was supposed to prevent it had been silently cancelled by the branch it fell
   through to.** Fixed 2026-08-06, shipped in 0.7.6.
