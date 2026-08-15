@@ -434,11 +434,33 @@ its plaintext values may have been read and written into the reviewer subagent's
 **persisted transcript**.
 
 **Where to look.** Those transcripts live outside your repo, so nothing in git, in
-forgeward, or in any cleanup this plugin performs has touched them:
+forgeward, or in any cleanup this plugin performs has touched them. **Claude Code's own
+cleanup does** — read "an empty result can also mean the evidence is already gone" below
+before you take a search that finds nothing as reassurance.
+
+There are **two** persistence channels under each session, and the second is the one a
+notice like this usually misses:
 
 ```
 ~/.claude/projects/<project-slug>/<session-uuid>/subagents/agent-*.jsonl
+~/.claude/projects/<project-slug>/<session-uuid>/tool-results/<id>.txt
 ```
+
+A large tool result is **truncated in the JSONL at 30 000 characters** and written in full
+to `tool-results/`, with the transcript keeping only a `persistedOutputPath` pointer. The
+`.txt` copy can therefore hold key material the `.jsonl` copy does not — measured on the
+machine this was found on: 277 such files, two matching the pattern set below, and one of
+those holding a private key absent from the truncated JSONL beside it. They also carry
+weaker permissions: on that machine **279 of 279** `tool-results/*.txt` were mode 0644,
+against **1878 of 1879** transcripts at 0600 — the lone exception being a transcript that
+was itself 0644. So the copy easiest to miss is, as a rule, also the copy any local account
+can read. Those are counts from one machine, not a guarantee about yours.
+
+Every command below therefore searches `~/.claude/projects/` with **no `--include` filter**
+— the path does the scoping, and an extension list is exactly the narrowing that turns a
+real hit into an empty result. Revisions of this notice before 0.10.1 carried
+`--include='*.jsonl'` and could not match a `.txt` at all; if you ran one of those commands,
+run these again.
 
 Note the **session-uuid** level — a glob that omits it (`projects/*/subagents/`) matches
 nothing and exits `No such file or directory`, which reads exactly like "clean". Search
@@ -448,7 +470,7 @@ recursively from `projects/` instead and let the depth take care of itself.
 not put a value back on your screen:
 
 ```bash
-grep -rlE --include='*.jsonl' \
+grep -rlE \
   -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
   -e 'AKIA[0-9A-Z]{16}' \
   -e 'ghp_[A-Za-z0-9]{36}' -e 'github_pat_[A-Za-z0-9_]{20,}' \
@@ -468,7 +490,7 @@ and folding it in buries the three private-key hits in two hundred `https://user
 strings from documentation. Run it second, expecting to skim:
 
 ```bash
-grep -rlE --include='*.jsonl' -e '://[^:/@[:space:]]+:[^@/[:space:]]+@' \
+grep -rlE -e '://[^:/@[:space:]]+:[^@/[:space:]]+@' \
   ~/.claude/projects/ 2>/dev/null
 ```
 
@@ -482,13 +504,30 @@ and any bearer token with no distinctive prefix — will not match. Treat a clea
 "none of *these ten* shapes", never as "nothing was exposed", and add a pattern for
 whatever your own stack issues.
 
+**An empty result can also mean the evidence is already gone.** Claude Code expires its own
+transcripts: `cleanupPeriodDays` defaults to **30**, and session files older than that are
+deleted at startup. The unit it reaps is the **session directory**, aged by the parent's
+recency rather than by each file — so a subagent transcript can outlive the window whenever
+its session stays in use, while a short-lived session's evidence is gone inside the month.
+Measured on one machine: of 247 top-level session transcripts, none survived past 30 days;
+of 1574 subagent transcripts, **20** were older than 30 days, alive only because their
+parent session had been touched more recently. That is not hypothetical — a transcript
+identified here as holding an AWS-key-shaped value was deleted the next day, at age 31,
+before it could be re-examined, and the question it raised can no longer be answered.
+
+So an empty result means **unverifiable**, not **safe**. If you ran 0.2.0 through 0.9.1 in a
+repo that held an untracked credential file, rotate regardless of what these searches
+return. *Blind spots in that measurement:* one machine, one Claude Code version (2.1.232),
+and `cleanupPeriodDays` is user-configurable — 30 is a default, not a guarantee. None of it
+was checked on Windows.
+
 Those match credential **value** shapes. A word-based net — `SECRET`, `TOKEN`,
 `PASSWORD` — is the obvious third pass, and it is published here in full for the same
 reason as the other two, so that nobody hand-rolls one and drops the `-l`. But run it
 **inside one project directory, not across the whole archive**:
 
 ```bash
-grep -rliE --include='*.jsonl' -e 'SECRET|TOKEN|PASSWORD|PRIVATE_KEY|CREDENTIAL' \
+grep -rliE -e 'SECRET|TOKEN|PASSWORD|PRIVATE_KEY|CREDENTIAL' \
   ~/.claude/projects/<project-slug>/ 2>/dev/null
 ```
 
@@ -506,8 +545,9 @@ That matters because **this is the one command here that can print nothing simpl
 the path does not exist** — with the placeholder left in, or with a plausible slug you
 constructed yourself. It exits 2, `2>/dev/null` swallows the message, and the result is
 indistinguishable from a clean scan. The other four target `~/.claude/projects/` itself,
-which exists as soon as Claude Code has run once, so an empty result from those is a real
-result. If this one prints nothing, check the slug against `ls` before believing it — and
+which exists as soon as Claude Code has run once, so an empty result from those is at least
+a real *search* — subject to the expiry caveat above, which no command here can see around.
+If this one prints nothing, check the slug against `ls` before believing it — and
 if nothing in that listing matches what you expected, fall back to the four unscoped
 commands, which need no slug at all.
 
@@ -541,7 +581,7 @@ one `-e` pattern at a time, and the filename tells you which shape matched witho
 rendering it — in full, for the same reason the others are in full:
 
 ```bash
-grep -rlE --include='*.jsonl' -e 'AIza[0-9A-Za-z_-]{35}' \
+grep -rlE -e 'AIza[0-9A-Za-z_-]{35}' \
   ~/.claude/projects/ 2>/dev/null
 ```
 

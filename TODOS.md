@@ -194,46 +194,11 @@ write-once and effectively gone after merge, which is why they live here now.
   README notice can only tell users to rotate. Worth deciding whether forgeward should
   ship a `forgeward-transcript-audit.sh` that greps its own project's transcripts for
   credential-shaped strings by NAME and reports filenames only — never values, since
-  printing them is the exposure. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P2
-- **Claude Code *does* expire transcripts — unevenly — so the rotation notice's search can
-  return empty for a file that was never checked.** The entry above is correct that no
-  cleanup *this plugin* performs touches them, but Claude Code's own does:
-  `cleanupPeriodDays` defaults to 30 and deletes session files older than that at startup.
-  The unit it reaps is the **session directory**, aged by the parent's recency rather than
-  by each file. Measured on one machine 2026-08-14 (Claude Code 2.1.232, setting unset so
-  the default applies): 0 of 247 top-level session transcripts survive past 30 days, 0 of
-  207 `subagents/` directories are orphaned, and **20 of 1574 subagent transcripts are
-  older than 30 days** — alive because their parent session was touched more recently. The
-  leak channel this notice is about is therefore exactly the one that outlives the window
-  whenever a session stays in use, while a short-lived session's evidence is gone inside
-  the month. Both directions break the notice: a user greps, finds nothing, and reads it as
-  clean — the same false-clean shape as the 0.9.3 path bug, arriving by a second route —
-  or assumes age took care of it when it did not. This was hit for real: a transcript
-  identified as holding an AKIA-shaped value on 2026-08-13 was gone on 2026-08-14 (mtime
-  Jul 14, day 31) before it could be re-examined, leaving the finding permanently
-  unresolvable. The fix is wording, not code: say that an empty result means
-  *unverifiable*, not *safe*, and that anyone who ran 0.2.0–0.9.1 in a repo holding an
-  untracked credential file should rotate regardless of what the search returns.
-  **Blind spots to state rather than paper over:** one machine, one Claude Code version,
-  and `cleanupPeriodDays` is user-configurable, so 30 is a default and not a guarantee;
-  none of this was checked on Windows. (rotation-notice follow-up, 2026-08-14)
-  **Priority:** P2
-- **The rotation notice's search misses `tool-results/`, a second persistence channel that
-  is world-readable and holds MORE than the transcript does.** A large tool result is
-  truncated in the JSONL at 30 000 characters and written in full to
-  `~/.claude/projects/<slug>/<session>/tool-results/<id>.txt`, with the transcript
-  recording only a `persistedOutputPath` pointer. The notice's recommended command carries
-  `--include='*.jsonl'`, so it cannot match a `.txt` and reports nothing for a file that
-  does hold key material. Measured 2026-08-14 on one machine: 277 such files, all `.txt`,
-  **all mode 0644** — the transcripts beside them are 0600, so the copy the notice does not
-  search is also the copy with the weaker permissions. Two of the 277 matched the notice's
-  own pattern set, and one of them held a private key the truncated JSONL copy did not
-  contain. Fix is one flag plus a sentence: widen the include to `*.jsonl` **and** `*.txt`
-  (or drop `--include` and let the path do the work), and say that `tool-results/` exists
-  and why it can hold more than the transcript. **Blind spot:** one machine, one Claude
-  Code version (2.1.232); whether the 30 000-character threshold or the 0644 mode is
-  stable across versions or on Windows was not checked. (rotation-notice follow-up,
-  2026-08-14) **Priority:** P1
+  printing them is the exposure. Note two things settled in 0.10.1 that such a script would
+  inherit: the audit surface is **two** channels, not one (`subagents/*.jsonl` plus
+  `tool-results/*.txt`), and Claude Code expires session directories on its own schedule, so
+  an audit that finds nothing has established *unverifiable*, not *clean*. Both are in
+  `## Completed`. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P2
 - **Layer 1 cannot see inside a flag's VALUE, and `--log-opts` is now a recommended flag.**
   Verified against gitleaks 8.30.1: `gitleaks git --log-opts="--output=x"` forwards
   `--output` to `git log` and writes `x`, because layer 1 matches whole tokens and this one
@@ -662,6 +627,55 @@ already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), incl
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
 
+- **P1 + P2: the 0.9.2 rotation notice searched one persistence channel of two, and read
+  its own empty result as clean.** Fixed 2026-08-15, shipped in 0.10.1. Both halves were
+  filed 2026-08-14 as follow-ups to the notice itself; both are wording and flags, no code.
+
+  **The missed channel.** A large tool result is truncated in the JSONL at 30 000
+  characters and written in full to `tool-results/<id>.txt`, the transcript keeping only a
+  `persistedOutputPath` pointer. Every command in the notice carried `--include='*.jsonl'`,
+  so none of them could match a `.txt`. Measured on one machine: 277 such files, two
+  matching the notice's own pattern set, and one holding a private key the truncated JSONL
+  did not contain. So the copy the notice could not see was simultaneously the copy with the
+  weaker permissions and the copy with more in it.
+
+  **The permissions claim was tightened after the gate reviewer re-measured it**, and the
+  correction is the entry's own lesson applied to itself. The first draft said the `.txt`
+  files are 0644 "where the transcripts are 0600" — a universal read off a sample. The
+  reviewer's independent count was 279 of 279 at 0644 against **1878 of 1879** at 0600, the
+  exception being a transcript that was itself 0644. The direction of the finding is
+  unchanged and the outlier makes the exposure marginally worse rather than better, but
+  "all transcripts are 0600" was not a thing either of us had established. The README now
+  carries the counts instead of the quantifier.
+
+  `--include` was **dropped** rather than widened to two extensions. Widening is the
+  smaller diff and the worse fix: an extension list is the same shape of narrowing that
+  caused the defect, and it would miss a third channel exactly as silently. The path does
+  the scoping now.
+
+  **The false-clean read.** Claude Code expires its own transcripts — `cleanupPeriodDays`
+  defaults to 30 — and the unit it reaps is the **session directory**, aged by the parent's
+  recency rather than per file. Measured: 0 of 247 top-level session transcripts survive
+  past 30 days, while **20 of 1574** subagent transcripts do, alive only because their
+  parent session stayed in use. So the leak channel this notice is about is precisely the
+  one that outlives the window, and a short-lived session's evidence is gone inside the
+  month. Both directions mislead, and this was hit for real: a transcript identified as
+  holding an AKIA-shaped value on 2026-08-13 was gone on 2026-08-14 at age 31, before it
+  could be re-examined, so that finding is now permanently unresolvable. The notice now
+  says an empty result means **unverifiable**, not **safe**, and tells anyone who ran
+  0.2.0–0.9.1 in a repo with an untracked credential file to rotate regardless.
+
+  This is the same false-clean shape as the 0.9.3 path bug, arriving by two further routes
+  — which is the reason the notice now states its own limits at every command rather than
+  once at the top. **Blind spots, stated rather than papered over:** one machine, one Claude
+  Code version (2.1.232); `cleanupPeriodDays` is user-configurable, so 30 is a default and
+  not a guarantee; whether the 30 000-character threshold or the 0644 mode is stable across
+  versions was not checked; and none of it was checked on Windows.
+
+  Untested by construction: this is prose in `README.md`, and no suite in this repo asserts
+  anything about it. The surviving P2 above — a possible `forgeward-transcript-audit.sh` —
+  is where these two facts would become executable rather than documentary.
+
 - **P0: the secrets scanner read a developer's untracked, gitignored dotenv file
   during a real gate run, and the values landed in a persisted subagent
   transcript.** Authored 2026-08-10 and merged 2026-08-12 as #24
@@ -965,38 +979,3 @@ the non-goals and reversed decisions; the rules those produced are in
   `unreadable` is also what a genuinely broken fixture produces. E17 had to be updated in the
   same commit or it would have silently become vacuous — see the coupling item above, which
   that discovery extended.
-
-- **P2: the gate reported a `/ship` handoff it never performed when gstack was absent.**
-  Fixed 2026-08-06, shipped in 0.8.0. Closes the Option B decision, the README quality
-  claim, the marker-environment item, and the "untested handoff" item in one lane.
-
-  The handoff had been flagged as "untested — likely-broken", guessing a hard failure. It
-  was not a hard failure, and the reality was worse: the marker is written *before* the
-  handoff, so the PASS was never at risk and the user was never blocked — the gate simply
-  announced "Handing off to /ship" on a machine where nothing shipped. Same class as the
-  0.7.4–0.7.6 error-path work: the failure surface is identical to the success surface.
-
-  Shipped: `scripts/forgeward-detect-environment.sh` (probes `ship`/`review`/`cso`, reads
-  `standalone.substitutes`, always exits 0, fails toward disclosure); gate Step 1c naming
-  any axis whose owner is absent and then gating normally; Step 3 branching on
-  `gstack_ship`; marker schema 3 carrying the environment. README line **57** (not 45 —
-  the number in this file and in `docs/axis-proposals.md` was wrong, and is corrected in
-  both) now qualifies the quality claim.
-
-  Three documents were also describing behaviour the code did not have, which is how the
-  gap survived: `live-test/LIVE-TEST.md` told testers the gate "tells you it would" hand
-  off standalone; `docs/axis-proposals.md` said "forgeward refuses the `/ship` handoff",
-  conflating this repo's own dev workflow with plugin behaviour; and
-  `forgeward-gate-check.sh`'s halt message promised it "ships in one motion". All three
-  corrected in place. Full reasoning in `DECISIONS.md`.
-
-  E1–E18, each mutation-tested in both directions where a direction exists. E2 is E1's
-  positive control and is load-bearing: gstack is installed on the author's machine and
-  the probe is not a PATH lookup, so an assertion that forgets any of its three roots
-  finds the real gstack and greens vacuously. E12–E17 were added *after* E1–E11 were
-  green, for the two Medium findings of the 0.8.0 security review (a followed config
-  symlink; a character allowlist mistaken for structural validation) — a reminder that
-  a passing suite is evidence about the assertions in it and nothing else. E18 pins that
-  a CRLF config parses identically to an LF one — not a security case, a regression guard
-  for the trailing-CR class that already shipped once in 0.7.6. Suites: gate 162/162,
-  pre-push 15/15.
