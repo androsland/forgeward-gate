@@ -58,6 +58,12 @@
 # what to do about that belongs to the caller and to `.forgeward/config.yml`, not here.
 set -uo pipefail
 
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
+
 skill="${1:-}"
 case "$skill" in
   ''|*[!A-Za-z0-9_-]*)

@@ -28,6 +28,12 @@
 # detects contamination after the fact, whatever produced it).
 set -uo pipefail
 
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
+
 # Emit $1 as a POSIX-absolute path, or nothing if it cannot be one here.
 posixify() {
   case "$1" in

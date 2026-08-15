@@ -25,6 +25,12 @@
 # wedge a push because the gate's own dependencies are absent. It fails CLOSED on an
 # ungated ref.
 set -uo pipefail
+
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIFF_HASH="$here/forgeward-diff-hash.sh"
 ZERO='0000000000000000000000000000000000000000'
@@ -69,7 +75,7 @@ marker_get() { # marker_get <file> <dotpath>
     : # jq is installed but did not run — fall through and let python3 answer
   fi
   [ "$_HAVE_PY" = 1 ] || return 1
-  python3 -c 'import json,sys
+  python3 -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))

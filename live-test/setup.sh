@@ -9,6 +9,17 @@
 #
 # Usage:  bash setup.sh [target-dir]   (default: ./forgeward-live-test)
 set -euo pipefail
+
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+#
+# This one is a scaffold builder, not shipped enforcement, so nothing it does is
+# security-relevant. It is pinned anyway: A27 enumerates every tracked `*.sh` outside
+# `test/` rather than a hand-kept list, and a convention with one documented exception
+# is a convention the next script gets to skip too.
+export LC_ALL=C
 TARGET="${1:-$PWD/forgeward-live-test}"
 
 if [ -e "$TARGET" ]; then
@@ -66,7 +77,19 @@ else
   echo "OK: no .git/hooks/pre-push present."
 fi
 echo "active (non-sample) hooks in .git/hooks/:"
-( ls .git/hooks/ 2>/dev/null | grep -v '\.sample$' || true ) | sed 's/^/    /' ; \
-  [ -z "$(ls .git/hooks/ 2>/dev/null | grep -v '\.sample$')" ] && echo "    (none — good)"
+# A glob rather than `ls | grep` (SC2010/SC2143), and the list is built ONCE rather than
+# recomputed for the emptiness test — the two `ls` calls this replaces could disagree,
+# and the second one deciding "(none — good)" is the wrong half to trust.
+_active=()
+for _h in .git/hooks/*; do
+  [ -e "$_h" ] || continue                       # nullglob is not set; skip the literal pattern
+  case "$_h" in *.sample) continue ;; esac
+  _active+=("${_h##*/}")
+done
+if [ ${#_active[@]} -eq 0 ]; then
+  echo "    (none — good)"
+else
+  printf '    %s\n' "${_active[@]}"
+fi
 echo
 echo "Next: open Claude Code in $TARGET/app and follow live-test/LIVE-TEST.md"
