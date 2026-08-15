@@ -271,20 +271,6 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
   now a **three**-file edit, and the third is the one whose omission is silent: `_env_ok`
   failing loses provenance and reddens E10, while a stale E17 reddens nothing at all and
   quietly retires a security assertion. (0.9.0, 2026-08-06)
-- **The `awk` call is not locale-pinned, while the `wc -c` three lines above it is.**
-  `forgeward-detect-environment.sh:103` runs `LC_ALL=C wc -c`; line 112 runs a bare `awk`.
-  Nothing explains the asymmetry, in a file where every other asymmetry is documented. It
-  matters because both the CRLF handling and the charset filter depend on character-class
-  semantics: `\r ∈ [[:space:]]` is what makes a Windows config parse at all, and
-  `[A-Za-z0-9_-]` is a *range*, whose members are collation-dependent outside the C locale.
-  `LC_ALL=C` would make both byte-exact and is strictly the safer direction. Verified clean
-  on gawk 5.1.0 under `C.UTF-8` and forced `LC_ALL=C`; no locale was found where it breaks,
-  which is why this is P3 rather than a fix. Note what it means for the tests: **E18 asserts
-  "works under the test runner's locale", not "works everywhere"** — it cannot pin what the
-  script does not pin. Deliberately NOT fixed in 0.8.0: the change is one token, but the
-  script had just been cleared by a security pass and editing it afterwards to chase a
-  non-finding trades a reviewed artifact for an unreviewed one. Fix it and re-fire together.
-  (security review, 2026-08-06) **Priority:** P3
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
   `[ -L ]`/`[ -f ]`/`[ -r ]` run at `forgeward-detect-environment.sh:97-99`, but `wc -c` and
   `awk` read the file afterwards, so a process with concurrent write access to the checked-out
@@ -461,25 +447,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   standard answer and would be this repo's second CI-adjacent config; the cheap manual version
   is re-running that `ls-remote` at release time. Undecided which. (CI version check,
   2026-08-06) **Priority:** P3
-- **Locale pinning should be a repo-wide convention, not a per-script decision — this file now
-  has four entries about it and one of them was a High.** The `num_lt` bullet that used to sit
-  here said `LC_ALL=C` was hardening whose effect was unobservable, at P4. That framing was
-  wrong, and round 3 of the security review showed how: the *collation* effect really was
-  unobservable, but the same variable also governs whether `grep` will match `[^"]*` across
-  invalid UTF-8, and under the ambient locale it will not — which was a complete bypass of the
-  ambiguity guard (fixed, see `DECISIONS.md`). An "unobservable" label on a locale pin is
-  therefore only ever a statement about the *one* effect that was measured. Still unpinned:
-  `forgeward-detect-environment.sh:112`'s bare `awk`. The convention to settle on is probably
-  `export LC_ALL=C` at the top of every non-interactive script in this repo, since none of them
-  produce human-language output; `ci/check-version-monotonic.sh` is the first to do it.
-  **Round 4 sharpened this rather than settling it:** replacing that script's `grep` reader with
-  a JSON parser removed the invalid-UTF-8 effect entirely (parsers are locale-independent), so
-  the pin there is back to guarding only the unobservable collation case. Read the wrong way
-  that is an argument to drop it; read correctly it is the argument *for* the convention — the
-  pin's value was never in any one measured effect, it is that a non-interactive script should
-  not have its behaviour depend on the invoker's environment at all. The next script to be
-  bitten will be bitten by a third effect nobody has enumerated either.
-  (security review round 3, 2026-08-07; updated round 4, 2026-08-07) **Priority:** P2
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
   `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
@@ -541,23 +508,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   into CI, not a live bypass. Whoever does it should check the marker path too: a marker file
   replaced by a symlink is the shape most likely to matter. (security review round 7, 2026-08-07)
   **Priority:** P3
-- **Four shipped `python3 -c` sites outside this branch have the same CWD-on-`sys.path`
-  exposure that round 6 closed in the CI check, and none of them carries `-I`.**
-  `scripts/forgeward-diff-hash.sh:100`, `scripts/forgeward-gate-check.sh:75` and `:119`, and
-  `scripts/forgeward-pre-push.sh:72` all run `python3 -c` with an `import json` from whatever
-  directory the user's repo happens to be. A `json.py` at that repo's root is then the module
-  parsing forgeward's own state. **Their exposure is genuinely smaller than the CI check's, and
-  the difference is worth stating rather than assuming:** the python arm in each is only reached
-  when `jq` is absent or broken (verified by reading `json_get`'s arm ordering, not inferred),
-  and reaching it at all requires write access to the user's checkout — which `TODOS.md` already
-  discloses as defeating the local gate outright via marker forgery or `--no-verify`. The CI
-  check was the real escalation because a **fork** PR author has no other access and needs none.
-  So this is a hardening item, not a live bypass. The fix is one flag per site and is trivial;
-  it is filed rather than done because the round-6 branch is scoped to the CI check and a
-  drive-by edit to four hook scripts would ship untested under a version-monotonicity PR. Do it
-  as its own change with its own gate run, and add an assertion per site — the precedent from
-  rounds 2–6 is that an unpinned fix is a fix that quietly comes back out.
-  (security review round 6, 2026-08-07) **Priority:** P2
 - **`run_split` in `test/version-check-test.sh` reads its captured streams back with `$(cat …)`,
   the same lossy channel rounds 5 and 6 hardened the production script against.** Command
   substitution deletes NUL bytes and strips trailing newlines. It cannot mask a defect *today*:
@@ -582,6 +532,31 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   line-vs-occurrence miscount below). Adding `shellcheck` to the reviewer's scanner set is
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
   where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
+
+  **Installed 2026-08-15 (v0.11.0, homebrew) and run across the repo. The measured yield does
+  not support the argument this entry was making, and the argument should not survive the
+  measurement.** Findings: `scripts/*.sh` and `ci/*.sh` are clean apart from SC2016 ×5, SC1003
+  and SC2034 ×2, all deliberate — SC2016 fires on every single-quoted `awk`/`python3` program in
+  the repo, and SC2034 on the git pre-push stdin protocol's intentionally-unread positional
+  variables. `live-test/setup.sh` had SC2010 ×2 and SC2143 ×1 (`ls | grep` in the hook-listing
+  block), fixed in this commit — style, not defects; the `set -e` abort those lines *look* like
+  they should cause was tested and does **not** occur, because bash exempts a failing non-final
+  member of an AND-OR list. `test/*.sh` carries SC2015 ×201, SC2164 ×30, SC2181 ×6, SC2012 ×1 —
+  the SC2015 mass was checked against the shipped `grep -q`/pipefail P1 and is not that bug in
+  new clothing (attempted repro: bash's default SIGPIPE disposition kills the suite outright at
+  141 rather than letting `printf` return non-zero into the `||`).
+
+  **The decisive measurement is the negative one: shellcheck catches NEITHER of the two bugs
+  this entry cites as its evidence.** Both were reconstructed as minimal scripts and run through
+  v0.11.0 — the `printf | grep -q`-under-`pipefail` P1 and the `grep -c` line-vs-occurrence
+  miscount — and it reported nothing on either. So the case for `forgeward-scan.sh` for every
+  repo is weaker than this entry assumed, not stronger: the tool's value here is regression
+  prevention against the classes it *does* know (quoting, unset vars, subshell scope), and this
+  repo's actual failure history sits outside them. That is still worth having, but it is a
+  different claim and should be argued on its own terms. What is NOT yet decided: whether to
+  wire it into `npm test` as a gate on `scripts/` + `ci/` (the two dirs that are clean today,
+  so a baseline is free), and whether `test/*.sh` is worth an exclusion list or should simply
+  stay out of scope. (2026-08-15) **Priority:** P3 — downgraded from P2 by the above.
 - **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
   version-check 51) and every one of them is run by hand before a release. The new
   `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
@@ -598,6 +573,21 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Docs hygiene
 
+- **`## Completed` is missing entries for three merged PRs, so "the five most recent" is
+  false — it is the five most recent *that were written down*.** Measured 2026-08-15 by
+  diffing the section against `gh pr list --state merged`, when the newest entry present was
+  #24/#25 (2026-08-12). **#26** (`feat(security-reviewer)`: SQL vault-secret audit +
+  advisory env/config rulepack), **#27** (`docs`: archive completed TODOS, lift the rules
+  into `CLAUDE.md`) and **#28** (`docs(todos)`: two blind spots in the rotation notice) all
+  merged 2026-08-14 and are absent. This is the second time the section has read stale by
+  two releases; the first is recorded inside the #24 entry itself.
+  **Why the 2026-08-15 rotation went ahead regardless, since the standing rule says to
+  reconstruct first:** the rule exists to stop a cut archiving *recent* work while keeping
+  five older ones, and that requires the gaps to fall inside the kept date range. These
+  gaps do not — all three are NEWER than every entry present, so the oldest-out rotation
+  could not touch them. Checked, not assumed. The reconstruction is still owed, and it is
+  its own pass: three PR bodies and their diffs read properly, not paraphrased mid-batch.
+  (todos sweep, 2026-08-15) **Priority:** P3
 - **The open half of `TODOS.md` is still ~70KB after the completed split, and it is
   untriaged.** Archiving the 12 oldest completed entries bought 19KB of a file that is
   read in full on every pre-commit sweep; the remaining bytes are open work, and some of
@@ -626,6 +616,76 @@ Only the five most recent are kept here — a sweep consults them to answer "did
 already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), including
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
+
+- **P2 ×2 + P3: the two repo-wide interpreter/locale conventions were written down but only
+  partially applied, and neither was pinned by anything.** Fixed 2026-08-15. Closes the
+  four-`python3 -c`-sites item, the "locale pinning should be repo-wide" item, and the
+  `awk`/`wc -c` asymmetry P3 in one lane.
+
+  `python3 -I` now sits at all five shipped sites (`forgeward-diff-hash.sh`,
+  `forgeward-gate-check.sh` ×2, `forgeward-pre-push.sh`, and the CI check that already had
+  it), and `export LC_ALL=C` at the top of all **13** tracked `*.sh` outside `test/` — the
+  11 in `scripts/`, `ci/check-version-monotonic.sh`, and `live-test/setup.sh`. Both inline
+  `LC_ALL=C` command prefixes were **removed** rather than kept beside the pin, on the
+  standing one-mechanism-per-invariant rule; the sites carry a comment saying so, because a
+  reader who finds the prefix gone needs to know it was replaced and not simply dropped.
+
+  **The `-I` entry's threat model was wrong and the correction is the substantive part of
+  this commit.** It read: "reaching it at all requires write access to the user's checkout —
+  which `TODOS.md` already discloses as defeating the local gate outright", concluding "a
+  hardening item, not a live bypass". It is a live bypass. Python imports a *file*, not an
+  index, so the shadowing `json.py` arrives with the branch you cloned in order to review it
+  — no local write access, and the fork-author escalation the entry reserved for the CI check
+  applies here too. Demonstrated end to end, not argued: with `jq` off the PATH and a
+  `json.py` committed to the branch, an `-I`-stripped `forgeward-gate-check.sh` **ALLOWS** a
+  publish that the shipped one denies. That is A26, and it carries both controls — the
+  bypass leg must ALLOW or the assertion is measuring nothing, and the same mutant without
+  the `json.py` must still DENY or it is merely broken.
+
+  **Scope limit, stated because the demonstration is narrower than the flag:** the bypass is
+  the no-jq arm only. With a working `jq` installed, `json_get` never reaches `python3` and
+  the shadow is inert. The exposure is real and conditional, and A26 says nothing about a
+  machine with jq.
+
+  Pinned by A25–A29 in `test/gate-test.sh` (177 → 182 assertions), each mutation-checked:
+  strip `-I` from any shipped site → A25 red; strip it from the hook → A25 and A26 red;
+  delete one script's pin → A27 red; put an inline `LC_ALL=` back → A28 red; `chmod -x` a
+  tracked-755 script → A29 red. A25 and A27 are deliberately counted as the **violating**
+  form and enumerated from `git ls-files`, so a *new* site added without the flag fails —
+  "five sites carry `-I`" would go green the day a sixth arrived without it.
+
+  A29 exists because this commit nearly shipped without it. Inserting the pin across eleven
+  files with `awk > tmp && mv` replaced each at the umask default, dropping all eleven from
+  755 to 644; every invocation became `Permission denied` and the plugin was completely
+  broken. The suite caught it only as 28 unrelated assertions collapsing at once — nothing
+  named the cause. A29 names it.
+
+  `test/` is excluded from A27 **deliberately**: the suite spawns these scripts as children,
+  so a pin there would be inherited by every one of them and the property A27 checks would
+  become untestable from inside the test that checks it. Note also what the pin bought the
+  E-series for free — E18 previously asserted "the config reader works under the *test
+  runner's* locale", because it could not pin what the script did not pin; the script now
+  pins itself, so E18 asserts behaviour under `LC_ALL=C`.
+
+  **Two stale line references were corrected on the way out, and the correction is to stop
+  citing lines at all.** The locale entry cited `forgeward-detect-environment.sh:103` for the
+  `LC_ALL=C wc -c` and `:112` for the bare `awk`; by the time it was read they were at `:131`
+  and `:150`, and inserting the pin moved them again to `:140` and `:159` — drifting twice,
+  the second time inside the very commit that was fixing the citation. Both now read as "the
+  `config_state` block", per `CLAUDE.md`'s cite-by-symbol rule, which is the only form that
+  survives its own fix.
+
+  **The predicted rotation collision landed and was resolved by rebase, and the prediction
+  named the wrong entry to cut.** This branch and #29 were cut from the same `master` and each
+  archived the 0.8.0 `/ship`-handoff entry while adding its own, so the second to merge
+  conflicted. `TODOS-DONE.md` needed no decision — both sides made the byte-identical
+  insertion, so git took one copy and the file came out equal to master's. `TODOS.md` kept
+  both new entries, leaving six. The filed plan said to cut "the version-monotonicity entry,
+  2026-08-06"; the entry actually cut is the config-keys one, because **both carry the same
+  `Fixed 2026-08-06` line and only the merge order separates them** — config-keys is #20
+  (`246a715`, 2026-08-06) and monotonicity is #22 (`c057dc9`, 2026-08-07), which the prose
+  dates cannot show. An oldest-out cut decided from the date printed in the entry would have
+  archived the newer of the two. Checked with `git log`, not read off the page.
 
 - **P1 + P2: the 0.9.2 rotation notice searched one persistence channel of two, and read
   its own empty result as clean.** Fixed 2026-08-15, shipped in 0.10.1. Both halves were
@@ -950,32 +1010,3 @@ the non-goals and reversed decisions; the rules those produced are in
   1` on the anchor (now the harness's standing shape) catches the first cause and structurally
   cannot catch the second. A mutation reporting nothing is a claim to verify, not a finding to
   accept — accepting any of the four would have added a test for a guard that was already pinned.
-
-- **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
-  shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
-  `DECISIONS.md`.
-
-  0.8.0 gave `.forgeward/config.yml` its first reader, for `standalone.substitutes` alone —
-  which made the gap *harder* to see, not smaller: a file where one key genuinely works is a
-  stronger claim that the others do than a file where none do.
-
-  Shipped: flow sequences (`[a, b]`) and simply-quoted scalars now parse in both list forms;
-  `seo.posture` is read and validated against the six postures by whole-string comparison, so
-  an unrecognised value returns the reviewer to detection rather than reaching it; marker
-  schema 4 carries `seo_posture`; README gained a `.forgeward/config.yml` section naming the
-  honoured keys and the limits.
-
-  **The python3-YAML arm this file previously recommended was declined, and the reason
-  overturns the recommendation rather than deferring it:** PyYAML is not in the standard
-  library (verified — no `yaml` in `sys.stdlib_module_names`), so `python3` present says
-  nothing about `import yaml` working. That arm would be selected by what happens to be
-  installed and would parse *different shapes* from the fallback — the 0.7.5 divergence, which
-  V7 exists to catch. Extended the single awk instead, verified identical under gawk, mawk and
-  busybox awk.
-
-  E19–E27, all eight mutation-tested. E27 is the one worth remembering: it pins that an awk
-  which *exits 0* while printing nothing usable reads `unreadable` rather than
-  present-with-an-empty-list, and its second clause is a positive control, because
-  `unreadable` is also what a genuinely broken fixture produces. E17 had to be updated in the
-  same commit or it would have silently become vacuous — see the coupling item above, which
-  that discovery extended.

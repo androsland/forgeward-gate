@@ -32,6 +32,12 @@
 # script's.
 set -uo pipefail
 
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
+
 mode="${1:-}"
 
 git rev-parse --git-dir >/dev/null 2>&1 || {

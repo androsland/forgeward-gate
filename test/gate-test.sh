@@ -2658,6 +2658,193 @@ E27J="$( cd "$ER" && PATH="$E27SHIM:$PATH" CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$ENV_
   || nok "env E27" "shimmed '$E27J' real '$E27OK'"
 rmcfg
 
+# =============================================================================
+# A25–A29 — the two repo-wide conventions, pinned.
+#
+# `python3 -I` and `export LC_ALL=C` were both filed in TODOS.md for six rounds as
+# trivial one-line fixes, deliberately not done inline: "do it as its own change with
+# its own gate run, and add an assertion per site — the precedent from rounds 2–6 is
+# that an unpinned fix is a fix that quietly comes back out." These are those
+# assertions. They are SOURCE pins, which is a weaker instrument than the behavioural
+# ones above and is used here on purpose: the invariant is "every site has it", and no
+# behavioural test enumerates sites. A26 is the exception and the reason the rest are
+# worth having — it shows what one missing flag actually costs.
+# =============================================================================
+
+# A25: no `python3 -c` in shipped code without `-I`.
+#
+# Counted as the UNFLAGGED form, never the flagged one. "Four sites carry -I" goes green
+# the day a fifth is added without it — which is the exact regression this exists to
+# catch. "Zero sites lack -I" cannot.
+#
+# Comment lines are excluded (`^[^#]*`) because this repo argues about the flag in prose
+# directly beside the code: ci/check-version-monotonic.sh has two such lines and both
+# would otherwise read as violations. BLIND SPOT, stated so it is not mistaken for
+# coverage — a code line carrying a TRAILING comment that mentions `python3 -c` is
+# skipped by that same filter. No such line exists today and the shape is contrived, but
+# this assertion cannot see it. Scoped to shipped code (`scripts/`, `ci/`); this suite's
+# own `python3 -c` fixture mutations are deliberately out of scope, since they run in a
+# scratch repo whose contents the test wrote.
+_a25_bad="$(grep -rn --include='*.sh' -E '^[^#]*python3 -c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null || true)"
+_a25_good="$(grep -rc --include='*.sh' -E '^[^#]*python3 -I -c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null \
+             | awk -F: '{n+=$2} END{print n+0}')"
+if [ -z "$_a25_bad" ] && [ "$_a25_good" -ge 5 ]; then
+  ok "A25: every python3 -c in shipped code carries -I ($_a25_good sites flagged, 0 unflagged)"
+else
+  nok "A25: a python3 -c in shipped code is missing -I, so the repo under review is on its sys.path" \
+      "unflagged: ${_a25_bad:-none} | flagged sites: $_a25_good (expected >= 5)"
+fi
+
+# A26: `-I` is not hardening here — it is the difference between a DENY and an ALLOW.
+#
+# A25 says the flag is present. This says what it costs when it is not, because a flag
+# with no demonstrated failure is a flag the next reader deletes as noise.
+#
+# json_get's python3 arm is taken whenever jq is absent or fails (A20/A21 cover both).
+# `python3 -c` puts the process CWD at sys.path[0], and the hook's CWD is the repo being
+# pushed — so a `json.py` sitting in that repo is imported INSTEAD of the standard
+# library, and it decides what the hook believes the command was. The repo under review
+# gets to configure the interpreter judging it.
+#
+# THREE legs, and the two controls carry as much weight as the attack:
+#   1. attack against the shipped script      -> must DENY  (the guard holds)
+#   2. attack against a copy with -I stripped -> must ALLOW  (the bypass is real, so
+#      leg 1 is measuring the flag and not something incidental)
+#   3. leg 2's script with the json.py removed -> must DENY  (the mutant is otherwise
+#      healthy, so leg 2's ALLOW is the shadow rather than a script the sed broke)
+#
+# LIMIT: this is the no-jq arm only. With a working jq installed, json_get never reaches
+# python3 and the shadow is inert — so the exposure is real but conditional, and the
+# assertion says nothing about a machine with jq.
+if command -v python3 >/dev/null 2>&1 && [ -n "${_nojq_path:-}" ]; then
+  _A26="$TMP/a26"; mkdir -p "$_A26"
+  _a26_repo="$_A26/repo"
+  mkrepo "$_a26_repo" >/dev/null 2>&1
+  cm "$_a26_repo" a.txt base
+  ( cd "$_a26_repo" && git checkout -qb feat ) >/dev/null 2>&1
+  cm "$_a26_repo" b.txt work
+
+  _a26_pay="$(printf '{"cwd":"%s","tool_input":{"command":"git push"}}' "$_a26_repo")"
+  _a26_run() { ( cd "$_a26_repo" && printf '%s' "$_a26_pay" | PATH="$_nojq_path" "$1" pretooluse ); }
+
+  # A json module that answers every question with a benign command. Only `load` is
+  # reached today; `loads`/`dumps` are provided so an unrelated import cannot make this
+  # fail for a reason other than the one under test.
+  #
+  # COMMITTED to the branch, not merely dropped on disk, and the difference is the whole
+  # threat model. TODOS.md filed this as needing "write access to the user's checkout —
+  # which already defeats the local gate outright"; it does not. Python reads a file, not
+  # an index, so the shadow arrives with the branch you cloned to review it.
+  cat > "$_a26_repo/json.py" <<A26PY
+def load(fp, *a, **k):
+    return {"cwd": "$_a26_repo", "tool_input": {"command": "ls -la"}, "hook_event_name": "PreToolUse"}
+def loads(s, *a, **k):
+    return load(None)
+def dumps(o, *a, **k):
+    return "{}"
+A26PY
+  ( cd "$_a26_repo" && git add json.py && git commit -qm "add json.py" ) >/dev/null 2>&1
+
+  # The whole scripts/ directory is copied, not just the one file: the hook resolves its
+  # siblings relative to its own path, so a lone mutant would fail for want of a
+  # neighbour and leg 3 would read that as health.
+  _a26_mut="$TMP/a26-mutant"; mkdir -p "$_a26_mut"
+  cp "$PLUGIN/scripts/"*.sh "$_a26_mut/"
+  sed 's/python3 -I -c/python3 -c/g' "$PLUGIN/scripts/forgeward-gate-check.sh" > "$_a26_mut/forgeward-gate-check.sh"
+  chmod +x "$_a26_mut"/*.sh
+
+  _a26_shipped="$(_a26_run "$PLUGIN/scripts/forgeward-gate-check.sh")"
+  _a26_bypass="$(_a26_run "$_a26_mut/forgeward-gate-check.sh")"
+  mv "$_a26_repo/json.py" "$_A26/json.py.parked"
+  _a26_health="$(_a26_run "$_a26_mut/forgeward-gate-check.sh")"
+
+  _a26_why=""
+  denies "$_a26_shipped" || _a26_why="$_a26_why [the shipped hook ALLOWED a publish with a hostile json.py in the repo]"
+  [ -z "$_a26_bypass" ]  || _a26_why="$_a26_why [-I stripped and the shadow still did not flip the verdict — this assertion measures nothing]"
+  denies "$_a26_health"  || _a26_why="$_a26_why [the -I-stripped copy denies nothing even without json.py — the mutant is broken, not bypassed]"
+  [ -z "$_a26_why" ] \
+    && ok "A26: a hostile json.py in the repo under review cannot flip the hook's verdict — and the same attack ALLOWS the publish once -I is stripped" \
+    || nok "A26: the CWD-on-sys.path bypass is not pinned" "$_a26_why"
+else
+  ok "A26: CWD-on-sys.path bypass SKIPPED (needs python3 and the jq-less PATH from A20) — the -I flag's EFFECT is unverified on this machine; A25 still pins its presence"
+fi
+
+# A27: every shipped script carries `export LC_ALL=C`.
+#
+# Enumerated from `git ls-files`, not from a hand-kept list, so a script added tomorrow
+# without the pin fails here rather than being silently outside the convention. The
+# `>= 11` floor is a non-vacuity guard, on the same reasoning as A19's non-empty check:
+# an enumeration that returns nothing would otherwise assert "none of zero files are
+# missing it" and pass.
+#
+# `test/` is excluded DELIBERATELY and it is not an oversight. The suite spawns these
+# scripts as children, so a pin here would be inherited by every one of them and the
+# thing A27 is checking would become untestable from inside the test that checks it.
+_a27_files="$(git -C "$PLUGIN" ls-files '*.sh' 2>/dev/null | grep -v '^test/' || true)"
+if [ -z "$_a27_files" ]; then
+  _a27_files="$(cd "$PLUGIN" && find scripts ci live-test -name '*.sh' -type f 2>/dev/null || true)"
+fi
+_a27_missing=""; _a27_n=0
+while IFS= read -r _f; do
+  [ -n "$_f" ] || continue
+  _a27_n=$((_a27_n+1))
+  grep -qE '^[[:space:]]*export LC_ALL=C[[:space:]]*$' "$PLUGIN/$_f" || _a27_missing="$_a27_missing $_f"
+done <<A27EOF
+$_a27_files
+A27EOF
+if [ -z "$_a27_missing" ] && [ "$_a27_n" -ge 11 ]; then
+  ok "A27: all $_a27_n shipped scripts carry export LC_ALL=C (byte-exact classes, collation, and grep over invalid UTF-8 do not move with the invoker's locale)"
+else
+  nok "A27: a shipped script's text handling still follows the invoker's locale" \
+      "missing:${_a27_missing:- none} | enumerated: $_a27_n (expected >= 11)"
+fi
+
+# A28: exactly ONE mechanism per invariant — no inline `LC_ALL=` survives beside the pin.
+#
+# CLAUDE.md's rule is `export LC_ALL=C` script-wide, "never a `local LC_ALL=C` beside
+# it", and the reason is not redundancy-aversion for its own sake: the two forms are not
+# equivalent (a `local` assignment is not passed to a spawned child unless the name was
+# already exported), so leaving both live is how the next reader trusts the weaker one.
+# Both inline prefixes this repo had were REMOVED when the pin landed, not kept.
+#
+# Comments are excluded for the same reason as A25 — the removals are documented in
+# prose at the sites they were removed from, and that prose is the point.
+_a28_bad="$(grep -rn --include='*.sh' -E '^[^#]*(local[[:space:]]+LC_ALL=|LC_ALL=[A-Za-z0-9._-]+[[:space:]]+[a-z])' \
+              "$PLUGIN/scripts" "$PLUGIN/ci" "$PLUGIN/live-test" 2>/dev/null || true)"
+[ -z "$_a28_bad" ] \
+  && ok "A28: no inline LC_ALL= prefix or local LC_ALL survives beside the script-wide pin (one mechanism, not two)" \
+  || nok "A28: a second locale mechanism sits beside the pin — they are not equivalent, and the weaker one is the one that gets trusted" "$_a28_bad"
+
+# A29: every script git records as executable IS executable in the working tree.
+#
+# Not theoretical. Inserting the A27 pin across eleven files with `awk > tmp && mv`
+# replaced each file at the umask default, dropping all eleven from 755 to 644, and the
+# whole plugin stopped running — every invocation was `Permission denied`. The suite
+# caught it only because 28 unrelated assertions collapsed at once; nothing named the
+# cause. This names it.
+#
+# Compared against git's own index mode rather than a hardcoded list, so it follows the
+# repo. LIMIT: it can only run in a checkout — from an installed plugin cache there is
+# no index to compare against, and it skips.
+if git -C "$PLUGIN" rev-parse --git-dir >/dev/null 2>&1; then
+  _a29_bad=""; _a29_n=0
+  while IFS= read -r _f; do
+    [ -n "$_f" ] || continue
+    _a29_n=$((_a29_n+1))
+    [ -x "$PLUGIN/$_f" ] || _a29_bad="$_a29_bad $_f"
+  done <<A29EOF
+$(git -C "$PLUGIN" ls-files -s | awk '$1=="100755"{ $1=""; $2=""; $3=""; sub(/^[ \t]+/,""); print }')
+A29EOF
+  if [ -z "$_a29_bad" ] && [ "$_a29_n" -ge 11 ]; then
+    ok "A29: all $_a29_n files git records at mode 100755 are executable in the working tree"
+  else
+    nok "A29: a tracked-executable file is not executable here — every invocation of it is Permission denied" \
+        "not executable:${_a29_bad:- none} | enumerated: $_a29_n (expected >= 11)"
+  fi
+else
+  ok "A29: executable-bit check SKIPPED (not a git checkout — no index mode to compare against)"
+fi
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]

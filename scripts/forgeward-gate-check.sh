@@ -24,6 +24,12 @@
 # (see write-marker), and a leading `cd` is honored best-effort so a push issued
 # into a worktree is evaluated there.
 set -uo pipefail
+
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
 mode="${1:-pretooluse}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 input="$(cat)"
@@ -72,7 +78,7 @@ json_get() {
   # truncated payload carrying a real publish verb was ALLOWED.
   #   parse failure  -> exit 1, so the caller can tell it learned nothing
   #   absent field   -> exit 0 with empty stdout, which is the legitimate answer
-  printf '%s' "$input" | python3 -c 'import json,sys
+  printf '%s' "$input" | python3 -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(sys.stdin)
@@ -116,7 +122,7 @@ marker_get() {
     : # jq is installed but did not run — fall through and let python3 answer
   fi
   [ "$_HAVE_PY" = 1 ] || return 1
-  python3 -c 'import json,sys
+  python3 -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))

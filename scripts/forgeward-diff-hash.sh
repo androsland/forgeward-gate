@@ -50,6 +50,12 @@
 # is available, hash the raw blob -> a version bump then DOES re-gate (errs
 # toward safe re-gating, never toward silently excluding a dependency change).
 set -uo pipefail
+
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
 base="${1:?usage: forgeward-diff-hash.sh <base-ref> [tip]}"
 tip="${2:-HEAD}"
 
@@ -97,7 +103,7 @@ normalize_manifest() { # normalize_manifest <mode>   (json on stdin)
       *)       cat ;;
     esac
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys
+    python3 -I -c 'import json,sys
 try:
     mode=sys.argv[1]; d=json.load(sys.stdin)
     if mode=="top":

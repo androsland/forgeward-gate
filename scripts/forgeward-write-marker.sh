@@ -14,6 +14,12 @@
 # branch keeps concurrent worktrees on different branches from clobbering each
 # other's marker.
 set -euo pipefail
+
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
 base="${1:?usage: forgeward-write-marker.sh <base-ref> [fired-csv]}"
 fired="${2:-}"
 
@@ -94,7 +100,12 @@ fi
 # excludes every character a splice needs (`"`, `,`, `{`, `}`) — which is the only thing
 # this check is defending. Same reasoning as `substitutes` beside it.
 _env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*","seo_posture":"[a-z-]*"\}$'
-printf '%s' "$env_json" | LC_ALL=C grep -Eq "$_env_ok" || env_json=""
+# This grep carried its own `LC_ALL=C` command prefix until the repo-wide pin at the top
+# of the file took over. Both forms reach a child process, so the prefix was effective and
+# not merely decorative — it was removed anyway, because two mechanisms claiming one
+# invariant is how the next reader trusts the wrong one. The pin is what keeps `[^"]*`
+# matching across invalid UTF-8, which is the property this guard rests on.
+printf '%s' "$env_json" | grep -Eq "$_env_ok" || env_json=""
 [ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
 
 # Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't

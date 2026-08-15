@@ -5,6 +5,75 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## RESOLVED — the repo under review could supply the `json` module the hook judged it with
+
+**Date:** 2026-08-15 · **Version:** 0.11.0
+
+**Symptom.** With `jq` off the PATH, a `json.py` committed to the branch being reviewed makes
+`forgeward-gate-check.sh` **allow** a publish it should deny. The hook prints nothing and the
+push proceeds. Nothing in the output distinguishes this from an ordinary ungated command that
+was correctly let through, which is the property that makes it worth a record: a missed gate
+does not announce itself.
+
+**Mechanism.** `python3 -c` sets `sys.path[0]` to `''`, the process's current working
+directory. The hook runs from the repo being pushed. `import json` therefore resolves against
+that repo before the standard library, so a file named `json.py` at its root *is* the parser
+deciding what the hook believes the command was — return `{"tool_input":{"command":"ls -la"}}`
+and a `git push` reads as a benign command. `json_get`'s python arm is reached whenever `jq`
+is absent or exits non-zero, both of which A20/A21 already exercise as supported states.
+
+**Repro** (this is A26 in `test/gate-test.sh`, with both controls):
+
+1. A repo on a feature branch, no PASS marker. Commit a `json.py` whose `load()` returns
+   `{"cwd": "<repo>", "tool_input": {"command": "ls -la"}, "hook_event_name": "PreToolUse"}`.
+2. Build a PATH with every `jq`-bearing directory mirrored minus `jq` (the A20 shim; a
+   hand-written tool list is how the first attempt at this produced a vacuous green).
+3. From inside that repo, feed the hook a real publish payload.
+   - shipped `forgeward-gate-check.sh` → **deny**
+   - the same file with `-I` stripped → **empty output, i.e. allow**
+   - the `-I`-stripped file with the `json.py` removed → **deny** (so the ALLOW above is the
+     shadow, not a script the edit broke)
+
+**The fix** is one flag: `python3 -I -c`. `-I` drops the CWD from `sys.path` and implies
+`-E`/`-s`, so neither the reviewed repo, nor `PYTHONPATH`, nor a user site-packages directory
+can reach the interpreter. Applied at all four shipped sites (`forgeward-diff-hash.sh`,
+`forgeward-gate-check.sh` ×2, `forgeward-pre-push.sh`); `ci/check-version-monotonic.sh`
+already had it from round 6.
+
+**What was wrong in the filing, and it is the reason this sat open.** `TODOS.md` had carried
+this since round 6 as a **P2 hardening item, explicitly not a live bypass**, on the reasoning
+that "reaching it at all requires write access to the user's checkout — which `TODOS.md`
+already discloses as defeating the local gate outright via marker forgery or `--no-verify`",
+and that the CI check was the real escalation "because a **fork** PR author has no other
+access and needs none."
+
+That inference is wrong, and it is wrong in a specific, reusable way: it slid from *a file at
+the repo's root* to *write access to the repo*. Python imports a **file**, not an index. The
+shadowing module arrives with the branch — it is committed by the same fork author whose lack
+of other access was the argument for treating the CI check as the serious case. The reviewer
+who filed it had the right mechanism and reasoned about the wrong actor.
+
+**Two directional limits, stated so the fix is not read as broader than it is.** The bypass is
+the **no-jq arm only** — with a working `jq`, `json_get` returns before `python3` is reached
+and the shadow is inert; and it requires the user to push from that repo's directory, which is
+the normal case but not a guarantee. Both were checked rather than assumed.
+
+**Generalized in the same commit.** `export LC_ALL=C` moved from a per-script decision to a
+repo-wide one (all 13 tracked `*.sh` outside `test/`), and the two inline `LC_ALL=C` command
+prefixes were **removed** rather than left beside the new pin, on the same one-mechanism rule
+that deleted `num_lt`'s `local LC_ALL=C` in round 3 — the two forms are not equivalent, and
+leaving both live is how a reader comes to trust the weaker one. `test/` is out of scope
+deliberately: the suite spawns these scripts, so a pin there would be inherited and make the
+property untestable from inside the test that checks it.
+
+**Pinned by A25–A29**, all five mutation-checked in both directions. A25 and A27 count the
+**violating** form and enumerate from `git ls-files` rather than a fixed list — "five sites
+carry `-I`" would go green the day a sixth arrived without it. A29 pins the executable bit,
+and it is not hypothetical: inserting the locale pin with `awk > tmp && mv` rewrote all eleven
+scripts at the umask default, dropping 755 → 644, and every invocation became `Permission
+denied`. The suite caught it only as 28 unrelated assertions collapsing at once, with nothing
+naming the cause.
+
 ## RESOLVED — the secrets scanner read untracked files and put them in a persisted transcript
 
 **Date:** 2026-08-10

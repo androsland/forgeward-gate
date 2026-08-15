@@ -13,6 +13,35 @@ their provenance — grep here before overriding one of them.
 `DECISIONS.md` remains the source of truth for *why* a design is the way it is. This
 file records what was done and what it deliberately left undone.
 
+- **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
+  shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in
+  `DECISIONS.md`.
+
+  0.8.0 gave `.forgeward/config.yml` its first reader, for `standalone.substitutes` alone —
+  which made the gap *harder* to see, not smaller: a file where one key genuinely works is a
+  stronger claim that the others do than a file where none do.
+
+  Shipped: flow sequences (`[a, b]`) and simply-quoted scalars now parse in both list forms;
+  `seo.posture` is read and validated against the six postures by whole-string comparison, so
+  an unrecognised value returns the reviewer to detection rather than reaching it; marker
+  schema 4 carries `seo_posture`; README gained a `.forgeward/config.yml` section naming the
+  honoured keys and the limits.
+
+  **The python3-YAML arm this file previously recommended was declined, and the reason
+  overturns the recommendation rather than deferring it:** PyYAML is not in the standard
+  library (verified — no `yaml` in `sys.stdlib_module_names`), so `python3` present says
+  nothing about `import yaml` working. That arm would be selected by what happens to be
+  installed and would parse *different shapes* from the fallback — the 0.7.5 divergence, which
+  V7 exists to catch. Extended the single awk instead, verified identical under gawk, mawk and
+  busybox awk.
+
+  E19–E27, all eight mutation-tested. E27 is the one worth remembering: it pins that an awk
+  which *exits 0* while printing nothing usable reads `unreadable` rather than
+  present-with-an-empty-list, and its second clause is a positive control, because
+  `unreadable` is also what a genuinely broken fixture produces. E17 had to be updated in the
+  same commit or it would have silently become vacuous — see the coupling item above, which
+  that discovery extended.
+
 - **P2: the gate reported a `/ship` handoff it never performed when gstack was absent.**
   Fixed 2026-08-06, shipped in 0.8.0. Closes the Option B decision, the README quality
   claim, the marker-environment item, and the "untested handoff" item in one lane.

@@ -26,6 +26,12 @@
 # the axis. Callers must render this as "the tool is present", never "the axis was audited".
 set -uo pipefail
 
+# Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
+# must not have its behaviour depend on the invoker's environment: character classes,
+# collation and grep's handling of invalid UTF-8 all move with the locale, and the
+# last one was a complete bypass of an ambiguity guard before it was pinned.
+export LC_ALL=C
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 detect="$here/forgeward-detect-gstack-skill.sh"
 
@@ -128,7 +134,10 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
   # Size cap before awk touches it. Nothing else bounds how much gets scanned, and a
   # config this large is malformed by definition — the supported shape is a handful of
   # short axis names. A `wc` that fails for any reason resolves to the refusing side.
-  _sz="$(LC_ALL=C wc -c < "$cfg" 2>/dev/null || echo 999999999)"
+  # The `LC_ALL=C` prefix that used to sit here is now the script-wide pin at the top,
+  # which also covers the `awk` below — the asymmetry between the two was the P3 that
+  # prompted the repo-wide convention.
+  _sz="$(wc -c < "$cfg" 2>/dev/null || echo 999999999)"
   case "$_sz" in ''|*[!0-9]*) _sz=999999999 ;; esac
   if [ "$_sz" -gt 65536 ]; then
     config_state="unreadable"
