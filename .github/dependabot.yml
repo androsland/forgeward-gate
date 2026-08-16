@@ -21,9 +21,13 @@ version: 2
 #      supply-chain-reviewer starts firing on that manifest, which is the more
 #      substantive check of the two.
 #   3. It sees `uses:` in workflow files. It does not see a version pinned inside a
-#      script, a `docker://` reference, or an action nested in a composite action. None
-#      of those exist here today; if one is added, it is outside this file's reach and
-#      nothing will say so.
+#      script, a `docker://` reference, or an action nested in a composite action.
+#      **One already exists**: `shellcheck.yml` pins `SHELLCHECK_VERSION` in an `env:`
+#      block and downloads it in `run:`, which is structurally invisible here — that
+#      file's own header states the same limit from the other side, and refreshing it is
+#      manual. This draft originally read "none of those exist here today", which was
+#      untrue in the release that shipped it. Anything added in that shape is outside
+#      this file's reach and nothing will say so.
 #
 # A Dependabot PR is pushed server-side, so the local pre-push hook and the gate marker
 # are not involved and no gate runs on it. The CI workflows do run, and
@@ -33,7 +37,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      # Monthly, not weekly. There is one third-party action across three workflows;
+      # Monthly, not weekly. There is one third-party action across four workflows;
       # a weekly cadence on that surface produces mostly-empty runs, and a bot whose
       # PRs are usually noise is a bot whose PRs stop being read.
       interval: monthly

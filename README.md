@@ -252,7 +252,10 @@ generated*. Together they cover:
 This validation covers `ci-gate`'s **drafting** engine (inherited from the former `readiness`
 skill); it is **additive** to the gate's own validation below and has no bearing on the
 enforcement contract. `ci-gate`'s branch-protection step is separate and always confirmed. The
-gate's 24-assertion suite, security scope, and honest limits are unchanged.
+gate's own suite, security scope, and honest limits are unchanged. (This sentence used to
+carry an assertion count. It said 24 against a suite that is now 182 — a number whose only
+job is to say "unchanged" is a number nobody re-measures, so the counts live in one place,
+below.)
 
 ## Install
 
@@ -314,10 +317,23 @@ see limits.
 
 ## Validation / what's tested
 
-**Automated suites — `npm test`.** Both are framework-free and exercise the **real plugin
-scripts** in `scripts/` (not mocks or copies) against throwaway git repos.
+**Automated suites — `npm test`.** Four suites, all framework-free, all exercising the
+**real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
+repos: `gate-test.sh` (182), `pre-push-test.sh` (15), `version-check-test.sh` (51),
+`rules-test.sh` (39). Every suite prints its own count on its last line, so these are
+re-measurable rather than taken on trust.
 
-`test/gate-test.sh` (173 assertions) — the in-editor layer:
+**External tools, stated because `npm test` is not self-contained.** `python3` is a hard
+requirement of `ci/check-version-monotonic.sh`: it reads the three manifests with the stdlib
+`json` module and has **no `jq` fallback by design**, because two readers of the same JSON
+that can disagree is a divergence this repo shipped once already (`DECISIONS.md`). A box
+without it gets a named failure, never a quiet skip. `semgrep` is optional — without it
+`rules-test.sh` prints `1..0 # SKIP` and says the rulepack was **not** verified, which is a
+green run that checked less than it appears to. Both differ from the **hooks**, which read
+JSON with `jq` *or* `python3` and fail open when neither exists: for the hooks `python3` is
+optional, for the version check it is not.
+
+`test/gate-test.sh` (182 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
@@ -361,6 +377,23 @@ it (refs on stdin, so no command parsing):
   and the **opt-in no-op** (a repo without `forgeward.gate` is never blocked — safe as a global
   hook). An end-to-end harness additionally confirms real pushes via `git -C`, `git  push`,
   `"git" push`, and `g\it push` are all blocked while ungated, and `--no-verify` bypasses.
+
+`test/version-check-test.sh` (51 assertions) — `ci/check-version-monotonic.sh`, the CI
+direction check. What it pins is a **comparator**, and a comparator's failure mode is
+answering the wrong way rather than crashing, so the suite is built in pairs: for each rule,
+the case that must FAIL beside the neighbouring case that must PASS. An assertion that only
+ever checks the fail side cannot tell a working comparator from one that refuses everything,
+and a green "refuses everything" is how a required check gets deleted a week later.
+
+`test/rules-test.sh` (39 assertions) — the bundled Semgrep rulepack in `rules/env-config.yml`,
+in three classes: **positives** (each shape the rule exists to catch fires, one per line, so a
+regression names the shape it broke), **negatives** (each legitimate configuration it must
+*not* fire on stays silent — the half that matters for a pack third parties install, since a
+rule that fires on `process.env.X || 'default'`, the very fix it recommends, teaches people to
+switch the pack off), and **blind spots** (each limit documented in the rulepack, pinned as
+silent). Fixtures are generated into a scratch directory at run time and never written into
+the repo: the plugin's own artifact contract applies to its own tests, and a committed `.ts`
+fixture would be scanned by forgeward's gate on every subsequent PR.
 
 **Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
 session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
