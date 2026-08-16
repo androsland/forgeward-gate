@@ -96,7 +96,21 @@ a *minimal* counterexample, not a *representative* one.
 
 ## Q2 — A code-quality reviewer
 
-### Decision: build it — narrow and blocking — and name it `error-path-reviewer`.
+> **SUPERSEDED at 0.12.0 by the measurement this proposal itself asked for — read this
+> box before the recommendation below.** The decision was conditional from the start
+> (see *Sub-question 2*, "Fallback if the base rate comes back thin"), and the base rate
+> came back at **0 true Highs per 5 PRs in both repos**, 0.25/5 on an extended window.
+> The pre-committed rule made that a fold, not a build: **no `error-path-reviewer`
+> exists and none will be built on this evidence.** Rules 1 and 3 are folded into
+> `agents/security-reviewer.md` Step 3; rules 2 and 4 fired zero times and were
+> deliberately NOT folded. The measurement's own defect — a by-hand diff pass cannot see
+> the two-arms-of-one-helper shape that produced four real instances here — is recorded
+> with the result, so the 0/5 does not get read as "the class is rare".
+> Everything below is kept as the reasoning that framed the measurement; where it says
+> "build it", read "the condition under which it would have been built".
+> Full entry: `DECISIONS.md` → *quality stays unowned by forgeward*.
+
+### Decision (conditional, and the condition failed): build it — narrow and blocking — and name it `error-path-reviewer`.
 
 Not "code-quality." It owns one question, symmetric to the security reviewer's:
 **when this code fails, does anything notice?**
@@ -539,7 +553,12 @@ rules into `security-reviewer` Step 3 remains a legitimate answer.
   auditable from the artifact.
 - **The review-ran check**, warn-only, keyed off a configured artifact — design in
   [Later findings §5](#5-the-review-ran-check-design-if-built).
-- **`error-path-reviewer`, pending a base-rate measurement.** Carry the incident
+- **`error-path-reviewer` — MEASURED, and the answer was FOLD. Not built, not pending.**
+  0 true Highs per 5 PRs in both repos; rules 1 and 3 folded into `security-reviewer`
+  Step 3 at 0.12.0, rules 2 and 4 not folded (zero fires anywhere). See the SUPERSEDED
+  box at the head of Q2 and the `DECISIONS.md` entry. The original item is kept below
+  verbatim because the decision rule was pre-committed, and a rule is only worth having
+  if the losing outcome is still legible afterwards. Carry the incident
   (`json_get`, fixed in #11, live across PRs #2–#10 on green markers), the four rules,
   and the decision rule: **≥1 true High per 5 PRs → build it blocking; below that → fold
   rules 1 and 3 into `security-reviewer` Step 3 instead.** Measure by applying the

@@ -39,6 +39,19 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **The delete-only exemption (`_is_delete_only`) is offered on a trusted residue
   only**, and its four invariants are stated at the function. Widening it to an
   untrusted command re-opens the class it was written to close.
+  **An option can send refs the argument list never names** — `--tags origin :d2` deletes
+  `d2` and *publishes* a tag on an unpublished commit — which is why an unrecognised
+  option DENIES rather than being skipped. Three pushes at a real remote wrote that
+  design; reading `git-push(1)` did not and would not have.
+- **Never text-match a field out of a structured document — parse it.** `grep`/`sed`/`awk`
+  against JSON lost four times on the same field in one file: `grep -c` counts *lines* not
+  occurrences; GNU grep under a UTF-8 locale silently drops a line holding invalid UTF-8;
+  `"version"` decodes to the key `version` while containing none of its bytes; and any
+  of the key's characters can be escaped independently, so there is no finite set of
+  spellings to match. Three independent evasions of one approach is not three bugs — the
+  class is *text tools do not parse JSON*, its members cannot be enumerated, and the reader
+  was deleted rather than patched a fourth time. A textual reader will always disagree with
+  the parser the consumer actually uses, which is the only comparison that matters.
 - **The two unreadable-input paths are deliberately asymmetric.** The enforced hook
   refuses; the fast reminder allows, because an unreadable payload would otherwise
   wedge the whole session the moment the JSON tool broke. Do not "consistency"-fix one
@@ -61,6 +74,26 @@ commit that was fixing it — a line number cannot survive its own fix.
   fail-closed — never by a prompt instruction.** Deferrals to a named gstack skill
   shipped unconditional once, and the axis silently went uncovered.
 
+## Running other people's tools
+
+- **Allow-list the subcommand; never deny-list flags.** `gitleaks` ships `detect --no-git`
+  and `protect` as HIDDEN in 8.30.1 — absent from `--help`, still live, the same
+  filesystem walk under older names, and all three read an untracked file before the guard
+  refused them. A deny-list covers the names you knew about on the day you wrote it.
+  Match the subcommand against an enumerated set and refuse anything else, so an unlisted
+  value-taking flag placed *before* it cannot smuggle one past.
+- **A scanner's target must be one existing regular file that git tracks** — zero paths,
+  two paths, a directory and an untracked file are all refused. `gitleaks dir` silently
+  replaces the whole target when it gets a second positional (`len(args) != 1` leaves
+  `source = "."`), so "the extra path is ignored" is not the failure mode; scanning the cwd
+  is.
+- **Never fix a scanner leak with a filename exclusion.** A *committed* credential file is
+  a genuine finding and must keep being reported. The fix is to make the scanner
+  structurally unable to see outside the reviewed diff, not to teach it to skip `.env`.
+- **The argv wrapper cannot see a pipe, and layer 1 cannot see inside a flag's VALUE.**
+  Both are stated as non-goals in the script and pinned as accepted-and-contained (P8l),
+  not asserted away. Do not widen a claim about the wrapper to cover `stdin` mode.
+
 ## Tests
 
 - **No `printf … | grep -q` in a test helper under `set -o pipefail`.** `grep -q` exits
@@ -80,6 +113,32 @@ commit that was fixing it — a line number cannot survive its own fix.
   machine.** E2 exists because gstack IS installed here and the probe is not a PATH
   lookup, so an assertion that forgets one of its three roots finds the real gstack and
   greens vacuously.
+- **Assert on the MESSAGE, not the exit status.** From round 3 of the version-check review
+  on, every new assertion reads the message, because two inputs failed closed for an
+  *unrelated* reason and would have passed an exit-status check while the guard they were
+  written for was bypassed. A check that fails for the wrong reason is a check that is not
+  there.
+- **An assertion written alongside a mechanism inherits that mechanism's blind spot.** R6
+  pinned a 10^3 ceiling and stayed green while the replacement comparator wrapped at 2^63;
+  R8's fixture put two keys on separate lines, the one arrangement `grep -c` gets right.
+  Only an outside reader or a mutation sees past it — which is why an adversarial review
+  found seven defects here and the suite found none of them.
+- **A mutation that reports nothing is a claim to verify, not a finding to accept.** Of
+  four "vacuous" results, three were harness artifacts that never applied and one applied
+  cleanly and was still a no-op (an added `ok:*)` arm after the real one — `case` takes the
+  first match). Accepting any of them would have added a test for a guard already pinned.
+  `assert count == 1` on the anchor catches the first cause and structurally cannot catch
+  the second.
+- **When tightening a matcher that previously refused everything, the refusal assertions
+  prove nothing.** Every deny case for the publish matcher was already green before
+  `_is_delete_only` existed, so only the allow half and mutation testing carried
+  information — and mutation is what found the fail-OPEN (`--delete x\ngit push origin
+  main` slipping through `read -ra`, which sees one line).
+- **Verify a claim about a tool by invoking the binary the code invokes.** An interactive
+  `grep` here is a shell function shimming to ugrep 7.5.0; a script gets `/usr/bin/grep`,
+  GNU 3.7, and shell functions are not inherited by a non-interactive child. The first
+  attempt to check a real finding appeared to refute it because the ad-hoc check and the
+  code under test were different programs. Use `type -a` and an absolute path.
 
 ## Docs
 
@@ -89,9 +148,17 @@ commit that was fixing it — a line number cannot survive its own fix.
   `docs/axis-proposals.md`, and the hook's own halt message). Prose that has never been
   re-read against the code is how a fixed bug keeps being documented as working.
 - **The oldest-out cut on `## Completed` is decided by merge order, not by the `Fixed`
-  date in the entry.** Several entries carry the same date — #20 and #22 both say
-  2026-08-06 and merged a day apart — so a cut read off the page archives the newer one.
-  Resolve ties with `git log` before moving anything.
+  date in the entry — and not by the PR number either.** Several entries carry the same
+  date (#20 and #22 both say 2026-08-06 and merged a day apart), and **#26 merged 39
+  minutes AFTER #27**, so a number sort is wrong in the other direction. Resolve with
+  `git log --first-parent` before moving anything. Both traps have now been hit once each.
+- **Extract a rule WITH its exception, or don't extract it.** When the `-I` rule was
+  lifted, only one of five sites carried the flag and the gap was already filed; stating
+  the rule bare would have converted a filed hole into a claim of coverage. If the
+  exception is too awkward to state, the rule is not ready to leave `TODOS.md`.
+- **A filing-only PR still gets a `## Completed` entry.** It leaves nothing in the tree,
+  so the measurement it was built on is the only durable thing it produced — and the next
+  pass will re-derive it from scratch if the entry is missing. #28 is the worked example.
 
 ## Non-goals of this file
 

@@ -186,7 +186,33 @@ findings that two tools report on the same `file:line`.
 
 ## Step 3 — Reason about what the scanners cannot see
 
-Scanners are syntactic. You are not. On the changed code, manually audit for:
+Scanners are syntactic. You are not.
+
+**The vocabulary the rest of this step uses.** When a check, a guard, or a status signal
+does not produce the answer it was written to produce, the code goes one of two ways —
+and *the direction is the finding*, not the fact that something went wrong:
+
+- **Fail-closed** — the uncertain case is refused. A scanner is missing so the run FAILs;
+  a manifest will not parse so the merge is blocked; a capability lookup errors so the
+  request is denied. The cost of a fail-closed error path is a false refusal.
+- **Fail-open** — the uncertain case is allowed. The check that decides whether a secret
+  is present errors and its non-zero status is discarded, so the commit goes through; the
+  nonce verification throws inside a `try` with an empty `catch`, so the handler runs
+  anyway. The cost of a fail-open error path is *the control itself*.
+
+The same line can be either, and only the decision around it says which. So never report
+"the error is swallowed" on its own: **name the direction, and name what a caller then
+believes that is not true.** A fail-closed path is usually a bug; a fail-open path on a
+control is a vulnerability, and it reads as ordinary defensive code in a diff — this
+plugin shipped exactly that in its own enforcement hook and it survived review.
+
+**Every finding in this step needs a stated failure consequence to reach High**, which is
+the discipline the race rule below already states as "High only if you can state the
+interleaving". A failure you cannot narrate is Medium at most. That is not politeness
+about severity: an unnarratable High is unfalsifiable, and a gate that FAILs on findings
+nobody can check is a gate that gets switched off.
+
+On the changed code, manually audit for:
 
 - **Injection** — SQL / NoSQL / command / LDAP / template. Any query, shell call, or
   interpreter fed a value that is concatenated, interpolated, or otherwise not
@@ -285,6 +311,13 @@ Scanners are syntactic. You are not. On the changed code, manually audit for:
   conditional write whose row count is never checked (`get diagnostics`, `RETURNING` plus
   a null test, ORM `rowcount`) when its `WHERE` carries a predicate that can legitimately
   match zero rows — the caller gets success and its work is silently discarded.
+  **(2) covers the same shape outside a database**, which is the half this bullet used to
+  leave to nobody: a conditional file write or `rename` whose "no such path" is not
+  distinguished from success, an in-place edit (`sed -i`, a rewrite-and-move) that matched
+  nothing, a `DELETE` or `PATCH` whose 404 is folded into the 2xx branch, a
+  compare-and-swap / conditional-put whose *precondition failed* response is not branched
+  on, a `git` plumbing command whose "nothing matched" exit status is discarded. Identical
+  bug, identical consequence: the caller is told the state changed and it did not.
   Not a finding when the read and write are one atomic statement (that IS the fix — do not
   flag it), when the rows are provably locked earlier in the same transaction, at
   `SERIALIZABLE`, or when a zero-row outcome is genuinely the intended no-op — but say
@@ -299,6 +332,29 @@ Scanners are syntactic. You are not. On the changed code, manually audit for:
   legitimately fail to match for a benign reason, so a count check trades a silent-failure
   bug for a false-refusal one that strands valid work. Refuse on *why* the row did not
   match, by testing the specific bad states, not on a count.
+- **Discarded failure signal on a control path.** A status that decides something is
+  produced and then thrown away: `2>/dev/null` with `$?` never read, `|| true` on a
+  status-bearing command, an empty `catch` or `except: pass`, a Go `err` assigned to `_`,
+  an un-awaited promise with no `.catch`, a subprocess exit code never inspected, a
+  documented error return ignored at the call site. Note that in a shell pipeline the
+  status reported is the LAST stage's unless `pipefail` is set, so a failing earlier stage
+  is discarded by default — whether the signal ever existed to be checked is part of the
+  question, not a separate one.
+  **High only when the discarded signal gates a control decision AND you can say which
+  direction it fails in** — an authorization or capability check, an enforcement path, a
+  write the caller is told succeeded, a cleanup that prevents data loss or cross-tenant
+  exposure. A discarded status that fails *closed* is a bug, not a vulnerability; say so
+  and rate it accordingly. Otherwise **Medium**.
+  **Not a finding** when the discarded status is genuinely advisory — a log line, a
+  metric, a cache warm, a best-effort cleanup whose failure changes nothing a caller
+  relies on. Say why it is safe rather than filing it. This bullet is about the error
+  *path*; naming, formatting, length, complexity, DRY, dead code that is not an error
+  path, and anything the repo's own linter already reports stay out of scope here, as
+  everywhere in this file.
+  (Folded in from a measured proposal for a separate error-path reviewer rather than
+  built as one: the base rate came back at 0 true Highs per 5 PRs across two repos, which
+  the decision rule made a fold and not a seventh gate. `docs/axis-proposals.md` Q2 has
+  the measurement, and the two rules deliberately NOT folded.)
 
 For each real issue, trace the path: where untrusted or dynamic input enters, how it
 reaches the sink, and what an attacker gets. Do not report a sink as vulnerable if the

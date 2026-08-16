@@ -1,0 +1,46 @@
+version: 2
+
+# This file closes exactly one gap: the workflows pin `actions/checkout` by commit SHA,
+# and a pin with no refresh policy is a pin that rots. SHA-pinning is the right call — a
+# tag can be repointed at new code, a SHA cannot — but it also means the repo never picks
+# up a fix to that action unless somebody remembers. "Somebody remembers" is the failure
+# mode this repo keeps writing checks to replace.
+#
+# WHAT IT DOES NOT DO, stated so a green Dependabot config is not read as supply-chain
+# coverage:
+#
+#   1. It does not judge the new code. Dependabot resolves the action's latest release
+#      to a SHA and opens a PR; it has no opinion on whether that release is safe, and a
+#      compromised upstream release is exactly as mergeable as a good one. The pin buys
+#      immutability, not trust. Read the upstream diff before merging — for a third-party
+#      action, that is the only control in the chain.
+#   2. There is no `npm` ecosystem entry, and that is deliberate rather than an omission.
+#      `package.json` here is test metadata: `private: true`, zero dependencies, no
+#      lockfile. An npm entry would have nothing to resolve. Add one the day a real
+#      dependency lands — and note that the day it lands, the gate's own
+#      supply-chain-reviewer starts firing on that manifest, which is the more
+#      substantive check of the two.
+#   3. It sees `uses:` in workflow files. It does not see a version pinned inside a
+#      script, a `docker://` reference, or an action nested in a composite action. None
+#      of those exist here today; if one is added, it is outside this file's reach and
+#      nothing will say so.
+#
+# A Dependabot PR is pushed server-side, so the local pre-push hook and the gate marker
+# are not involved and no gate runs on it. The CI workflows do run, and
+# ci/check-version-monotonic.sh passes on it unchanged — its rule is "never backward",
+# not "always bump", so a PR that touches no manifest is not a false red.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      # Monthly, not weekly. There is one third-party action across three workflows;
+      # a weekly cadence on that surface produces mostly-empty runs, and a bot whose
+      # PRs are usually noise is a bot whose PRs stop being read.
+      interval: monthly
+    open-pull-requests-limit: 3
+    # One PR for all action bumps rather than one per action. The point of review here
+    # is reading the upstream diffs, and that is a single sitting either way.
+    groups:
+      actions:
+        patterns:
+          - "*"

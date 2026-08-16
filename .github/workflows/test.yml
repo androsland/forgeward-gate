@@ -1,0 +1,69 @@
+# This workflow owns exactly one question: do the test suites pass on a machine that is
+# not the author's? Until it existed, "the suite passed" rested on whoever cut the
+# release remembering to run `npm test` — recorded in TODOS.md as a P2 for that reason.
+#
+# WHAT THIS IS NOT EVIDENCE OF. The gate suite is documented as load-sensitive, and that
+# sensitivity was MEASURED, not guessed: S7 ("dep add re-gate denied") was seen ALLOWING
+# a publish twice inside one ~5-minute window, then never again in 22+ consecutive runs,
+# and the one later reproduction landed while the machine was independently at load 15.
+# A single green run here says "green on this runner, this time". It does not say "not
+# flaky", and no number of single runs will. flake-sweep.yml is the instrument for that
+# other claim, and it is deliberately not wired into every PR.
+#
+# SO: DO NOT MAKE THIS A REQUIRED CHECK YET. Branch protection is a repo setting and is
+# not in this file, so nothing here can enforce that — it is a note to whoever configures
+# it. A flaky *required* check is worse than no check, because the first red teaches
+# everyone to re-run rather than to read. Promote it once flake-sweep has a run count
+# behind it; tracked in TODOS.md.
+#
+# ON PUSH TO MASTER AS WELL AS ON PRs, which version-check.yml deliberately does not do.
+# The reasoning differs because the question differs. version-check compares two refs, so
+# on a push to master it would compare the commit against itself and pass vacuously. This
+# suite is self-contained — it has no base ref and no vacuous form — and the merge result
+# is a tree no PR run ever saw. Two PRs can each be green and their merge sequence red;
+# this is the only place that would show up.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    steps:
+      # Same SHA pin as version-check.yml, and the same reasoning: a tag can be
+      # repointed, a SHA cannot. Refreshing the pin is now Dependabot's job — see
+      # .github/dependabot.yml, which closed the "a pin needs a refresh policy" half.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here needs a credential, and the code that runs next is checked out
+          # from the PR head, which on a fork PR is contributor-controlled content.
+          persist-credentials: false
+          # Full history. The suite builds its own fixture repos and does not read this
+          # one's log, but A25/A27/A29 enumerate the working tree through `git ls-files`
+          # and a partial clone is a needless way to find out that assumption was wrong.
+          fetch-depth: 0
+
+      # Printed, not asserted. The suite has arms for an absent jq (it shadows PATH
+      # itself in A20/A26) and for an absent python3, so this is not a precondition
+      # check — it is the line that makes a future "why did CI disagree with my box"
+      # answerable without a re-run.
+      - name: toolchain the suite will see
+        run: |
+          printf 'bash      %s\n' "$(/usr/bin/env bash --version | head -1)"
+          printf 'git       %s\n' "$(git --version)"
+          printf 'jq        %s\n' "$(command -v jq >/dev/null && jq --version || echo absent)"
+          printf 'python3   %s\n' "$(command -v python3 >/dev/null && python3 --version || echo absent)"
+          printf 'awk       %s\n' "$(command -v awk || echo MISSING)"
+
+      # `npm test` rather than the four bash files spelled out, so package.json stays the
+      # single source of truth for the suite roster: a fifth suite added there is picked
+      # up here without editing this file. The cost is that its `&&` chain stops at the
+      # first failing suite, so a red run reports one suite's failures and not the rest.
+      - name: npm test (gate, pre-push, version-check, rules)
+        run: npm test

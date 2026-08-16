@@ -191,6 +191,25 @@ quality does neither job well.
 has already answered and you say nothing at all. A disclosure that repeats after being
 answered is nagging, and nagging is how gates get switched off.
 
+**`quality` is the one axis where PRESENT is also a disclosure, and it is a different
+sentence from the absent case.** The deferral is reciprocal, and that was observed rather
+than theorised: in one repo's review log gstack's `/review` skipped its `maintainability`
+specialist with `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
+`"covered-by-forgeward"` — while forgeward defers quality to `/review`. Two tools each
+pointing at the other means nobody reviews quality, and no `NOT COVERED` line fires,
+because `gstack_review` reads `present` and presence is all the probe can see.
+
+So when `gstack_review: present` and `quality` is not in `substitutes`, name the axis in
+the firing decision as an OWNER and never as a coverage claim — one clause on the line
+you already print, not a paragraph:
+`quality: owned by gstack /review (installed; forgeward has no quality reviewer and does not check that /review ran)`
+
+Its limits are the point. Forgeward cannot see whether `/review` ran, cannot read its
+skip reasons, and cannot change what it does; the other half of the loop has to be fixed
+in gstack. What forgeward can stop doing is *asserting coverage on another tool's
+behalf*, and that is all this line is. Silence it like any other axis by putting
+`quality` in `standalone.substitutes`.
+
 **State presence, never diligence.** The probe sees that a skill is *installed*. It
 cannot tell gstack-installed-and-never-run from gstack-actively-covering-the-axis, so
 `gstack_review: present` licenses "the tool is here", never "quality was reviewed".

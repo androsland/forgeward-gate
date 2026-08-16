@@ -5,6 +5,83 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — quality stays unowned by forgeward; "`/review` covers it" is withdrawn, and one measured sliver folds into `security-reviewer`
+
+**Date:** 2026-08-16 · **Version:** 0.12.0
+
+**The decision, in one line.** forgeward does **not** add a code-quality reviewer — that part
+of "delegate quality to `/review`" stands. What is **reversed** is the second half of the
+sentence: forgeward no longer asserts that `/review` *covers* the axis. It names `/review` as
+the axis owner and says plainly that it cannot see whether the owner did anything.
+
+**Why the reversal.** The deferral ran both ways, and that was observed rather than reasoned
+about. On commit `04a04fb` of another repo, gstack's `/review` log recorded `maintainability`
+skipped with `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
+`"covered-by-forgeward"` — while forgeward's README skipped code quality because `/review`
+covers it. Both tools installed, both deferring, the axis running nowhere, and **no disclosure
+firing on either side**, because each one's precondition ("the other is present") was satisfied.
+Scope honestly: 2 of 22 review entries. That is an existence proof of the loop, not a measured
+rate for it.
+
+This is the same shape as the `/cso` reversal recorded further down this file, and it is the
+second time delta-scoping produced a hole. The general rule it produces: **a deferral may name
+an owner; it may never assert coverage.** A tool can detect that another tool is installed. No
+tool in this design can detect that another tool did its job, so any sentence whose truth
+depends on the other tool having *run* is a sentence forgeward is not entitled to write.
+
+**What 0.12.0 actually changed.**
+
+1. `skills/gate/SKILL.md` Step 1c — `quality` becomes the one axis where `present` is also a
+   disclosure. When gstack `/review` is installed and `quality` is not in
+   `standalone.substitutes`, the firing decision names it as an owner in one clause, never as
+   coverage. Absent is unchanged: still the existing `NOT COVERED:` line.
+2. `README.md` — the "gstack's `/review` covers it" claim is replaced by the loop, the evidence,
+   and the statement that forgeward does not review quality.
+3. `agents/security-reviewer.md` Step 3 — fail-open / fail-closed vocabulary and an explicit
+   "every finding here needs a stated failure consequence to reach High", then the two folded
+   error-path rules (below).
+
+**What was deliberately NOT built, and the rule that decided it.** `error-path-reviewer` was
+specified as a seventh, blocking reviewer with four rules, and gated on a base-rate measurement
+fixed **in advance**: ≥1 true High per 5 PRs → build it; below that → fold rules 1 and 3 into
+`security-reviewer` Step 3. Measured 2026-08-06: **0 true Highs per 5 PRs in both repos**, and
+0.25/5 on an extended forgeward window. So: fold, no seventh reviewer.
+
+- **Rule 1 (discarded failure signal)** — folded, as a new Step 3 bullet. It had no counterpart
+  in Step 3 at all, which is why the fail-open/fail-closed vocabulary had to land first: without
+  the distinction the bullet cannot say which *direction* a discarded status fails in, and that
+  direction is the entire finding.
+- **Rule 3 (unchecked conditional-write result)** — folded by widening the existing
+  "check-then-act without a lock, and the silent no-op" bullet, which already owned the database
+  half with the right discipline. The added half is the non-DB one: conditional file writes,
+  in-place edits that matched nothing, a 404 folded into the 2xx branch, a failed
+  compare-and-swap precondition.
+- **Rules 2 (dead/unreachable error path) and 4 (resource leak on the error path)** — **NOT
+  folded, on purpose.** They fired zero times anywhere in the measurement. Folding a rule that
+  has never fired adds prompt weight to every security review in exchange for nothing, and a
+  reviewer instruction nobody's diff ever matches is indistinguishable from one that does not
+  work. Reversible: the measurement is in `docs/axis-proposals.md` Q2 and they can be folded the
+  day a real instance shows up.
+
+**The measurement's own known defect, kept attached to the result.** The base rate was a by-hand
+pass over merged diffs, and a diff-reading pass structurally cannot see this class at its most
+common: four known instances in this repo (`json_get` ×2, `strip_quoted`, `marker_get`) were each
+visible only when two arms of one helper were read *together*, and one of them was silently
+cancelling the #11 fix to the arm beside it. Three shipped. This does not overturn the fold — a
+reviewer that also reads diffs would have scored the same 0 — but it forbids the conclusion "the
+class is rare", which is the conclusion a bare 0/5 invites. Weigh it if the axis is rescored.
+
+**Blind spots of the whole decision, so the entry is not read as more than it is.**
+
+1. Nothing here fixes gstack's half of the loop. `/review` still defers to forgeward, and only
+   gstack can stop it. This entry closes the half forgeward owns and no more.
+2. Naming an owner is not coverage, and a user who reads the firing decision quickly may take it
+   as one. The wording is chosen against that; nothing enforces it.
+3. The fold is prompt text, judged by no automated assertion. `agents/` is out of scope for
+   `CLAUDE.md` and for `npm test` by design — the reviewer prompts are exercised by the
+   live-test suite, and a folded rule that never fires would look exactly like one that has
+   nothing to report.
+
 ## RESOLVED — the repo under review could supply the `json` module the hook judged it with
 
 **Date:** 2026-08-15 · **Version:** 0.11.0

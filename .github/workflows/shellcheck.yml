@@ -1,0 +1,56 @@
+# This workflow owns exactly one question: does the shell this plugin SHIPS still pass
+# static analysis? It runs with NO exclusion flags — every suppression in this repo is an
+# inline `# shellcheck disable=` at the exact line, carrying the reason it is deliberate.
+#
+# WHY NO `-e` LIST. A blanket `-e SC2016,SC1003,SC2034` on the command line would have
+# been the smaller diff and the worse check: it turns off those codes for code that has
+# not been written yet. There are five suppression sites in `scripts/` and they are
+# individually justified — three prose backticks and literal `$(`/`${` globs (SC2016), a
+# `*'\'*` glob for a literal backslash (SC1003), and git's four-field pre-push stdin
+# protocol whose `local_ref`/`remote_sha` are named-but-unread by design (SC2034).
+#
+# WHAT IT DOES NOT COVER, stated so the green tick is not read as more than it is:
+#
+#   1. `test/` is OUT OF SCOPE and is not clean — 244 findings, dominated by SC2015 ×202
+#      (the suite's own `cond && ok … || nok …` idiom) plus SC2164 ×31. Bringing it in
+#      would mean either 244 suppressions or an exclusion list, and the second is the
+#      thing this workflow exists not to do. Filed in TODOS.md rather than fudged here.
+#   2. The runner's shellcheck version is NOT pinned. A newer one can report codes this
+#      baseline never saw, so this job can go red on a commit that changed no shell at
+#      all. That is a real cost and it is accepted on purpose — the alternative is
+#      pinning a downloaded binary by checksum, which trades drift for a second thing to
+#      refresh. The version is printed below so a surprise red is diagnosable in one look
+#      rather than reproducible only by guessing. Filed in TODOS.md.
+#   3. It catches NEITHER of the two bash bugs this repo has actually shipped. Both were
+#      reconstructed as minimal scripts and run through v0.11.0 — the `printf | grep -q`
+#      under `pipefail` P1, and the `grep -c` line-vs-occurrence miscount — and it
+#      reported nothing on either. This is regression prevention against the classes it
+#      does know, not a net under this repo's own failure history. That measurement is
+#      why the TODOS entry asking for shellcheck inside `forgeward-scan.sh` was
+#      DOWNGRADED rather than closed as done.
+name: shellcheck
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: shellcheck version (unpinned — see the header)
+        run: shellcheck --version
+
+      # scripts/ is the shipped plugin. ci/ and live-test/ are clean with zero
+      # suppressions and are included so they stay that way; they are cheap to hold to a
+      # standard that costs nothing today.
+      - name: shellcheck scripts/ ci/ live-test/ (no exclusions)
+        run: shellcheck scripts/*.sh ci/*.sh live-test/*.sh

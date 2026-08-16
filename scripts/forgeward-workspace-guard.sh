@@ -60,6 +60,7 @@ case "$mode" in
     printf 'forgeward: the repository under review CHANGED while the read-only reviewers ran.\n' >&2
     printf 'New paths (a reviewer wrote into the repo it was auditing):\n' >&2
     printf '%s\n' "$new" | sed 's/^/  /' >&2
+    # shellcheck disable=SC2016  # the backticks are prose the user reads, not a substitution
     printf 'Delete these before committing — `git add -A` would commit them into your history.\n' >&2
     exit 1
     ;;

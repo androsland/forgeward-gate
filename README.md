@@ -54,15 +54,22 @@ rather than a skipped one. It sees *presence*, not diligence — it cannot tell 
 never-run from gstack-actively-covering-the-axis, and it cannot see that you cover the axis with
 Dependabot or a CI job instead.
 
-**Still not included on purpose:** a code-quality reviewer — gstack's `/review` covers it *when
-gstack is installed*. With no gstack there is no quality reviewer on this machine and nothing else
-picks the axis up, so the gate now **says so** in its firing decision rather than leaving you to
-infer it from a table (`scripts/forgeward-detect-environment.sh`). The same applies to a deep
-whole-repo security audit, which `/cso` owns and `security-reviewer` explicitly does not replace.
-Disclosure, not refusal: forgeward is fully operational standalone, and these two are the only
-axes where a PASS means less without a partner tool. Pin `standalone.substitutes` in
-`.forgeward/config.yml` to silence an axis you cover another way — a disclosure that repeats
-after being answered is nagging, and nagging is how gates get switched off.
+**Still not included on purpose:** a code-quality reviewer. **forgeward does not review code
+quality, and it no longer claims gstack does it for you.** That claim used to read "`/review`
+covers it", and the deferral turned out to run both ways: in one repo's review log `/review`
+skipped its `maintainability` specialist with `reason: "covered-by-forgeward-and-coverage-audit"`
+and `security` with `"covered-by-forgeward"` — while this README pointed back at `/review`. Two
+tools each deferring to the other means the axis runs nowhere, and nothing fires, because both
+are installed. The gate now names `/review` as the axis **owner** in its firing decision rather
+than as evidence of coverage, whether or not it is installed
+(`scripts/forgeward-detect-environment.sh` sees presence, never diligence — it cannot tell
+installed-and-never-run from actively-covering, and it cannot see a skip reason). Fixing gstack's
+half is gstack's job; this side has stopped asserting coverage on another tool's behalf.
+The same applies to a deep whole-repo security audit, which `/cso` owns and `security-reviewer`
+explicitly does not replace. Disclosure, not refusal: forgeward is fully operational standalone,
+and these two are the only axes where a PASS means less without a partner tool. Pin
+`standalone.substitutes` in `.forgeward/config.yml` to silence an axis you cover another way — a
+disclosure that repeats after being answered is nagging, and nagging is how gates get switched off.
 
 ### `.forgeward/config.yml`
 
