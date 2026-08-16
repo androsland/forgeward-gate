@@ -335,6 +335,7 @@ if [ "$before" != "$after" ]; then
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     [ "$printed" = 0 ] && {
+      # shellcheck disable=SC2016  # the backticks are prose the user reads, not a substitution
       printf 'forgeward-scan: this scan left new untracked paths in the repo under review; a read-only reviewer must not. Delete them before committing — `git add -A` would commit them:\n' >&2
       printed=1
     }

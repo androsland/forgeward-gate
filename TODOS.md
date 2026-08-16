@@ -8,8 +8,6 @@ that raised them and the date.
 Every item here was raised in a merged PR body or a review round. PR bodies are
 write-once and effectively gone after merge, which is why they live here now.
 
-## Gate — test suite
-
 ## Gate — publish matcher
 
 - **`strip_quoted`'s `st==2` backslash branch does `i += 2` with no bounds check**, so a
@@ -220,7 +218,8 @@ write-once and effectively gone after merge, which is why they live here now.
 ## Standalone posture (no gstack installed)
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
-0.8.0** — see `## Completed`. What follows is what it did *not* close.
+0.8.0** — entry archived to [`TODOS-DONE.md`](TODOS-DONE.md). What follows is what it
+did *not* close.
 
 - **Nothing validates `.forgeward/config.yml` or warns on an unknown key, so a typo is
   indistinguishable from an absent key.** `substitues:`, `postures:`, an invalid posture
@@ -320,32 +319,22 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
   `"covered-by-forgeward"`, while forgeward's README skips code-quality because
   `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
-  an existence proof, not a measured rate. (2026-08-05) **Priority:** P2
+  an existence proof, not a measured rate. (2026-08-05) **Priority:** P3 — downgraded at
+  0.12.0; forgeward's half is closed and the remaining half is another repo's code.
 
-  **Still open after 0.8.0, and only half-narrowed.** Option B made the *gstack-absent*
-  half explicit — the gate now discloses `quality` as unowned. It does nothing about this
-  entry's actual finding, which is the **gstack-present** case: `/review` defers to
-  forgeward while forgeward defers to `/review`, so both installed still means nobody
-  reviews quality, and no disclosure fires because `gstack_review` reads `present`. The
-  probe sees presence, not diligence, and this is exactly the blind spot that phrase
-  names. (0.8.0, 2026-08-06)
-- **`error-path-reviewer` — MEASURED 2026-08-06, and the decision rule says fold, not
-  build.** Owns one question: *when this code fails, does anything notice?* Four rules
-  (discarded failure signal, dead/unreachable error path, unchecked conditional-write
-  result, resource leak on the error path), each needing a stated consequence to reach
-  High. Decision rule was **≥1 true High per 5 PRs → build it blocking; below that → fold
-  rules 1 and 3 into `security-reviewer` Step 3 instead.** Result: **0 true Highs per 5
-  PRs in both repos**, and 0.25/5 even on an extended forgeward window. Rules 2 and 4
-  fired zero times anywhere — they are not carrying weight and should not be folded.
-  So: fold rules 1 and 3, do not build a seventh reviewer. **Priority:** P2
-- **The fold needs `security-reviewer` Step 3 to learn fail-open/fail-closed first.**
-  Checked directly: Step 3 contains **no** occurrence of fail-open, fail-closed, or a
-  consequence-statement requirement. It already carries a near-equivalent of rule 3
-  ("Check-then-act without a lock, and the silent no-op"), complete with the right
-  discipline — High only if you can state the interleaving — so rule 3 folds cleanly by
-  analogy. Rule 1 has no counterpart at all, and dropping it in without the distinction
-  would produce a bullet that cannot say which direction a discarded status fails in,
-  which is the entire question. Add the vocabulary, then fold. (2026-08-06) **Priority:** P2
+  **Half-narrowed by 0.8.0, and forgeward's half closed at 0.12.0.** Option B made the
+  *gstack-absent* half explicit — the gate discloses `quality` as unowned. 0.12.0 closed
+  the other side of forgeward's contribution: the README no longer says `/review` covers
+  quality, and `skills/gate/SKILL.md` now prints a PRESENT-case clause naming what the
+  probe can and cannot see (`quality: owned by gstack /review (installed; forgeward has
+  no quality reviewer and does not check that /review ran)`). So a user with both tools
+  installed is no longer told the axis is handled.
+  **What is left is not fixable from here.** `/review`'s skip reasons are written by
+  gstack, and nothing in forgeward can read them, change them, or detect that a review
+  ran — the loop only truly breaks when gstack stops deferring to forgeward for
+  `maintainability`. Filed against the other repo, not this one; the entry stays because
+  the *measurement* lives here and would otherwise be lost.
+  (0.8.0, 2026-08-06; forgeward half closed 0.12.0, 2026-08-16)
 - **The base-rate measurement structurally under-counts this class, and the 0.7.6 work is
   the proof.** The method was a by-hand pass over merged diffs, and it scored 0 — while the
   same session found two live instances (`json_get`'s python arm, `marker_get` ×2) that a
@@ -353,10 +342,11 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   are read *together*, and one of them was silently cancelling the #11 fix to the arm
   beside it. Four known instances in ~40 files — `json_get` ×2, `strip_quoted`,
   `marker_get` — three shipped, two surviving a round (#11) explicitly aimed at them.
-  See Completed for both 0.7.6 fixes. This does not overturn the fold decision — a reviewer
-  that also reads diffs would have scored the same 0 — but it is the reason the fold should
-  not be treated as "the class is rare." Weigh it if the axis is ever rescored.
-  (2026-08-06) **Priority:** —
+  Both 0.7.6 fixes are in [`TODOS-DONE.md`](TODOS-DONE.md). This does not overturn the fold
+  decision — a reviewer that also reads diffs would have scored the same 0 — but it is the
+  reason the fold should not be treated as "the class is rare." Weigh it if the axis is ever
+  rescored. Carried into `DECISIONS.md` at 0.12.0 as the fold decision's own stated defect,
+  so it is no longer only in this file. (2026-08-06) **Priority:** —
 - **The review-ran check — warn-only, never blocking on a first version.** Gate on
   whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
   `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
@@ -375,11 +365,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 - **Gate-run logging.** Append the fired reviewer set plus verdict rather than
   overwriting/pruning, so "gate ran, `/ship` didn't" becomes measured instead of inferred
   from marker file counts. **Priority:** P3
-- **A `DECISIONS.md` entry either way on the quality axis.** "Delegate quality to
-  `/review`" is a recorded decision; the work above either reverses it or re-affirms it
-  on a **new** basis (embedded-in-`/ship`, not standalone). The `/cso` reversal set that
-  precedent. **Priority:** P3
-
 ## Property-based testing
 
 - **Build `/forgeward:properties` as an on-demand skill, never a 7th reviewer.** Shaped
@@ -438,15 +423,37 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
   awk-based design. Decide whether to keep it as an archaeological record or drop
   it. (PR #8, 2026-08-01) **Priority:** P4
-- **The `actions/checkout` SHA pin has no refresh policy, which is the other half of pinning.**
-  `.github/workflows/version-check.yml` pins `11d5960a326750d5838078e36cf38b85af677262` (`v4`,
-  resolved by `git ls-remote --tags` on 2026-08-06, not recalled). A SHA cannot be repointed
-  under us — and equally cannot pick up a security fix, so an unrefreshed pin decays into a
-  stale-action problem, which is the failure mode a tag does not have. Nothing currently
-  notices when GitHub cuts a new `v4.x`. Dependabot's `github-actions` ecosystem is the
-  standard answer and would be this repo's second CI-adjacent config; the cheap manual version
-  is re-running that `ls-remote` at release time. Undecided which. (CI version check,
-  2026-08-06) **Priority:** P3
+- **Dependabot is configured but has never been observed to run, and an unverified
+  automation reads as coverage.** 0.12.0 settled the open half of the SHA-pin question —
+  `.github/dependabot.yml` takes the `github-actions` ecosystem, monthly, grouped, over the
+  manual `git ls-remote` alternative — but a config file in the tree is not evidence the
+  service is enabled for this repo, and the first proof either way is a PR that does or does
+  not arrive. Check after the first monthly window; if nothing comes, the setting lives in
+  the repo's Settings → Code security, not in the file. Two limits are stated in the config
+  header rather than here so they travel with it: it sees `uses:` in workflow files only (a
+  version pinned inside a script or a composite action is invisible to it), and a bump PR is
+  pushed server-side, so no forgeward gate and no local hook runs on it. That second one is
+  bounded rather than open: `test.yml` and `shellcheck.yml` are `pull_request`-triggered and
+  do run on a Dependabot PR server-side, and `version-check.yml` passes correctly (a
+  workflow-only bump touches no version field) — what is absent is the *local* gate and its
+  reviewers, not all checking.
+  **The single `*` group is safe today and will not stay that way.** `actions/checkout` is
+  the only third-party action in the repo and all four `uses:` sites carry a byte-identical
+  pin, so one group cannot conflate unrelated bumps. The day a second, unrelated action is
+  added, one PR starts carrying two independent supply-chain changes under one review —
+  revisit the grouping at that point, not before. (Raised by the 0.12.0 gate's own
+  supply-chain reviewer, which verified the pin resolves to the claimed tag by
+  `git ls-remote` rather than trusting the trailing comment.)
+  **The pin is already three majors behind, so expect the first bump PR to be a major.**
+  Measured 2026-08-16: `11d5960a…` resolves to `v4`/`v4.4.0`, while `actions/checkout`
+  publishes `v3 v4 v5 v6 v7`. So this is not a hypothetical about future drift — the drift
+  has happened and nothing noticed for as long as the pin has been in the tree, which is
+  the concrete form of the "unverified automation reads as coverage" point above. Two
+  consequences for the check after the first monthly window: an *absent* PR is a stronger
+  signal that the service is off than it would be against a current pin, and an arriving
+  PR is a **major** bump carrying real behaviour change, so it needs reading rather than
+  merging on the strength of the green tick.
+  (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16) **Priority:** P3
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
   `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
@@ -522,7 +529,12 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   two manifests *and* a dirty worktree, three notes at once, which round 9 verified by hand with
   `od -c`. Deliberately not done on this branch: it would re-invalidate a PASS for a test-harness
   tidy-up. (security review round 9, 2026-08-07) **Priority:** P3
-- **`shellcheck` is not installed, so nothing statically analyses this repo's bash.** The
+- **`shellcheck`: raised because nothing statically analysed this repo's bash; the open
+  question left is whether the *reviewer* should run it, not whether this repo does.**
+  Read the three paragraphs in order — the finding, the measurement that undercut it, and
+  what 0.12.0 settled. One priority, at the end.
+
+  **As raised (security review round 2, 2026-08-07, at P2).** The
   security reviewer runs semgrep, gitleaks and trivy; on a diff of three `.sh` files semgrep's
   rulepacks matched **zero** of them (they target PHP/JS/secrets), so the one deterministic tool
   that would actually parse the language this repo is written in was the one that was absent.
@@ -531,17 +543,23 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   modes, and it has already shipped two of them (the `grep -q`/pipefail P1, and the `grep -c`
   line-vs-occurrence miscount below). Adding `shellcheck` to the reviewer's scanner set is
   cheap; the open question is whether it belongs in `forgeward-scan.sh` for every repo or only
-  where bash is a primary language. (security review round 2, 2026-08-07) **Priority:** P2
+  where bash is a primary language.
 
-  **Installed 2026-08-15 (v0.11.0, homebrew) and run across the repo. The measured yield does
+  **Installed 2026-08-15 (shellcheck v0.11.0, homebrew) and run across the repo. The measured yield does
   not support the argument this entry was making, and the argument should not survive the
   measurement.** Findings: `scripts/*.sh` and `ci/*.sh` are clean apart from SC2016 ×5, SC1003
   and SC2034 ×2, all deliberate — SC2016 fires on every single-quoted `awk`/`python3` program in
   the repo, and SC2034 on the git pre-push stdin protocol's intentionally-unread positional
-  variables. `live-test/setup.sh` had SC2010 ×2 and SC2143 ×1 (`ls | grep` in the hook-listing
+  variables. (Re-measured 2026-08-16 against `HEAD` before 0.12.0's directives landed:
+  identical — SC2016 ×3 in `forgeward-gate-check.sh`, ×1 each in `forgeward-scan.sh` and
+  `forgeward-workspace-guard.sh`, SC1003 ×1, SC2034 ×2, and `ci/`/`live-test/` at zero. Each
+  is now suppressed by a `# shellcheck disable=` naming the reason at the site, so CI runs
+  with no exclusion flags and a future genuinely-wrong SC2016 still fires.) `live-test/setup.sh` had SC2010 ×2 and SC2143 ×1 (`ls | grep` in the hook-listing
   block), fixed in this commit — style, not defects; the `set -e` abort those lines *look* like
   they should cause was tested and does **not** occur, because bash exempts a failing non-final
-  member of an AND-OR list. `test/*.sh` carries SC2015 ×201, SC2164 ×30, SC2181 ×6, SC2012 ×1 —
+  member of an AND-OR list. `test/*.sh` carries 241 findings — SC2015 ×201, SC2164 ×30,
+  SC2181 ×6, SC2016 ×3, SC2012 ×1 (the SC2016 count was omitted when this was first written;
+  re-measured 2026-08-16 and the other four are unchanged) — and
   the SC2015 mass was checked against the shipped `grep -q`/pipefail P1 and is not that bug in
   new clothing (attempted repro: bash's default SIGPIPE disposition kills the suite outright at
   141 rather than letting `printf` return non-zero into the `||`).
@@ -553,19 +571,63 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   repo is weaker than this entry assumed, not stronger: the tool's value here is regression
   prevention against the classes it *does* know (quoting, unset vars, subshell scope), and this
   repo's actual failure history sits outside them. That is still worth having, but it is a
-  different claim and should be argued on its own terms. What is NOT yet decided: whether to
-  wire it into `npm test` as a gate on `scripts/` + `ci/` (the two dirs that are clean today,
-  so a baseline is free), and whether `test/*.sh` is worth an exclusion list or should simply
-  stay out of scope. (2026-08-15) **Priority:** P3 — downgraded from P2 by the above.
-- **The test suites do not run in CI.** `npm test` runs three suites (gate 171, pre-push 15,
-  version-check 51) and every one of them is run by hand before a release. The new
-  `.github/workflows/version-check.yml` deliberately does not fold them in: the gate suite is
-  documented as **load-sensitive** — `test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD` exist
-  because that sensitivity was measured, not guessed — and a flaky *required* check is worse
-  than no check, because the first red teaches everyone to re-run rather than to read. Wiring
-  them in means first establishing they are green on a shared runner under CI's own load, not
-  just on this machine. Until then "the suite passed" rests on the author remembering.
-  (CI version check, 2026-08-06) **Priority:** P2
+  different claim and should be argued on its own terms.
+
+  **Settled at 0.12.0 (2026-08-16), and only for this repo.** `.github/workflows/shellcheck.yml`
+  runs `shellcheck scripts/*.sh ci/*.sh live-test/*.sh` on every PR, **with no exclusion
+  flags** — the five deliberate findings carry inline `disable=` directives naming their
+  reason instead, so the baseline is zero and a new finding is a real one. A workflow rather
+  than `npm test`, deliberately: `npm test` runs on a developer machine where shellcheck may
+  be absent, and a suite that skips when its tool is missing is the failure mode this entry
+  was raised about in the first place; CI installs it. `test/*.sh` stays **out of scope** —
+  241 findings, dominated by an SC2015 mass already shown not to be the shipped P1 — so a
+  green shellcheck tick says nothing about the suite's own bash, and that is stated in the
+  workflow header rather than left to be inferred.
+  **The version is pinned, and the first CI run is why.** The workflow shipped unpinned,
+  with a header arguing that runner drift was a real cost accepted on purpose. The cost was
+  paid on that same PR: `ubuntu-latest` carries shellcheck **0.9.0**, which reports three
+  SC2015 findings that **0.11.0** does not, so the job went red on shell that was already
+  clean under the author's linter. All three were false positives — two `A && cd … || true`
+  sites where the `|| true` is best-effort by construction, and one
+  `[ -n "$f" ] && [ -f "$f" ] || { usage; exit 64; }` where both A and B are pure tests, so C
+  runs exactly when `NOT(A && B)`, which is if-then-else. Suppressing them would have blinded
+  three sites permanently to satisfy a linter older than the code, so the workflow now
+  downloads and checksum-verifies v0.11.0 and asserts the pin took. The lesson is the
+  general one: **an "accepted cost" that has never been paid is a prediction, not a
+  measurement** — this one was falsified by its own first run.
+  **Two residuals the pin creates, neither of them covered by anything:** the digest is
+  **trust-on-first-use**, because koalaman/shellcheck publishes no checksum and no signature
+  with its releases (13 assets on v0.11.0, none a `.sha256` or `.asc`) — it pins the artifact
+  to bytes verified once, and proves nothing about upstream intent; and **nothing refreshes
+  the pin**, since Dependabot's `github-actions` ecosystem sees `uses:` lines, not a version
+  string in a `run:` block, so this goes stale silently the way `actions/checkout` already
+  did. Both are stated in the workflow header as non-goals so the green tick is not read as
+  covering them.
+  **Still open, and it is the part that matters to other people:** whether `shellcheck`
+  belongs in `forgeward-scan.sh` — i.e. whether the *reviewer* runs it on every repo it
+  gates, or only where bash is a primary language. Nothing above answers that; this repo
+  gating its own bash is a local decision, and the negative measurement (shellcheck catches
+  neither bug this entry cited) is the argument that has to be beaten first.
+  (2026-08-15; CI half closed 2026-08-16) **Priority:** P3 — downgraded from P2 by the above.
+- **The suites now run in CI, and are deliberately NOT a required check — that second half
+  is the part still open.** As raised (2026-08-06, P2): `npm test` ran by hand before every
+  release, so "the suite passed" rested on the author remembering, and
+  `.github/workflows/version-check.yml` deliberately did not fold them in because the gate
+  suite is documented as **load-sensitive** (`test/s7-flake-loop.sh` and `FORGEWARD_S7_LOAD`
+  exist because that sensitivity was measured, not guessed) and a flaky *required* check is
+  worse than no check — the first red teaches everyone to re-run rather than to read.
+  0.12.0 added `.github/workflows/test.yml`, which runs all four suites on every PR and on
+  `master`. The roster this entry carried was also wrong and is corrected here: **four**
+  suites, not three — gate **182** (not 171), pre-push 15, version-check 51, rules 39,
+  re-counted 2026-08-16 from a live `npm test`.
+  **What is not closed:** a green tick from `test.yml` is evidence the suites pass *once* on
+  a shared runner, and nothing more — it is explicitly not evidence of non-flakiness, which
+  is why the workflow header says not to make it a required check yet. That question belongs
+  to `.github/workflows/flake-sweep.yml` (dispatch- or `flake-sweep`-label-triggered, default
+  25 runs at load 4), **which has not been run yet** — so as of 0.12.0 the load-sensitivity
+  claim is still unmeasured *in CI*, exactly as it was before, and only the measuring
+  instrument is new. Run the sweep, record the numbers here, then decide about required-check
+  status. (CI version check, 2026-08-06; suites wired in 0.12.0, 2026-08-16) **Priority:** P3
 - **The three merged PR bodies #1, #2 and #3 carry a `🤖 Generated with Claude Code`
   byline.** Cosmetic and historical; noted only so it is a deliberate choice to
   leave them rather than an oversight. Newer PRs do not carry it.
@@ -573,27 +635,23 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Docs hygiene
 
-- **`## Completed` is missing entries for three merged PRs, so "the five most recent" is
-  false — it is the five most recent *that were written down*.** Measured 2026-08-15 by
-  diffing the section against `gh pr list --state merged`, when the newest entry present was
-  #24/#25 (2026-08-12). **#26** (`feat(security-reviewer)`: SQL vault-secret audit +
-  advisory env/config rulepack), **#27** (`docs`: archive completed TODOS, lift the rules
-  into `CLAUDE.md`) and **#28** (`docs(todos)`: two blind spots in the rotation notice) all
-  merged 2026-08-14 and are absent. This is the second time the section has read stale by
-  two releases; the first is recorded inside the #24 entry itself.
-  **Why the 2026-08-15 rotation went ahead regardless, since the standing rule says to
-  reconstruct first:** the rule exists to stop a cut archiving *recent* work while keeping
-  five older ones, and that requires the gaps to fall inside the kept date range. These
-  gaps do not — all three are NEWER than every entry present, so the oldest-out rotation
-  could not touch them. Checked, not assumed. The reconstruction is still owed, and it is
-  its own pass: three PR bodies and their diffs read properly, not paraphrased mid-batch.
-  (todos sweep, 2026-08-15) **Priority:** P3
-- **The open half of `TODOS.md` is still ~70KB after the completed split, and it is
-  untriaged.** Archiving the 12 oldest completed entries bought 19KB of a file that is
-  read in full on every pre-commit sweep; the remaining bytes are open work, and some of
-  it is stale rather than live. Nothing here expires an entry, so an item closed by a
-  later change stays in the read path indefinitely. A triage pass should close what
-  shipped and re-date what did not. (todos archive, 2026-08-14) **Priority:** P3
+- **Nothing expires an entry, so the open half needs a periodic triage or it silently
+  becomes a mix of live work and history.** Raised 2026-08-14 when the open half was ~70KB
+  and untriaged; the first triage ran at 0.12.0 (2026-08-16), closing seven entries that
+  later work had already resolved and re-dating the rest. **What the triage found is the
+  reason to keep doing it:** two `see ## Completed` pointers had gone stale when their
+  targets were archived, one entry carried two contradicting `**Priority:**` markers, and
+  one carried a suite roster that had been wrong since 2026-08-06 — none of which any
+  automated check in this repo can see, because none of them is a code property.
+  The structural problem is unchanged and is not fixable by triaging harder: an entry
+  closed by a later change stays in the swept read path until a human notices, and nothing
+  signals that a triage is overdue. **Size is not that signal, measured:** the open half went
+  from 48.1KB/56 entries to **50.5KB/52 entries** across this pass — four fewer entries and
+  2.4KB *more* text, because closing an entry properly means writing down what closed it.
+  A triage makes the file more accurate, not smaller, so anyone waiting for the byte count
+  to fall as proof it worked will conclude it did not. Next pass on the same trigger as this
+  one — a batch of merged work large enough that several entries are plausibly stale — not
+  on a number. (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16) **Priority:** P3
 - **Nothing verifies the rule-extraction step that `CLAUDE.md` depends on.** The archive
   convention says a constraint is lifted into `CLAUDE.md` as its entry moves to
   `TODOS-DONE.md`, but that is judgment at archive time with no check behind it. A pass
@@ -602,7 +660,19 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   archived entries carry reasoning that did not become a rule (the `sys.path` channels
   enumerated in round 6, the TOCTOU acceptance on the scan target, the stdin-mode gap
   held only by prose, and the layer-1 flag-VALUE blind spot). Decide per entry whether
-  those are constraints or history. (todos archive, 2026-08-14) **Priority:** P3
+  those are constraints or history.
+
+  **Second pass, 0.12.0 (2026-08-16): four entries archived, six rules lifted**, and three
+  of the four named gaps above are now rules — the `sys.path` channels ride along with the
+  `-I` bullet, and the stdin-mode and flag-VALUE blind spots became a whole
+  `## Running other people's tools` section. Verified by grepping `CLAUDE.md`, not recalled.
+  The fourth, the scan-target TOCTOU, is deliberately still not a rule and the original
+  framing was imprecise about why: its entry is **open**, not archived, so the reasoning
+  has never left the swept read path and there is nothing to rescue. Lift it if that entry
+  is ever closed.
+  **The verification gap itself is untouched.** This pass extracted because a human
+  remembered to; nothing would have failed if it had not, and that is still true for the
+  next one. (todos archive, 2026-08-14; second pass 2026-08-16) **Priority:** P3
 - **`CLAUDE.md` at the repo root ships to anyone who installs the plugin from this
   marketplace.** The plugin cache copies the repo, so the file lands beside
   `.claude-plugin/`. It is inert there — Claude Code loads `CLAUDE.md` from the cwd and
@@ -616,6 +686,90 @@ Only the five most recent are kept here — a sweep consults them to answer "did
 already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), including
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
+
+- **P2 ×4 + P3 ×3: the suites reached CI, the quality axis stopped being claimed, and the
+  open half was triaged for the first time.** 0.11.0 → 0.12.0, 2026-08-16. Three batches of
+  deferred work that shared no code but shared a failure mode: **each was a place where this
+  repo asserted more coverage than it had.**
+
+  **CI — three workflows, one question each, because a green tick is read as an answer to
+  whatever question the reader had.** `test.yml` runs all four suites (gate 182, pre-push 15,
+  version-check 51, rules 39) on every PR and on `master`; its header says in capitals not to
+  make it a required check yet, because passing once is not evidence of non-flakiness.
+  `shellcheck.yml` runs `scripts/ ci/ live-test/` with **no exclusion flags** — the five
+  deliberate findings (SC2016 ×5, SC1003, SC2034 ×2, all verified against `HEAD` rather than
+  recalled) now carry inline `disable=` directives naming their reason at the site, so the
+  baseline is zero and a genuinely-wrong SC2016 still fires. It installs a **checksum-verified
+  v0.11.0** rather than using the runner's: it shipped unpinned in this same PR, went red on
+  the first run against `ubuntu-latest`'s 0.9.0 over three SC2015 false positives, and the
+  pin was the fix — suppressing them would have blinded three sites to satisfy a linter older
+  than the code. `test/*.sh` is out of scope, 241 findings at that pin, stated in the workflow
+  header so the tick is not over-read. `flake-sweep.yml`
+  owns the load-sensitivity question `test.yml` deliberately does not: `workflow_dispatch`
+  or the `flake-sweep` label, 25 runs at load 4 by default, driving the existing
+  `test/s7-flake-loop.sh`.
+
+  **The sweep workflow would have swallowed its own evidence, and that is the part worth
+  keeping.** The default runner shell is `bash -eo pipefail`, so a non-zero harness aborts
+  the step *before* the summary prints — losing exactly the output the workflow exists to
+  collect. The status is captured (`|| rc=$?`) and folded into the verdict instead. Second
+  fix in the same shape: an **unparseable** tally now fails rather than passing, because
+  defaulting an absent `done:` line to zero is how "died on run 1" reports as "ran 25 times
+  and found nothing".
+
+  **`.github/dependabot.yml`** settles the SHA-pin refresh question at the standard answer
+  (`github-actions`, monthly, grouped, limit 3) rather than the manual `ls-remote`. Three
+  non-goals are in its header: it does not judge the new code (a pin buys immutability, not
+  trust); **no npm entry deliberately**, since `package.json` is `private: true` with zero
+  dependencies and no lockfile, and the day a real dependency lands, forgeward's own
+  `supply-chain-reviewer` starts firing on it; and it sees `uses:` in workflow files only.
+
+  **The error-path fold: measured, then folded, and the losing half of the rule recorded.**
+  The pre-committed decision rule was ≥1 true High per 5 PRs → build a seventh reviewer,
+  below that → fold. It measured 0, so rules 1 (discarded failure signal) and 3 (unchecked
+  conditional-write result) went into `security-reviewer` Step 3 and no reviewer was built.
+  Rules 2 and 4 fired zero times anywhere and were **not** folded — adding prompt weight to
+  every security review in exchange for a rule that has never fired is a cost with no
+  measured return. The precondition this needed first is also done: Step 3 now defines
+  fail-open and fail-closed, requires a finding to **name the direction and what a caller
+  then believes that is not true**, and requires a stated failure consequence to reach High —
+  an unnarratable High is unfalsifiable, and a gate that FAILs on findings nobody can check
+  gets switched off.
+
+  **The quality axis: forgeward stopped asserting another tool's coverage.** The measured
+  finding was reciprocal deferral — on `04a04fb`, gstack's `/review` skipped `maintainability`
+  as `covered-by-forgeward-and-coverage-audit` while forgeward's README skipped quality
+  because `/review` covers it, so both installed still meant nobody reviewed it. Scope stated
+  as 2 of 22 entries, an existence proof rather than a rate. `README.md` now says forgeward
+  does not review code quality and no longer claims gstack does it for you;
+  `skills/gate/SKILL.md` prints a PRESENT-case clause naming what the probe can and cannot
+  see; `DECISIONS.md` carries the entry either way, generalised to **a deferral may name an
+  owner; it may never assert coverage**. `docs/axis-proposals.md` Q2 is marked SUPERSEDED
+  rather than edited into agreement. The gstack half is another repo's code and stays open.
+
+  **Docs: the archive convention was applied to itself.** `## Completed` was stale by three
+  merged PRs, so #26 and #28 were reconstructed into it and #27 into `TODOS-DONE.md` from
+  their commit bodies **before** any cut — and the cut order was resolved with
+  `git log --first-parent`, which changed the answer: **#26 merged 39 minutes after #27
+  despite the lower number**, so both a date sort and a number sort would have archived the
+  wrong entry. 275 lines moved out, six rules lifted into `CLAUDE.md` on the way (parsing
+  structured documents, an option that sends refs the argument list never names, a new
+  `## Running other people's tools` section, five test rules, three docs rules). Then the
+  first-ever triage of the open half, counted rather than described: **four entries deleted
+  outright** (the fold decision and its precondition, the `DECISIONS.md`-entry-either-way,
+  and the stale-`## Completed` finding), **two replaced by narrower successors** (the SHA-pin
+  refresh policy → Dependabot-configured-but-unobserved; open-half-untriaged → nothing
+  expires an entry), **three narrowed in place** (quality axis, shellcheck, suites-in-CI),
+  and one empty section heading removed. Also repaired: two `see ## Completed` pointers that
+  went stale when their targets were archived, one entry carrying **two contradicting
+  `**Priority:**` markers** (headline P2, appended paragraph P3), and a suite roster wrong
+  since 2026-08-06 (three suites and gate 171; it is four and 182).
+
+  **Not done, deliberately:** the sweep has **not been run**, so the load-sensitivity claim
+  is still unmeasured in CI and only the instrument is new; `test.yml` is not a required
+  check; Dependabot is configured but unobserved, and a config file is not evidence the
+  service is enabled. All three are filed above rather than implied by the workflows'
+  existence.
 
 - **P2 ×2 + P3: the two repo-wide interpreter/locale conventions were written down but only
   partially applied, and neither was pinned by anything.** Fixed 2026-08-15. Closes the
@@ -736,277 +890,139 @@ the non-goals and reversed decisions; the rules those produced are in
   anything about it. The surviving P2 above — a possible `forgeward-transcript-audit.sh` —
   is where these two facts would become executable rather than documentary.
 
-- **P0: the secrets scanner read a developer's untracked, gitignored dotenv file
-  during a real gate run, and the values landed in a persisted subagent
-  transcript.** Authored 2026-08-10 and merged 2026-08-12 as #24
-  (`60a067a`, 0.9.2); the rotation notice's path was corrected 2026-08-12 as #25
-  (`acbdc12`, 0.9.3). Full reasoning in
-  `DECISIONS.md`. *(This entry was missing from this list until 2026-08-14 — the
-  deferrals it produced were filed in the open half at the time, but the
-  completion itself never was, which made `## Completed` read as stale by two
-  releases.)*
+- **P1 + P2 FILED, not fixed (the fix is the entry above): the rotation notice's two
+  unstated assumptions, measured.** #28 (`ce69eb5`), 2026-08-14 — one file, `TODOS.md`, no
+  code and no version bump. Recorded here because a filing-only PR leaves nothing behind in
+  the tree, and this one is the entire evidence base 0.10.1 was written from.
 
-  Two defects, and the first hid the second. The documented Gitleaks invocation
-  passed the whole changed-path list to a command that takes ONE path; read from
-  `cmd/directory.go` (v8.30.1) rather than inferred, there is no cobra `Args`
-  validator, so a second positional is not an error — `len(args) != 1` leaves
-  `source = "."`, the cwd. The extra path is neither rejected nor
-  dropped-with-the-first-honoured: the whole target is silently replaced.
-  Verified against the binary — one path scanned 15 bytes, two scanned 176,
-  identical to `dir .`. And `dir` mode is a filesystem walk regardless, so
-  fixing the first alone leaves any directory in the changed-path list
-  re-triggering it.
+  Both entries were filed *beneath* "Nothing in forgeward can scrub a subagent transcript",
+  which is correctly scoped — no cleanup this plugin performs touches one — and that correct
+  scoping is exactly what hid the two assumptions sitting behind it: that the evidence is
+  still on disk, and that the transcript is where it lives.
 
-  The fix makes the scanner structurally unable to see anything outside the
-  reviewed diff. The primary shape is the commit range
-  (`gitleaks git --log-opts="<base>...HEAD" --redact -f json -r -`), with
-  per-file `dir` only where working-tree state is genuinely needed.
-  `forgeward-scan.sh` gained layer 4: for the `dir`/`file`/`directory` family the
-  target must be exactly one existing regular file that git tracks — zero paths,
-  two paths, a directory, and an untracked file are all refused. The subcommand
-  is matched against an enumerated set and anything else refused, so an unlisted
-  value-taking flag placed BEFORE it (`gitleaks --unlisted V dir .`, where `V`
-  looks like the subcommand) cannot slip a directory scan past the guard. That
-  also covers `detect --no-git` and `protect`, HIDDEN in 8.30.1 — absent from
-  `gitleaks --help` but still live, the same walk under older names, and verified
-  to read the untracked file before the guard refused all three shapes.
-  `--redact` is now unconditional, which closes the value half while layer 4
-  closes the read half; neither is sufficient alone. Trivy lost `secret` from
-  `--scanners` for the same reason, short `-r` was closed for gitleaks (only the
-  long form had been enumerated, so `-r evil.json` reached the write the long
-  form exists to refuse), and supply-chain-reviewer's `trivy fs <paths>` was
-  corrected to one path.
+  **Expiry (P2).** `cleanupPeriodDays` defaults to 30, and the unit reaped is the SESSION
+  DIRECTORY, aged by the parent's recency rather than per file. One machine, 2026-08-14,
+  Claude Code 2.1.232, setting unset: **0 of 247** top-level session transcripts older than
+  30 days, **0 of 207** orphaned `subagents/` directories, and **20 of 1574** subagent
+  transcripts older than 30 days — alive only because their parent session stayed in use. So
+  the leak channel the notice is about is the one that outlives the window, while a
+  short-lived session's evidence is gone inside the month. Both directions break the notice.
 
-  Deliberately **not** a filename exclusion: a committed credential file is a
-  genuine finding and must keep being reported.
+  **`tool-results/` (P1).** A tool result over 30 000 characters is truncated in the JSONL
+  and written in full to `tool-results/<id>.txt`, the transcript keeping a
+  `persistedOutputPath` pointer; every command in the notice carried `--include='*.jsonl'`.
+  Same machine, same day: **277** such files, all `.txt`, all mode 0644 beside 0600
+  transcripts. Two matched the notice's own pattern set, and in one a private key was
+  present in the persisted file and **absent from the truncated JSONL copy**.
 
-  Four gaps were found while verifying this and **disclosed rather than fixed**,
-  so their absence is not read as coverage — each is in the script's NON-GOALS
-  block, in `DECISIONS.md`, and as a P3 above. Layer 1 matches flag TOKENS and
-  cannot see inside a flag's VALUE, so `--log-opts="--output=x"` forwards
-  `--output` to `git log` and writes the file, using the very flag this change
-  starts recommending; layer 3 contains it (the run exits 3 with the path named)
-  and P8l pins it as accepted-and-contained, asserting it stays LOUD rather than
-  asserting a refusal that was not built. The target check is TOCTOU, accepted
-  because that attacker already has local write access. The tracked check needs a
-  work tree, not live since the reviewer always runs inside the repo under
-  review. And `stdin` mode has no path token to check, so piping untracked
-  content in by hand is held only by prose — an argv wrapper cannot see a pipe.
+  **What those two files actually held is the part worth keeping, and it is not what the
+  headline suggests.** Both were local Supabase CLI Docker output, carrying two different
+  classes of key that were harmless for two different reasons:
 
-  Coverage: `gate-test.sh` P8i/P8j/P8k/P8l, including an end-to-end fixture on
-  the observed shape with a **control leg** that bypasses the wrapper and asserts
-  the raw scan DOES leak — without it the assertions pass with the guard removed,
-  since `--no-banner` alone prints no values. Mutation-verified twice: layer 4
-  disabled → P8j and P8k fail; the unrecognized-subcommand branch softened to
-  `return 0` → P8j fails. 177/15/51 assertions green.
+  - the PEM private key is **baked into the `supabase/kong:2.8.1` image** — byte-identical
+    across two unrelated projects captured three weeks apart and the live container. Public
+    by construction.
+  - the `pgsodium_root.key` value is **not** public: absent from the `supabase/postgres`
+    image layer, different between two local projects, and unchanged in the affected project
+    from the Aug 4 capture to that day. It is inert for an unrelated reason — `pgsodium` is
+    not an installed extension in that database (`pgcrypto` only) and it carries zero
+    `pgsodium` security labels, so no column is encrypted under it, and a local container's
+    key has no bearing on the hosted project.
 
-  The 0.9.3 follow-up: the rotation notice told users to look in
-  `~/.claude/projects/<project>/subagents/*.jsonl`, a path that does not exist —
-  the real layout has a session-uuid level in between. The published grep
-  therefore exits `No such file or directory`, which reads as "nothing matched",
-  i.e. clean. A user following the notice exactly concludes they were unaffected
-  and does not rotate, and the notice has then retired their suspicion as well.
-  For a rotation notice that is the worst available failure mode.
+  A notice written off the first reason alone under-reports the second class entirely. That
+  is why 0.10.1's wording says an empty result means **unverifiable**, not **safe**.
 
-- **P3: `git push origin --delete <branch>` was denied when the current branch had no
-  marker, even though the enforced pre-push hook already allows it.** Fixed 2026-08-07.
-  Full reasoning in `DECISIONS.md`.
+  **Blind spots, carried forward unchanged:** one machine, one Claude Code version;
+  `cleanupPeriodDays` is user-configurable, so 30 is a default and not a guarantee; whether
+  the 30 000-character threshold or the 0644 mode is stable across versions, or on Windows,
+  was not checked. The gate fired **no reviewers** on this diff — one prose file, every
+  surface absent — which is correct, and is also why nothing above was independently
+  re-measured until the 0.10.1 branch, where the reviewer's own count corrected the
+  permissions claim from a quantifier to a ratio.
 
-  The finding was the asymmetry, not the friction. `forgeward-pre-push.sh` skips any ref
-  whose local SHA is all-zero — verified against real git, which writes
-  `(delete) 0000000… refs/heads/x <remote-sha>` on the hook's stdin for BOTH the
-  `--delete` and `:refspec` forms — while the PreToolUse matcher went straight to `deny`
-  without asking what was being pushed. The layer whose own header calls itself "a fast
-  best-effort reminder" was stricter than the thing it reminds you about, and its advice
-  ("run the gate") was unactionable: a deletion publishes no code, so no reviewer could
-  review it and no marker could ever attest to it.
+- **P2 + P3: three rules that lived as prose in a personal `CLAUDE.md` became gate checks.**
+  Shipped 2026-08-14 as #26 (`41324b0`), 0.9.3 → 0.10.0. Full reasoning in `DECISIONS.md`.
+  Prose only fires if the model happens to recall it, it rots silently, and it does nothing
+  at all for anyone else who installs the plugin.
 
-  Shipped: `_is_delete_only()` in `scripts/forgeward-gate-check.sh`, taken only on a
-  TRUSTED residue (quoted spans already blanked), only on ONE simple command, only when
-  `git push` is the literal command word, matching flags as whole argv tokens. Plus
-  `_residue_trusted`, which records which scan path answered — the verb test is fail-safe
-  either way, but this is the one decision here that can turn a deny into an allow. Tests
-  A23 (31 cases) and A24 (degrades closed when `awk` is unavailable) in `test/gate-test.sh`.
+  **The SQL vault-secret bullet** (`agents/security-reviewer.md` Step 3) covers three shapes
+  that the generic Secrets bullet and Semgrep `p/secrets` both miss, because **none of them
+  looks like a high-entropy literal**: a credential in a plaintext config table; a secret
+  leaking into **derived storage at execution time** (`cron.schedule(..., format(...))`
+  baking a token into `cron.job.command`, structurally invisible to any diff scanner because
+  the migration text may hold only a *reference* that gets resolved); and a generic
+  `get_secret(name text)` `GRANT`ed to `authenticated`/`anon`, which turns the vault into a
+  lookup API so one broken-authz path reaches *every* secret.
+  **Must NOT fire on** non-secret configuration in exactly such a table — URLs, feature
+  flags, publishable/anon keys designed to be public — nor on a row holding a secret's
+  *name*, which is the pattern being recommended. **Cannot see** the live database, so a
+  credential inserted by hand in `psql` or by a seed outside the diff is invisible; and it
+  cannot tell whether the platform *has* a vault, so on a plain Postgres the remedy is
+  "encrypt at rest / move it out of SQL", not "use the vault".
 
-  **Three real pushes at a real remote wrote the design; reading git-push(1) would not
-  have.** `--delete y z` deletes both (so `--delete` alone settles it); `:q newcode`
-  deletes `q` and PUBLISHES `newcode` (so the colon form additionally caps plain tokens at
-  one — the remote); and `--tags origin :d2` deletes `d2` and PUBLISHES a tag on an
-  unpublished commit (so unrecognised options DENY instead of being skipped, which the
-  first draft got wrong). An option can send refs the argument list never names.
+  **`rules/env-config.yml`**, a second bundled Semgrep pack, wired into Step 2 the way
+  `wp-security.yml` already was but deliberately **without `--error`**: (1) `??` as an
+  env-var fallback, which only falls back on `null`/`undefined`, so a blank-but-present
+  variable — the routine output of a secrets sync and of most CI secret injection — reaches
+  the consumer as `''` and the default is silently discarded (observed in production:
+  `process.env.POLAR_SERVER ?? 'sandbox'` produced `new URL('')` and took down a Vercel
+  build at page-data collection); and (2) an env-dependent SDK client at module scope, which
+  evaluates at import time and so fails the whole build rather than the one route that
+  needed the credential. **Noise-checked against a 237-file production codebase before
+  shipping**, which is what surfaced the real false-positive class: `?? ""` is behaviourally
+  identical to `|| ""` for a string-or-undefined value and was 8 of 16 hits. Excluded.
 
-  **The branch's own security review found a real bypass in the first draft.** `strip_quoted`
-  BLANKS a quote or backslash to a space instead of deleting it, so an empty quote pair inside
-  one real argv token splits it into two tokens bash never produced: `git push /pub/repo'':x.git`
-  is ONE repository argument, the classifier saw plain=1 colon=1, exempted it, and it really
-  published `refs/heads/main`. `_is_delete_only` was the first consumer of that residue to depend
-  on exact token boundaries rather than on "does this word appear". Closed by refusing the
-  exemption on any `'`, `"` or `\` — a complete cover, since blanking can only ever ADD a
-  boundary and every path that adds one needs one of those three characters.
+  **The placement decision is the substantive part, and it was a real choice rather than a
+  formality** — neither rule is a security finding; both are build safety. Chosen: ship in
+  the security pack and report **every** finding at Low, tagged defense-in-depth. The reason
+  generalizes and is worth keeping: **what a reviewer BLOCKS is the remit that matters, not
+  what it prints.** Critical/High is the only bar that fails a gate, so pinning the pack at
+  Low widens the reporting surface and leaves the blocking surface bit-for-bit unchanged —
+  which answers "don't widen security's remit" structurally rather than by intention. The
+  rejected alternative — disclose `build-config` as an axis no installed tool owns — is
+  incoherent while the detection exists: announcing "nothing covers build-config" in the
+  same run that just scanned for it and found two is a worse lie than the silence it
+  replaces. Enforced in three places that are supposed to agree: the rule's
+  `metadata.forgeward-report-severity: low`, the pack header prose, and the Step 2
+  instruction to report at Low *regardless of what the JSON says*, with an explicit "do not
+  promote one because the consequence sounds severe".
 
-  **The re-gate then found the same shape again through globbing, which is what turned the
-  token test into an allowlist.** `read -ra` does not glob, so `git push [os]* :newcode` is
-  one token to the classifier and several words to bash — reproduced against a real remote,
-  where it deleted `newcode` and PUBLISHED `secretbranch`. Two misses of the same kind in
-  one branch is the argument for inverting the test: every token must now match
-  `^[A-Za-z0-9_.:/@+=-]+$`, so the construct nobody thought of fails closed.
+  **`test/rules-test.sh` — 39 assertions**, house style, wired into `npm test`, in three
+  classes: positives, negatives (every legitimate configuration the rules must not fire on),
+  and **blind spots pinned as silent**, so a future semgrep that closes one fails the suite
+  and forces the doc to be corrected rather than quietly becoming a lie. Fixtures are
+  generated into a scratch dir and **never committed** — a `.ts` fixture under `test/` would
+  itself be scanned by forgeward's gate on every later PR. A **trust check runs first**: a
+  fixture semgrep cannot parse turns every silence-assertion green, so a non-empty `errors`
+  array is a hard failure, not a warning. Not hypothetical — a fixture syntax error masked
+  results during development, and later a botched mutation truncated a file by 141 lines and
+  the check caught it. Skips loudly when semgrep is absent (`1..0 # SKIP`).
 
-  **Mutation testing changed the code twice, and one of the two was a fail-OPEN.** Every
-  deny case was already green before the fix — the old matcher denied everything — so the
-  deny half proves nothing on its own. The command-word check was two lines and *neither
-  could be killed alone*, because `_pub_re` already guarantees `git push` adjacent; they
-  were collapsed into one regex. And the newline refusal was unpinned: without it
-  `read -ra` sees only the first line, so `--delete x\ngit push origin main` would have
-  been ALLOWED. Found by mutation, not by review.
+  **The gate found a real bug in this branch's own tests, and it was fixed rather than
+  deferred.** Under `set -uo pipefail` without `-e`, a failing `mktemp -d` yields an empty
+  `$TMP`, so `$TMP/fixtures` becomes the **absolute** path `/fixtures` and the heredocs write
+  outside the sandbox the file's own header promises they stay inside. Unprivileged that
+  fails with `EACCES`; a root-run CI container has a writable `/` and it succeeds silently.
+  Medium never fails a gate — fixed anyway, because it was two lines and it contradicted the
+  file's own stated invariant. Verified by pointing `TMPDIR` at a nonexistent directory.
 
-- **P2: nothing checked that a merge moved the version FORWARD, so merge order was
-  load-bearing whenever two version-bumping PRs were open.** Fixed 2026-08-06. Full
-  reasoning in `DECISIONS.md`.
+  **Measured, not assumed.** Mutation testing (exact single-line deletions from the pack)
+  caught **5 of 6**; the sixth is genuinely redundant under semgrep 1.169, which normalises
+  function forms — that redundancy is now *recorded in the pack* rather than hidden by
+  deleting a line the engine might stop covering. It also caught a **wrong causal claim in a
+  shipped artifact**: rule 2's message attributed an IIFE blind spot to the arrow-function
+  exclusion specifically, when the function-scope exclusions cause it collectively.
+  Extension coverage, measured with byte-identical content: `.js .mjs .cjs .jsx .ts .tsx`
+  scan; **`.mts` and `.cts` do not** — zero findings *and* zero errors, so the miss looks
+  exactly like a clean file. Recorded in the pack header, and deliberately **not** pinned as
+  expected behaviour in the suite, since that assertion would go red the day a future
+  semgrep fixes it. Step 1's extension list gained `.mjs`/`.cjs`, previously dropped before
+  the pack could see them.
 
-  The live instance — #17 to 0.7.5 and #18 to 0.7.6, where merging #17 second walks the
-  marketplace manifest backward — was avoided by merging #17 first, by hand. Nothing was
-  keeping three manifests monotonic except whoever was paying attention at merge time.
-
-  Shipped: `ci/check-version-monotonic.sh` (never-backward across all three manifests, plus
-  a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
-  repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
-  checked, so the comparison would be against itself and green vacuously), and
-  `test/version-check-test.sh` (R1–R25c, 51 assertions, wired into `npm test`).
-
-  Three comparator traps are pinned rather than merely avoided. `major*1000000 +
-  minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
-  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b); and the
-  component-wise `$((10#$x))` that replaced both **wrapped at 2^63**, which this branch's own
-  security review demonstrated end to end — base `18446744073709551617.0.0`, head reverted to
-  `1.0.0`, `ok ... not behind`, exit 0 (R13/R13b). The comparator now uses no arithmetic at
-  all. And the version validator's first draft was `printf | grep -qx` — the P1
-  SIGPIPE/pipefail defect already paid for once here — now a fork-free `[[ =~ ]]` with a
-  comment at the line saying why the tempting edit is wrong.
-
-  **The 2^63 wrap is the entry to re-read before writing the next comparator.** R6 pinned the
-  10^3 ceiling and stayed green throughout, because it was written against the comparator
-  already chosen — it could only see the ceiling that had been thought about. Same shape as
-  V5/V6 passing while the jq/python3 divergence shipped underneath them. The comment above the
-  fix asserted "no such ceiling" and was simply false; the assertion beside it could not tell.
-
-  **It happened a second time in the same file, which is what makes it a pattern rather than an
-  anecdote.** Round 2 of the security review found the ambiguity guard counting with a bare
-  `grep -c` — matching *lines*, not *occurrences* — so two version keys on one line counted as
-  1 and skipped the guard entirely. R8 was green throughout, because R8's fixture puts the two
-  keys on separate lines: the one arrangement `grep -c` gets right. The input still failed
-  closed, one check later and citing the wrong reason, so an assertion reading only the exit
-  status would also have stayed green. R8b pins the one-line arrangement and asserts on the
-  *message*. Generalized: an assertion written alongside a mechanism inherits that mechanism's
-  blind spot, and only an outside reader — or a mutation — sees past it.
-
-  **And a third time, as a High.** Round 3 found that under a UTF-8 locale GNU grep will not
-  match `[^"]*` across invalid UTF-8 and silently drops the line, so a fork PR author could
-  commit a clean forward *decoy* `"version"` key plus a poisoned real one and the poisoned key
-  became invisible to the script while every JSON parser took it (duplicate keys are last-wins).
-  Base 0.9.0, decoy 0.9.1, poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0. A
-  complete bypass of the file's whole purpose from a one-line hex edit. Fixed at the time with a
-  script-wide `export LC_ALL=C`.
-
-  **A fourth round, and it is the one that changed the design.** JSON `\uXXXX` escapes are legal
-  in **key names**: `{"version":"0.9.1","version":"0.1.0"}` contains exactly one literal
-  `"version"` byte sequence, so the guard counted 1 and passed while every parser decoded two
-  keys and took the second. Same bypass, same one-line edit, and `LC_ALL=C` is irrelevant to an
-  escape that is pure ASCII — verified end to end: `ok: version 0.9.1, not behind master`, exit
-  0, while `node` and `python3` both read `0.1.0`.
-
-  **Rounds 2, 3 and 4 defeated the same textual reader by three unrelated mechanisms, so the
-  reader was deleted rather than patched a third time.** Versions are now read by `python3`'s
-  stdlib `json` with `object_pairs_hook` refusing duplicate keys by name. Three independent
-  evasions of one approach is not three bugs — the class is *text tools do not parse JSON*, its
-  members cannot be enumerated, and a fourth patch would only have been the third demonstration
-  that patching does not converge. The repo's two earlier declines of "just use jq or python3"
-  both stand and neither reaches here: PyYAML is not stdlib (`json` is), and the marker writer
-  runs on arbitrary user machines (this runs on `ubuntu-latest`). Their shared principle — one
-  arm everybody gets beats a better arm some people get — is why there is a **single** python3
-  arm and no `jq` fallback: two readers that can disagree is the diff-hash divergence rebuilt on
-  purpose. Absent python3 is a named FAIL, never a skip (R18/R18b).
-
-  **A fifth round, and it is the round-4 fix looked at from the other end.** Round 4 piped the
-  manifest to the parser on **stdin** so the bytes arrived unaltered, and wrote a comment there
-  naming both transforms a command substitution performs. The parser's *answer* still came back
-  through `out="$(python3 …)"`, which performs both: `$(...)` **deletes NUL bytes** (warning on
-  stderr, exit status untouched) and **strips trailing newlines**, and both are legal inside a
-  JSON string. So the `X.Y.Z` check validated a value the file did not contain. Committed
-  `"version":"1\u00009.0.0"`; python3 and node both read a version with an embedded NUL; the check printed
-  `ok: version 19.0.0, not behind master` and exited 0. Fixed the way round 4 was fixed — close
-  the channel, not the instance: the shape check moved *inside* the parser, so only digits and
-  dots ever cross. `re.fullmatch`, not `re.match(…$)`, because Python's `$` also matches before a
-  single trailing newline and the anchored form would have rebuilt half the bypass inside its own
-  fix. A `RecursionError` escaping `except ValueError` was the same round's Low.
-
-  Round 6 went one layer below all of that: `python3 -c` puts the **current working directory**
-  on `sys.path`, and this script runs from the root of the checkout it is judging — so
-  `import json` resolved against repo content, and a fork author's five-line `json.py` at the
-  repo root made `json.loads` return whatever they liked. Reproduced with base `9.0.0` and head
-  manifests genuinely `1.0.0`: `ok: version 999.999.999, not behind master`, exit 0. Rounds 2–5
-  hardened how the manifest is *parsed*; this replaced the *parser*, so every earlier guard was
-  intact and irrelevant. Fixed with `python3 -I`, chosen over a `sys.path` edit because the CWD
-  entry is one of four channels the audited repo has into the interpreter — `-I` also implies
-  `-E` (PYTHONPATH and friends) and `-s` (user site-packages, hence `usercustomize`) — and
-  patching one channel at a time is exactly how rounds 2 through 5 went. R22/R22b/R22c pin one
-  channel each; R22d is the positive control.
-
-  Round 7 went out one layer instead of down: the head side read each manifest off the
-  **filesystem** (`read_version "$f" < "$f"` — a plain `open(2)`, which follows symlinks) while
-  the base side read it out of the **object store** via `git show`, which returns a symlink's
-  target text and never dereferences it. Git tracks symlinks as mode `120000`, so a fork PR
-  author commits the three manifests as links to a file outside the checkout and gets
-  `ok: version 13.37.0, not behind master (3 manifest(s) compared, all three agree)`, exit 0 —
-  a pass asserted about a commit containing no version field at all. The asymmetry was written
-  down in the script's own header as a neutral implementation detail. Both sides now go through
-  one `require_blob` and one object-store read, so the bytes parsed are the blob in the commit
-  by construction; reading HEAD rather than the worktree also means a hand-run ignores
-  uncommitted edits, which is stated as blind spot 10 and mitigated by a stderr note naming the
-  files (R24b).
-
-  Round 8 was the first PASS: five distinct attempts on round 7's fix (non-canonical tree modes,
-  clean/smudge filter divergence, `core.symlinks=false`, replace-refs, ref-name injection through
-  `github.base_ref`) all failed closed for the reason the code claims, so that round checked the
-  comments against the machine rather than against themselves. Its one Low was a channel slip —
-  the base-side "manifest absent" note went to stdout while its sibling went to stderr — invisible
-  to all 47 assertions because `run()` folds the streams, which is the suite's blind spot in
-  miniature and is now pinned by R25. It also surfaced, as a *safe* case, a second pre-round-7
-  bypass worth an assertion: `.claude-plugin` itself committed as a symlink to an external
-  directory (R23f).
-
-  Seven rounds produced seven defects, each in the layer the previous round had just hardened —
-  the operative lesson is that **an adversarial reader found all seven and the test suite found
-  none of them**, which is an argument about how much review a comparator is worth, not about the
-  tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
-  status, because two of them failed closed for an unrelated reason and would have passed an
-  exit-status check.
-
-  **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local
-  LC_ALL=C` is not passed to a spawned child unless the name was already exported — verified
-  directly: `local` gives the child `<unset>`, a command prefix and `export` both give `C`. It
-  works for a bash builtin like `[[ x < y ]]` and does nothing for `grep`. `num_lt`'s own `local`
-  was removed rather than kept beside the export, because the redundant mechanism was precisely
-  the ineffective one.
-
-  **Verifying a claim about a tool means invoking the binary the code invokes.** The first attempt
-  to check round 3's finding appeared to refute it. That was wrong: `grep` at an interactive
-  prompt here is a shell function shimming to **ugrep 7.5.0**, while a script gets `/usr/bin/grep`
-  = **GNU grep 3.7**, and shell functions are not inherited by a non-interactive child. The ad-hoc
-  check and the code under test were different programs with different invalid-byte behaviour.
-  Use `type -a` and an absolute path.
-
-  **Mutation testing earned its place and should not be skipped on the next one like it:** the
-  zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
-  as covered was in fact unpinned. Twenty of twenty-one mutations reddened exactly the
-  assertions naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as
-  unobservable — though round 3 showed that label covers only the effect that was measured, not
-  the pin, and round 4 then made the measured effect moot, which is the same trap twice.
-
-  **Four "vacuous" results, none of them a coverage gap, and they split into two causes.** Three
-  were harness artifacts that never applied — `M6`, the `grep -c` revert, and the walk-recursion
-  mutation — reddening R11, R8b and thirteen assertions respectively once applied properly. The
-  fourth, `M21`, **applied cleanly and was still a no-op**: it added an `ok:*)` arm after the
-  real one, and `case` takes the first match, so the mutant was unreachable. An `assert count ==
-  1` on the anchor (now the harness's standing shape) catches the first cause and structurally
-  cannot catch the second. A mutation reporting nothing is a claim to verify, not a finding to
-  accept — accepting any of the four would have added a test for a guard that was already pinned.
+  **Deliberately not done, both with revisit conditions rather than left silent:** not
+  vendored into `ci-gate` — advisory WARNINGs turning a required check red is exactly the
+  green-on-arrival failure `ci-gate`'s first core rule forbids; and **no AI-attribution /
+  `Co-Authored-By` check**, considered and rejected. `/gate` handing off to `/ship` is
+  structurally a perfect chokepoint, but forgeward is a plugin other people install and
+  plenty of them legitimately want a co-author trailer. If it is ever added it is an opt-in
+  config key defaulting to off — a separate decision.

@@ -541,6 +541,7 @@ _is_delete_only() { # _is_delete_only <trusted-residue> <raw-command> -> 0 iff i
   # only ever be ADDED, and every path that adds one (lines ~434-452) requires a `'`, a
   # `"` or a `\` in the input. It costs an over-denial on a quoted branch name, which is
   # the direction this file always fails in.
+  # shellcheck disable=SC1003  # `*'\'*` is a glob for a LITERAL backslash, not an escape
   case "$raw" in *"'"*|*'"'*|*'\'*) return 1 ;; esac
   # The command word must BE the verb, so `sudo git push -d …` and `time git push -d …`
   # deny. (`git -C <path> push -d …` never reaches here at all — `_pub_re` wants `git`
@@ -626,6 +627,8 @@ _is_delete_only() { # _is_delete_only <trusted-residue> <raw-command> -> 0 iff i
 # It gates the deletion exemption below, which is the one decision here that can turn a
 # deny into an ALLOW, and which relies on quoted spans actually having been blanked.
 _residue_trusted=0
+# shellcheck disable=SC2016  # the patterns match LITERAL `$(`, `${` and a backtick — the
+# whole point is that they must not expand, and double-quoting them would defeat the check
 case "$_cmd_j" in
   *'$('*|*'${'[[:space:]]*|*'${|'*|*'`'*) _scan="$_cmd_j" ;;
   *) _scan="$(strip_quoted "$_cmd_j")"

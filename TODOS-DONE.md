@@ -2,7 +2,15 @@
 
 Completed work archived out of [`TODOS.md`](TODOS.md), newest first. It lives here
 because `TODOS.md` is read in full on every pre-commit sweep, and finished work can
-never be acted on by a sweep — it was 22% of that file's bytes and bought nothing.
+never be acted on by a sweep.
+
+**Ordering is by MERGE ORDER, not by the `Fixed` date printed in an entry** — several
+entries carry the same date, and #26 merged 39 minutes *after* #27 despite the lower
+number, so both a date sort and a number sort get this file wrong. Resolve with
+`git log --first-parent` before inserting anything.
+
+Two passes so far: 12 entries at 0.10.0 (#27) and 4 more at 0.12.0. Each pass is
+relief, never a fix — `TODOS.md` was still over the ~50KB threshold after both.
 
 Nothing was pruned. These entries carry the reversed decisions, the deliberate
 non-goals and the "we shipped the narrow fix on purpose, here is what it does not
@@ -12,6 +20,339 @@ their provenance — grep here before overriding one of them.
 
 `DECISIONS.md` remains the source of truth for *why* a design is the way it is. This
 file records what was done and what it deliberately left undone.
+
+- **P3: the completed half of `TODOS.md` was pure carrying cost on every sweep — 12 entries
+  archived, 12 rules lifted.** Shipped 2026-08-14 as #27 (`f148a6a`), docs only. This file,
+  `CLAUDE.md`, and the convention both implement are what that PR produced, so this is the
+  entry that describes the archive you are reading.
+
+  `TODOS.md` is read in full on every pre-commit sweep and re-read from cache on every
+  request after, while completed work is the one thing a sweep can never act on. The 12
+  oldest completed entries moved here; the 5 most recent stayed, because those are the ones
+  a sweep actually consults ("did I already do this?"). **One commit, not two** — an entry
+  deleted from `TODOS.md` that never lands in the archive is invisible across two diffs and
+  obvious inside one.
+
+  **Nothing was pruned, and archiving alone would have made things worse.** These entries
+  carry the reversed decisions and the deliberate non-goals, so moving them out of the swept
+  read path makes that precedent *less* findable, not more. Twelve rules were lifted into a
+  new root `CLAUDE.md` on the way out, with this file and `DECISIONS.md` as their provenance,
+  cited **by symbol, never by line**: `TODOS.md` already carried one stale line reference,
+  and the extracted file is meant to outlive line numbers.
+
+  **Two things this pass found rather than moved.** `## Completed` was **stale by two
+  releases** — the 0.9.2 secrets-scanner fix (#24) and its 0.9.3 follow-up (#25) had no entry
+  at all, so "the 5 most recent" silently meant five older ones, and splitting on that would
+  have mis-dated the archive permanently; the entry was written from the two commit bodies
+  *before* the split, including the four gaps that shipped disclosed-not-fixed. And
+  `DECISIONS.md` was newest-first for 15 sections with the 16th at the bottom — 2026-08-10,
+  the newest of the lot, appended below a 2026-06-22 entry — so a top-down reader concluded
+  2026-08-07 was the latest decision. Moved to the top, and the ordering is now stated in
+  that file's header, since it broke for want of ever being written down. Verified as a pure
+  move: the 228-line section is byte-identical at its new position.
+
+  **The `-I` rule was extracted WITH its exception, deliberately.** At the time,
+  `ci/check-version-monotonic.sh` was the only site carrying `python3 -I`;
+  `forgeward-diff-hash.sh`, `forgeward-gate-check.sh` (×2) and `forgeward-pre-push.sh` did
+  not, and that gap was already filed as a P3. Extracting the rule without the exception
+  would have converted a filed hole into a false claim of coverage, so `CLAUDE.md` named the
+  four sites and said not to read the rule as coverage. (Closed the next day by #30, which
+  put `-I` at every site and pinned it with A25/A26 — the rule in `CLAUDE.md` now reads as
+  coverage because it finally is.)
+
+  **Filed, not fixed**, in a new `## Docs hygiene` section. The load-bearing one: **nothing
+  verifies the rule-extraction step this convention depends on** — a pass that archives
+  without lifting rules is a silent regression on precedent retrieval, and the archive named
+  four pieces of reasoning that did not become rules. Also: the open half was still ~70KB and
+  untriaged (the completed half was only 22% of the file, so a split is relief and never a
+  fix), and `CLAUDE.md` now ships to plugin installers — inert in the cache, but keep it free
+  of anything machine-specific.
+
+  **Gated:** privacy fired and returned PASS; UI, LLM, public-pages, deps and code-security
+  all skipped, the diff being four Markdown files. The elevated risk was specific — the new
+  entry and the moved `DECISIONS.md` section both narrate a real incident in which a scanner
+  read a developer's untracked `.env` into a persisted transcript — so the reviewer swept both
+  files for credential shapes and found only the detection patterns themselves and an
+  illustrative `://user:pass@`. It also re-derived the split arithmetic independently (16 + 1
+  = 17, 5 kept, 12 archived, the archived block byte-identical to the original lines) and
+  verified the `-I` count in **both** directions. One Low, fixed in place: the entry had dated
+  the 0.9.3 docs correction 2026-08-10, which is the *security* fix's authored date; both of
+  #25's dates are 2026-08-12.
+
+- **P0: the secrets scanner read a developer's untracked, gitignored dotenv file
+  during a real gate run, and the values landed in a persisted subagent
+  transcript.** Authored 2026-08-10 and merged 2026-08-12 as #24
+  (`60a067a`, 0.9.2); the rotation notice's path was corrected 2026-08-12 as #25
+  (`acbdc12`, 0.9.3). Full reasoning in
+  `DECISIONS.md`. *(This entry was missing from this list until 2026-08-14 — the
+  deferrals it produced were filed in the open half at the time, but the
+  completion itself never was, which made `## Completed` read as stale by two
+  releases.)*
+
+  Two defects, and the first hid the second. The documented Gitleaks invocation
+  passed the whole changed-path list to a command that takes ONE path; read from
+  `cmd/directory.go` (v8.30.1) rather than inferred, there is no cobra `Args`
+  validator, so a second positional is not an error — `len(args) != 1` leaves
+  `source = "."`, the cwd. The extra path is neither rejected nor
+  dropped-with-the-first-honoured: the whole target is silently replaced.
+  Verified against the binary — one path scanned 15 bytes, two scanned 176,
+  identical to `dir .`. And `dir` mode is a filesystem walk regardless, so
+  fixing the first alone leaves any directory in the changed-path list
+  re-triggering it.
+
+  The fix makes the scanner structurally unable to see anything outside the
+  reviewed diff. The primary shape is the commit range
+  (`gitleaks git --log-opts="<base>...HEAD" --redact -f json -r -`), with
+  per-file `dir` only where working-tree state is genuinely needed.
+  `forgeward-scan.sh` gained layer 4: for the `dir`/`file`/`directory` family the
+  target must be exactly one existing regular file that git tracks — zero paths,
+  two paths, a directory, and an untracked file are all refused. The subcommand
+  is matched against an enumerated set and anything else refused, so an unlisted
+  value-taking flag placed BEFORE it (`gitleaks --unlisted V dir .`, where `V`
+  looks like the subcommand) cannot slip a directory scan past the guard. That
+  also covers `detect --no-git` and `protect`, HIDDEN in 8.30.1 — absent from
+  `gitleaks --help` but still live, the same walk under older names, and verified
+  to read the untracked file before the guard refused all three shapes.
+  `--redact` is now unconditional, which closes the value half while layer 4
+  closes the read half; neither is sufficient alone. Trivy lost `secret` from
+  `--scanners` for the same reason, short `-r` was closed for gitleaks (only the
+  long form had been enumerated, so `-r evil.json` reached the write the long
+  form exists to refuse), and supply-chain-reviewer's `trivy fs <paths>` was
+  corrected to one path.
+
+  Deliberately **not** a filename exclusion: a committed credential file is a
+  genuine finding and must keep being reported.
+
+  Four gaps were found while verifying this and **disclosed rather than fixed**,
+  so their absence is not read as coverage — each is in the script's NON-GOALS
+  block, in `DECISIONS.md`, and as a P3 above. Layer 1 matches flag TOKENS and
+  cannot see inside a flag's VALUE, so `--log-opts="--output=x"` forwards
+  `--output` to `git log` and writes the file, using the very flag this change
+  starts recommending; layer 3 contains it (the run exits 3 with the path named)
+  and P8l pins it as accepted-and-contained, asserting it stays LOUD rather than
+  asserting a refusal that was not built. The target check is TOCTOU, accepted
+  because that attacker already has local write access. The tracked check needs a
+  work tree, not live since the reviewer always runs inside the repo under
+  review. And `stdin` mode has no path token to check, so piping untracked
+  content in by hand is held only by prose — an argv wrapper cannot see a pipe.
+
+  Coverage: `gate-test.sh` P8i/P8j/P8k/P8l, including an end-to-end fixture on
+  the observed shape with a **control leg** that bypasses the wrapper and asserts
+  the raw scan DOES leak — without it the assertions pass with the guard removed,
+  since `--no-banner` alone prints no values. Mutation-verified twice: layer 4
+  disabled → P8j and P8k fail; the unrecognized-subcommand branch softened to
+  `return 0` → P8j fails. 177/15/51 assertions green.
+
+  The 0.9.3 follow-up: the rotation notice told users to look in
+  `~/.claude/projects/<project>/subagents/*.jsonl`, a path that does not exist —
+  the real layout has a session-uuid level in between. The published grep
+  therefore exits `No such file or directory`, which reads as "nothing matched",
+  i.e. clean. A user following the notice exactly concludes they were unaffected
+  and does not rotate, and the notice has then retired their suspicion as well.
+  For a rotation notice that is the worst available failure mode.
+
+- **P3: `git push origin --delete <branch>` was denied when the current branch had no
+  marker, even though the enforced pre-push hook already allows it.** Fixed 2026-08-07.
+  Full reasoning in `DECISIONS.md`.
+
+  The finding was the asymmetry, not the friction. `forgeward-pre-push.sh` skips any ref
+  whose local SHA is all-zero — verified against real git, which writes
+  `(delete) 0000000… refs/heads/x <remote-sha>` on the hook's stdin for BOTH the
+  `--delete` and `:refspec` forms — while the PreToolUse matcher went straight to `deny`
+  without asking what was being pushed. The layer whose own header calls itself "a fast
+  best-effort reminder" was stricter than the thing it reminds you about, and its advice
+  ("run the gate") was unactionable: a deletion publishes no code, so no reviewer could
+  review it and no marker could ever attest to it.
+
+  Shipped: `_is_delete_only()` in `scripts/forgeward-gate-check.sh`, taken only on a
+  TRUSTED residue (quoted spans already blanked), only on ONE simple command, only when
+  `git push` is the literal command word, matching flags as whole argv tokens. Plus
+  `_residue_trusted`, which records which scan path answered — the verb test is fail-safe
+  either way, but this is the one decision here that can turn a deny into an allow. Tests
+  A23 (31 cases) and A24 (degrades closed when `awk` is unavailable) in `test/gate-test.sh`.
+
+  **Three real pushes at a real remote wrote the design; reading git-push(1) would not
+  have.** `--delete y z` deletes both (so `--delete` alone settles it); `:q newcode`
+  deletes `q` and PUBLISHES `newcode` (so the colon form additionally caps plain tokens at
+  one — the remote); and `--tags origin :d2` deletes `d2` and PUBLISHES a tag on an
+  unpublished commit (so unrecognised options DENY instead of being skipped, which the
+  first draft got wrong). An option can send refs the argument list never names.
+
+  **The branch's own security review found a real bypass in the first draft.** `strip_quoted`
+  BLANKS a quote or backslash to a space instead of deleting it, so an empty quote pair inside
+  one real argv token splits it into two tokens bash never produced: `git push /pub/repo'':x.git`
+  is ONE repository argument, the classifier saw plain=1 colon=1, exempted it, and it really
+  published `refs/heads/main`. `_is_delete_only` was the first consumer of that residue to depend
+  on exact token boundaries rather than on "does this word appear". Closed by refusing the
+  exemption on any `'`, `"` or `\` — a complete cover, since blanking can only ever ADD a
+  boundary and every path that adds one needs one of those three characters.
+
+  **The re-gate then found the same shape again through globbing, which is what turned the
+  token test into an allowlist.** `read -ra` does not glob, so `git push [os]* :newcode` is
+  one token to the classifier and several words to bash — reproduced against a real remote,
+  where it deleted `newcode` and PUBLISHED `secretbranch`. Two misses of the same kind in
+  one branch is the argument for inverting the test: every token must now match
+  `^[A-Za-z0-9_.:/@+=-]+$`, so the construct nobody thought of fails closed.
+
+  **Mutation testing changed the code twice, and one of the two was a fail-OPEN.** Every
+  deny case was already green before the fix — the old matcher denied everything — so the
+  deny half proves nothing on its own. The command-word check was two lines and *neither
+  could be killed alone*, because `_pub_re` already guarantees `git push` adjacent; they
+  were collapsed into one regex. And the newline refusal was unpinned: without it
+  `read -ra` sees only the first line, so `--delete x\ngit push origin main` would have
+  been ALLOWED. Found by mutation, not by review.
+
+- **P2: nothing checked that a merge moved the version FORWARD, so merge order was
+  load-bearing whenever two version-bumping PRs were open.** Fixed 2026-08-06. Full
+  reasoning in `DECISIONS.md`.
+
+  The live instance — #17 to 0.7.5 and #18 to 0.7.6, where merging #17 second walks the
+  marketplace manifest backward — was avoided by merging #17 first, by hand. Nothing was
+  keeping three manifests monotonic except whoever was paying attention at merge time.
+
+  Shipped: `ci/check-version-monotonic.sh` (never-backward across all three manifests, plus
+  a head-side agreement check, runnable by hand), `.github/workflows/version-check.yml` (the
+  repo's first CI workflow, PR-only — on a push to master the base ref *is* the commit being
+  checked, so the comparison would be against itself and green vacuously), and
+  `test/version-check-test.sh` (R1–R25c, 51 assertions, wired into `npm test`).
+
+  Three comparator traps are pinned rather than merely avoided. `major*1000000 +
+  minor*1000 + patch` ties `1.0.1000` with `1.1.0` (R6/R6b); a string comparison calls
+  `0.10.0` behind `0.9.0`, which this repo hits on its next minor (R5/R5b); and the
+  component-wise `$((10#$x))` that replaced both **wrapped at 2^63**, which this branch's own
+  security review demonstrated end to end — base `18446744073709551617.0.0`, head reverted to
+  `1.0.0`, `ok ... not behind`, exit 0 (R13/R13b). The comparator now uses no arithmetic at
+  all. And the version validator's first draft was `printf | grep -qx` — the P1
+  SIGPIPE/pipefail defect already paid for once here — now a fork-free `[[ =~ ]]` with a
+  comment at the line saying why the tempting edit is wrong.
+
+  **The 2^63 wrap is the entry to re-read before writing the next comparator.** R6 pinned the
+  10^3 ceiling and stayed green throughout, because it was written against the comparator
+  already chosen — it could only see the ceiling that had been thought about. Same shape as
+  V5/V6 passing while the jq/python3 divergence shipped underneath them. The comment above the
+  fix asserted "no such ceiling" and was simply false; the assertion beside it could not tell.
+
+  **It happened a second time in the same file, which is what makes it a pattern rather than an
+  anecdote.** Round 2 of the security review found the ambiguity guard counting with a bare
+  `grep -c` — matching *lines*, not *occurrences* — so two version keys on one line counted as
+  1 and skipped the guard entirely. R8 was green throughout, because R8's fixture puts the two
+  keys on separate lines: the one arrangement `grep -c` gets right. The input still failed
+  closed, one check later and citing the wrong reason, so an assertion reading only the exit
+  status would also have stayed green. R8b pins the one-line arrangement and asserts on the
+  *message*. Generalized: an assertion written alongside a mechanism inherits that mechanism's
+  blind spot, and only an outside reader — or a mutation — sees past it.
+
+  **And a third time, as a High.** Round 3 found that under a UTF-8 locale GNU grep will not
+  match `[^"]*` across invalid UTF-8 and silently drops the line, so a fork PR author could
+  commit a clean forward *decoy* `"version"` key plus a poisoned real one and the poisoned key
+  became invisible to the script while every JSON parser took it (duplicate keys are last-wins).
+  Base 0.9.0, decoy 0.9.1, poisoned 0.1.0 → `ok: version 0.9.1, not behind master`, exit 0. A
+  complete bypass of the file's whole purpose from a one-line hex edit. Fixed at the time with a
+  script-wide `export LC_ALL=C`.
+
+  **A fourth round, and it is the one that changed the design.** JSON `\uXXXX` escapes are legal
+  in **key names**: `{"version":"0.9.1","version":"0.1.0"}` contains exactly one literal
+  `"version"` byte sequence, so the guard counted 1 and passed while every parser decoded two
+  keys and took the second. Same bypass, same one-line edit, and `LC_ALL=C` is irrelevant to an
+  escape that is pure ASCII — verified end to end: `ok: version 0.9.1, not behind master`, exit
+  0, while `node` and `python3` both read `0.1.0`.
+
+  **Rounds 2, 3 and 4 defeated the same textual reader by three unrelated mechanisms, so the
+  reader was deleted rather than patched a third time.** Versions are now read by `python3`'s
+  stdlib `json` with `object_pairs_hook` refusing duplicate keys by name. Three independent
+  evasions of one approach is not three bugs — the class is *text tools do not parse JSON*, its
+  members cannot be enumerated, and a fourth patch would only have been the third demonstration
+  that patching does not converge. The repo's two earlier declines of "just use jq or python3"
+  both stand and neither reaches here: PyYAML is not stdlib (`json` is), and the marker writer
+  runs on arbitrary user machines (this runs on `ubuntu-latest`). Their shared principle — one
+  arm everybody gets beats a better arm some people get — is why there is a **single** python3
+  arm and no `jq` fallback: two readers that can disagree is the diff-hash divergence rebuilt on
+  purpose. Absent python3 is a named FAIL, never a skip (R18/R18b).
+
+  **A fifth round, and it is the round-4 fix looked at from the other end.** Round 4 piped the
+  manifest to the parser on **stdin** so the bytes arrived unaltered, and wrote a comment there
+  naming both transforms a command substitution performs. The parser's *answer* still came back
+  through `out="$(python3 …)"`, which performs both: `$(...)` **deletes NUL bytes** (warning on
+  stderr, exit status untouched) and **strips trailing newlines**, and both are legal inside a
+  JSON string. So the `X.Y.Z` check validated a value the file did not contain. Committed
+  `"version":"1\u00009.0.0"`; python3 and node both read a version with an embedded NUL; the check printed
+  `ok: version 19.0.0, not behind master` and exited 0. Fixed the way round 4 was fixed — close
+  the channel, not the instance: the shape check moved *inside* the parser, so only digits and
+  dots ever cross. `re.fullmatch`, not `re.match(…$)`, because Python's `$` also matches before a
+  single trailing newline and the anchored form would have rebuilt half the bypass inside its own
+  fix. A `RecursionError` escaping `except ValueError` was the same round's Low.
+
+  Round 6 went one layer below all of that: `python3 -c` puts the **current working directory**
+  on `sys.path`, and this script runs from the root of the checkout it is judging — so
+  `import json` resolved against repo content, and a fork author's five-line `json.py` at the
+  repo root made `json.loads` return whatever they liked. Reproduced with base `9.0.0` and head
+  manifests genuinely `1.0.0`: `ok: version 999.999.999, not behind master`, exit 0. Rounds 2–5
+  hardened how the manifest is *parsed*; this replaced the *parser*, so every earlier guard was
+  intact and irrelevant. Fixed with `python3 -I`, chosen over a `sys.path` edit because the CWD
+  entry is one of four channels the audited repo has into the interpreter — `-I` also implies
+  `-E` (PYTHONPATH and friends) and `-s` (user site-packages, hence `usercustomize`) — and
+  patching one channel at a time is exactly how rounds 2 through 5 went. R22/R22b/R22c pin one
+  channel each; R22d is the positive control.
+
+  Round 7 went out one layer instead of down: the head side read each manifest off the
+  **filesystem** (`read_version "$f" < "$f"` — a plain `open(2)`, which follows symlinks) while
+  the base side read it out of the **object store** via `git show`, which returns a symlink's
+  target text and never dereferences it. Git tracks symlinks as mode `120000`, so a fork PR
+  author commits the three manifests as links to a file outside the checkout and gets
+  `ok: version 13.37.0, not behind master (3 manifest(s) compared, all three agree)`, exit 0 —
+  a pass asserted about a commit containing no version field at all. The asymmetry was written
+  down in the script's own header as a neutral implementation detail. Both sides now go through
+  one `require_blob` and one object-store read, so the bytes parsed are the blob in the commit
+  by construction; reading HEAD rather than the worktree also means a hand-run ignores
+  uncommitted edits, which is stated as blind spot 10 and mitigated by a stderr note naming the
+  files (R24b).
+
+  Round 8 was the first PASS: five distinct attempts on round 7's fix (non-canonical tree modes,
+  clean/smudge filter divergence, `core.symlinks=false`, replace-refs, ref-name injection through
+  `github.base_ref`) all failed closed for the reason the code claims, so that round checked the
+  comments against the machine rather than against themselves. Its one Low was a channel slip —
+  the base-side "manifest absent" note went to stdout while its sibling went to stderr — invisible
+  to all 47 assertions because `run()` folds the streams, which is the suite's blind spot in
+  miniature and is now pinned by R25. It also surfaced, as a *safe* case, a second pre-round-7
+  bypass worth an assertion: `.claude-plugin` itself committed as a symlink to an external
+  directory (R23f).
+
+  Seven rounds produced seven defects, each in the layer the previous round had just hardened —
+  the operative lesson is that **an adversarial reader found all seven and the test suite found
+  none of them**, which is an argument about how much review a comparator is worth, not about the
+  tests being bad. Every new assertion from round 3 on reads the **message** rather than the exit
+  status, because two of them failed closed for an unrelated reason and would have passed an
+  exit-status check.
+
+  **`export`, not `local`, and this is the part most likely to be got wrong later.** A `local
+  LC_ALL=C` is not passed to a spawned child unless the name was already exported — verified
+  directly: `local` gives the child `<unset>`, a command prefix and `export` both give `C`. It
+  works for a bash builtin like `[[ x < y ]]` and does nothing for `grep`. `num_lt`'s own `local`
+  was removed rather than kept beside the export, because the redundant mechanism was precisely
+  the ineffective one.
+
+  **Verifying a claim about a tool means invoking the binary the code invokes.** The first attempt
+  to check round 3's finding appeared to refute it. That was wrong: `grep` at an interactive
+  prompt here is a shell function shimming to **ugrep 7.5.0**, while a script gets `/usr/bin/grep`
+  = **GNU grep 3.7**, and shell functions are not inherited by a non-interactive child. The ad-hoc
+  check and the code under test were different programs with different invalid-byte behaviour.
+  Use `type -a` and an absolute path.
+
+  **Mutation testing earned its place and should not be skipped on the next one like it:** the
+  zero-comparison floor reddened *nothing* until R12 was written for it, so a guard that read
+  as covered was in fact unpinned. Twenty of twenty-one mutations reddened exactly the
+  assertions naming them; the exception is the `LC_ALL=C` *collation* effect, filed above as
+  unobservable — though round 3 showed that label covers only the effect that was measured, not
+  the pin, and round 4 then made the measured effect moot, which is the same trap twice.
+
+  **Four "vacuous" results, none of them a coverage gap, and they split into two causes.** Three
+  were harness artifacts that never applied — `M6`, the `grep -c` revert, and the walk-recursion
+  mutation — reddening R11, R8b and thirteen assertions respectively once applied properly. The
+  fourth, `M21`, **applied cleanly and was still a no-op**: it added an `ok:*)` arm after the
+  real one, and `case` takes the first match, so the mutant was unreachable. An `assert count ==
+  1` on the anchor (now the harness's standing shape) catches the first cause and structurally
+  cannot catch the second. A mutation reporting nothing is a claim to verify, not a finding to
+  accept — accepting any of the four would have added a test for a guard that was already pinned.
 
 - **P2 ×2: two documented config keys were parsed by nothing, and the reader refused the
   shapes real users write.** Fixed 2026-08-06, shipped in 0.9.0. Full reasoning in

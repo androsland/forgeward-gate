@@ -115,6 +115,10 @@ is_fresh() { # is_fresh <branch> <tip-sha>
 }
 
 blocked=()
+# shellcheck disable=SC2034  # git's pre-push protocol puts FOUR fields on stdin and the
+# positions are fixed; `local_ref` and `remote_sha` are named so the read stays readable
+# against the documented shape, and are deliberately unread. Collapsing them into `_`
+# would make the next person check git's docs to know which field is which.
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${remote_ref:-}" ] || continue
   [ "$local_sha" = "$ZERO" ] && continue          # branch deletion -> publishes no code
