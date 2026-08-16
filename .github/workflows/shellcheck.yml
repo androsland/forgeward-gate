@@ -9,19 +9,37 @@
 # `*'\'*` glob for a literal backslash (SC1003), and git's four-field pre-push stdin
 # protocol whose `local_ref`/`remote_sha` are named-but-unread by design (SC2034).
 #
+# WHY THE VERSION IS PINNED, since the first draft of this file argued the opposite.
+# It shipped unpinned, calling runner drift "a real cost accepted on purpose" — and the
+# cost was paid on the very first run: `ubuntu-latest` carries shellcheck 0.9.0, which
+# reports three SC2015 findings that 0.11.0 does not, so the job went red on a PR whose
+# shell was already clean under the author's linter. All three were false positives
+# (`A && cd … || true`, where the `|| true` is best-effort by construction, and
+# `[ -n "$f" ] && [ -f "$f" ] || { usage; exit 64; }`, where A and B are pure tests so C
+# runs exactly when NOT(A && B) — which is if-then-else). Suppressing them would have
+# blinded three sites permanently to satisfy a linter older than the code. Pinning makes
+# "clean on my machine" and "clean in CI" the same claim, which is the only version of
+# this check worth having.
+#
 # WHAT IT DOES NOT COVER, stated so the green tick is not read as more than it is:
 #
-#   1. `test/` is OUT OF SCOPE and is not clean — 244 findings, dominated by SC2015 ×202
-#      (the suite's own `cond && ok … || nok …` idiom) plus SC2164 ×31. Bringing it in
-#      would mean either 244 suppressions or an exclusion list, and the second is the
-#      thing this workflow exists not to do. Filed in TODOS.md rather than fudged here.
-#   2. The runner's shellcheck version is NOT pinned. A newer one can report codes this
-#      baseline never saw, so this job can go red on a commit that changed no shell at
-#      all. That is a real cost and it is accepted on purpose — the alternative is
-#      pinning a downloaded binary by checksum, which trades drift for a second thing to
-#      refresh. The version is printed below so a surprise red is diagnosable in one look
-#      rather than reproducible only by guessing. Filed in TODOS.md.
-#   3. It catches NEITHER of the two bash bugs this repo has actually shipped. Both were
+#   1. `test/` is OUT OF SCOPE and is not clean — 241 findings at the pinned version
+#      (SC2015 ×201, the suite's own `cond && ok … || nok …` idiom; SC2164 ×30; SC2181 ×6;
+#      SC2016 ×3; SC2012 ×1). Bringing it in would mean either 241 suppressions or an
+#      exclusion list, and the second is the thing this workflow exists not to do. Filed
+#      in TODOS.md rather than fudged here. Note the count is version-dependent: it is a
+#      property of this pin, not of the suite.
+#   2. The pin is TRUST-ON-FIRST-USE, not a provenance chain. koalaman/shellcheck
+#      publishes no checksum and no signature with its releases (13 assets on v0.11.0,
+#      none of them a `.sha256` or `.asc`), so the digest below was computed by the author
+#      from the bytes served on 2026-08-16 and confirmed to unpack to a working 0.11.0
+#      binary. It pins the artifact to bytes that were checked once. It does NOT prove
+#      those bytes are what upstream intended to publish, and nothing here would detect a
+#      compromise that predates the download.
+#   3. A pin is a thing that goes stale. Dependabot does not watch it — the config covers
+#      the `github-actions` ecosystem, which sees `uses:` lines, not a version string in a
+#      `run:` block. Refreshing this is manual and nothing reminds you. Filed in TODOS.md.
+#   4. It catches NEITHER of the two bash bugs this repo has actually shipped. Both were
 #      reconstructed as minimal scripts and run through v0.11.0 — the `printf | grep -q`
 #      under `pipefail` P1, and the `grep -c` line-vs-occurrence miscount — and it
 #      reported nothing on either. This is regression prevention against the classes it
@@ -41,13 +59,47 @@ permissions:
 jobs:
   shell:
     runs-on: ubuntu-latest
+    env:
+      # Refreshing these two is a manual, paired edit — see non-goal 3.
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: shellcheck version (unpinned — see the header)
-        run: shellcheck --version
+      # The runner preinstalls shellcheck, but its version floats with the image. Fetch
+      # the pinned release instead and verify it BEFORE it is ever executed — the
+      # checksum gate is the only thing standing between a swapped release asset and a
+      # binary this job then runs.
+      #
+      # Everything happens in RUNNER_TEMP, never the checkout: this repo enforces a
+      # read-only-workspace contract on its own reviewers and it would be absurd for its
+      # CI to drop a tarball in the tree. Installed to a private dir added to PATH rather
+      # than /usr/local/bin, so the step needs no privileges it might not have; the
+      # version assert below is what proves the PATH order actually took.
+      - name: install pinned shellcheck
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          url="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${tarball}"
+          curl -sSLf -o "$tarball" "$url"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "$tarball" | sha256sum -c -
+          tar -xJf "$tarball"
+          mkdir -p "$RUNNER_TEMP/sc-bin"
+          install -m 0755 "shellcheck-${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/sc-bin/shellcheck"
+          rm -rf "$tarball" "shellcheck-${SHELLCHECK_VERSION}"
+          printf '%s\n' "$RUNNER_TEMP/sc-bin" >> "$GITHUB_PATH"
+
+      # Printed so a surprise red is diagnosable in one look. This must read as the
+      # pinned version; if it does not, the install step above picked up the runner's.
+      - name: shellcheck version (pinned — see the header)
+        run: |
+          shellcheck --version
+          got="$(shellcheck --version | awk '/^version:/ {print "v"$2}')"
+          [ "$got" = "$SHELLCHECK_VERSION" ] || {
+            printf 'expected %s, got %s — the pin did not take\n' "$SHELLCHECK_VERSION" "$got" >&2
+            exit 1; }
 
       # scripts/ is the shipped plugin. ci/ and live-test/ are clean with zero
       # suppressions and are included so they stay that way; they are cheap to hold to a

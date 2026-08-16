@@ -583,6 +583,26 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   241 findings, dominated by an SC2015 mass already shown not to be the shipped P1 — so a
   green shellcheck tick says nothing about the suite's own bash, and that is stated in the
   workflow header rather than left to be inferred.
+  **The version is pinned, and the first CI run is why.** The workflow shipped unpinned,
+  with a header arguing that runner drift was a real cost accepted on purpose. The cost was
+  paid on that same PR: `ubuntu-latest` carries shellcheck **0.9.0**, which reports three
+  SC2015 findings that **0.11.0** does not, so the job went red on shell that was already
+  clean under the author's linter. All three were false positives — two `A && cd … || true`
+  sites where the `|| true` is best-effort by construction, and one
+  `[ -n "$f" ] && [ -f "$f" ] || { usage; exit 64; }` where both A and B are pure tests, so C
+  runs exactly when `NOT(A && B)`, which is if-then-else. Suppressing them would have blinded
+  three sites permanently to satisfy a linter older than the code, so the workflow now
+  downloads and checksum-verifies v0.11.0 and asserts the pin took. The lesson is the
+  general one: **an "accepted cost" that has never been paid is a prediction, not a
+  measurement** — this one was falsified by its own first run.
+  **Two residuals the pin creates, neither of them covered by anything:** the digest is
+  **trust-on-first-use**, because koalaman/shellcheck publishes no checksum and no signature
+  with its releases (13 assets on v0.11.0, none a `.sha256` or `.asc`) — it pins the artifact
+  to bytes verified once, and proves nothing about upstream intent; and **nothing refreshes
+  the pin**, since Dependabot's `github-actions` ecosystem sees `uses:` lines, not a version
+  string in a `run:` block, so this goes stale silently the way `actions/checkout` already
+  did. Both are stated in the workflow header as non-goals so the green tick is not read as
+  covering them.
   **Still open, and it is the part that matters to other people:** whether `shellcheck`
   belongs in `forgeward-scan.sh` — i.e. whether the *reviewer* runs it on every repo it
   gates, or only where bash is a primary language. Nothing above answers that; this repo
@@ -679,8 +699,12 @@ the non-goals and reversed decisions; the rules those produced are in
   `shellcheck.yml` runs `scripts/ ci/ live-test/` with **no exclusion flags** — the five
   deliberate findings (SC2016 ×5, SC1003, SC2034 ×2, all verified against `HEAD` rather than
   recalled) now carry inline `disable=` directives naming their reason at the site, so the
-  baseline is zero and a genuinely-wrong SC2016 still fires. `test/*.sh` is out of scope, 241
-  findings, stated in the workflow header so the tick is not over-read. `flake-sweep.yml`
+  baseline is zero and a genuinely-wrong SC2016 still fires. It installs a **checksum-verified
+  v0.11.0** rather than using the runner's: it shipped unpinned in this same PR, went red on
+  the first run against `ubuntu-latest`'s 0.9.0 over three SC2015 false positives, and the
+  pin was the fix — suppressing them would have blinded three sites to satisfy a linter older
+  than the code. `test/*.sh` is out of scope, 241 findings at that pin, stated in the workflow
+  header so the tick is not over-read. `flake-sweep.yml`
   owns the load-sensitivity question `test.yml` deliberately does not: `workflow_dispatch`
   or the `flake-sweep` label, 25 runs at load 4 by default, driving the existing
   `test/s7-flake-loop.sh`.
