@@ -432,7 +432,27 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   the repo's Settings → Code security, not in the file. Two limits are stated in the config
   header rather than here so they travel with it: it sees `uses:` in workflow files only (a
   version pinned inside a script or a composite action is invisible to it), and a bump PR is
-  pushed server-side, so no forgeward gate and no local hook runs on it.
+  pushed server-side, so no forgeward gate and no local hook runs on it. That second one is
+  bounded rather than open: `test.yml` and `shellcheck.yml` are `pull_request`-triggered and
+  do run on a Dependabot PR server-side, and `version-check.yml` passes correctly (a
+  workflow-only bump touches no version field) — what is absent is the *local* gate and its
+  reviewers, not all checking.
+  **The single `*` group is safe today and will not stay that way.** `actions/checkout` is
+  the only third-party action in the repo and all four `uses:` sites carry a byte-identical
+  pin, so one group cannot conflate unrelated bumps. The day a second, unrelated action is
+  added, one PR starts carrying two independent supply-chain changes under one review —
+  revisit the grouping at that point, not before. (Raised by the 0.12.0 gate's own
+  supply-chain reviewer, which verified the pin resolves to the claimed tag by
+  `git ls-remote` rather than trusting the trailing comment.)
+  **The pin is already three majors behind, so expect the first bump PR to be a major.**
+  Measured 2026-08-16: `11d5960a…` resolves to `v4`/`v4.4.0`, while `actions/checkout`
+  publishes `v3 v4 v5 v6 v7`. So this is not a hypothetical about future drift — the drift
+  has happened and nothing noticed for as long as the pin has been in the tree, which is
+  the concrete form of the "unverified automation reads as coverage" point above. Two
+  consequences for the check after the first monthly window: an *absent* PR is a stronger
+  signal that the service is off than it would be against a current pin, and an arriving
+  PR is a **major** bump carrying real behaviour change, so it needs reading rather than
+  merging on the strength of the green tick.
   (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16) **Priority:** P3
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
