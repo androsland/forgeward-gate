@@ -39,7 +39,7 @@ jobs:
       # Same SHA pin as version-check.yml, and the same reasoning: a tag can be
       # repointed, a SHA cannot. Refreshing the pin is now Dependabot's job — see
       # .github/dependabot.yml, which closed the "a pin needs a refresh policy" half.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here needs a credential, and the code that runs next is checked out
           # from the PR head, which on a fork PR is contributor-controlled content.

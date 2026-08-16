@@ -29,7 +29,7 @@ jobs:
       # An unverified SHA typed from memory would have been strictly worse than the tag.
       # A pin needs a refresh policy or it decays into a stale-action problem instead:
       # re-run that same ls-remote when GitHub cuts a new v4.x. Tracked in TODOS.md.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Do not leave GITHUB_TOKEN in .git/config for the rest of the job. The
           # workflow already holds only `contents: read` and references no secrets, so
