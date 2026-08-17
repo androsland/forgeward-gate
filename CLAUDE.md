@@ -48,9 +48,13 @@ commit that was fixing it — a line number cannot survive its own fix.
   'ci/*.sh'` finds **six** scripts and only **four** call it — `forgeward-detect-environment.sh`
   and `forgeward-write-marker.sh` mention it in comments explaining why they deliberately do
   *not* take the dependency, so a text match overcounts the surface by 50%. Run that grep
-  **unscoped** and it returns **19**, because this file and the reviewer prompts discuss the
-  dependency too; the pathspec is load-bearing, and quoting the command without it is the
-  same error the bullet is about. And the third posture is narrower than it looks — but not
+  **unscoped** and it returns **19**, and the surplus 13 is not what it sounds like: **zero**
+  reviewer prompts mention `python3`, seven docs/config files discuss it, and six `test/`
+  harnesses match — of which **five genuinely invoke it** and only `denies-race-probe.sh`
+  merely names it in a comment. So the unscoped count is not "shipped scripts plus chatter":
+  it hides real call sites in `test/` behind files that only talk. The pathspec is what
+  confines the count to *shipped* scripts, and quoting the command without it is the same
+  error the bullet is about. And the third posture is narrower than it looks — but not
   as narrow as it first reads. `cat` at `normalize_manifest`'s `else` arm is reached only
   when `jq` **and** `python3` are both absent, which is the same condition under which the
   two hooks have already exited 0, so on that box enforcement is off regardless and the

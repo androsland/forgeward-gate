@@ -124,6 +124,30 @@ write-once and effectively gone after merge, which is why they live here now.
   another feature branch. Stated as a blind spot in the script header and
   `skills/gate/SKILL.md`; recorded here so the limit is not mistaken for coverage.
   (PR #6, 2026-08-01) **Priority:** —
+- **`normalize_manifest`'s two arms disagree on an unknown mode, which is the exact
+  divergence class its own header forbids.** `scripts/forgeward-diff-hash.sh:69` says
+  **"THE TWO BRANCHES MUST EMIT THE SAME BYTES, not merely the same semantics"**, and the
+  paragraph under it documents a shipped bug of precisely this shape — `jq -S`
+  pretty-printing where `json.dumps` was compact, so the same manifest hashed differently
+  on a machine with `jq` than on one without, and a marker written on one read as stale on
+  the other. The alignment fixed `top` and `plugins`. It did not fix the default: the `jq`
+  arm has `*) cat ;;` at `:103` and emits **raw** bytes, while the python3 arm has no
+  default at all — an unknown mode falls past both `if`/`elif` and still reaches
+  `json.dumps(d, sort_keys=True, separators=(",",":"))` at `:116`, emitting bytes that are
+  **canonicalized but not blanked**. Same input, two different outputs, decided by which
+  interpreter is installed.
+  **Latent, not live, and the reason it is latent is worth stating precisely:** the three
+  call sites at `:149-151` pass string literals (`top`, `top`, `plugins`), so the `*)` arm
+  is unreachable today and the fail direction on every reachable path is re-gate, never a
+  false PASS. It goes live the moment someone adds a fourth manifest and mistypes the
+  mode — and the failure would be a marker that reads fresh on one machine and stale on
+  another, which is the symptom the header says took a release of its own to fix. Cheapest
+  close is a `*)` arm in the python3 branch that mirrors `cat` (write `sys.stdin.buffer`
+  through untouched), or an explicit die on an unrecognised mode; the second is better,
+  because a silent passthrough on a typo'd mode means the version field is never blanked
+  and every bump re-gates for a reason nobody can see. Not fixed in this PR: the branch is
+  docs-only and a change to executable behaviour does not ride along with prose.
+  (security review, archive pass 3 branch, 2026-08-17) **Priority:** P3
 
 ## Reviewers
 
@@ -789,9 +813,16 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   of the one the entry predicts.** The gate fired `security-reviewer` on the docs-only diff
   with a docs-accuracy remit: check the new `CLAUDE.md` claims against the code rather than
   reading them. It returned PASS with three Low findings, and **all three were in the
-  freshly-authored python3 bullet; zero were in the six extracted rules**, which it verified
-  against `rules/env-config.yml`, `agents/security-reviewer.md` and `test/rules-test.sh` and
-  found correct. That is a real distinction and it should change where the worry goes:
+  freshly-authored python3 bullet; zero were in the six extracted rules** — of which it
+  verified **five**, against `rules/env-config.yml`, `agents/security-reviewer.md`,
+  `test/rules-test.sh` and `skills/gate/SKILL.md`, and found correct. The sixth, the
+  disclosure rule, it did not check at all: that one is a policy rationale with no code
+  that settles it, so zero findings against it is absence of evidence, not evidence of
+  absence. (The first draft of this paragraph said all six were verified and named three
+  files; the reviewer, asked explicitly whether it had been misquoted, said yes. Worth
+  keeping in the record — the entry is about unverified extraction, and its own write-up
+  needed a verifier.) With that correction the distinction is n=1 and rests on a set with
+  one unchecked member, but it still points somewhere:
   extraction *copies prose that was already checked when the entry was written*, so it
   inherits that verification; writing a rule fresh from a live enumeration does not, and
   fresh authorship is where the defects entered. The three: a printed `git grep -l python3`
