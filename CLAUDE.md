@@ -94,8 +94,50 @@ commit that was fixing it — a line number cannot survive its own fix.
   Both are stated as non-goals in the script and pinned as accepted-and-contained (P8l),
   not asserted away. Do not widen a claim about the wrapper to cover `stdin` mode.
 
+## Reviewer scope and severity
+
+- **What a reviewer BLOCKS is the remit that matters, not what it prints.** Critical/High
+  is the only bar that fails a gate, so a pack pinned at Low widens the *reporting* surface
+  and leaves the *blocking* surface bit-for-bit unchanged. That is how `rules/env-config.yml`
+  ships inside the security reviewer without widening security's remit — structurally,
+  rather than by intention. Enforce the pin in all three places that must agree: the rule's
+  `metadata.forgeward-report-severity`, the pack header, and the Step 2 instruction to report
+  at that severity **regardless of what the JSON says**, with an explicit "do not promote one
+  because the consequence sounds severe".
+- **Do not disclose an axis as unowned in the same run that just scanned for it.** The
+  rejected alternative to the Low pin was announcing `build-config` as covered by nothing
+  while the reviewer was finding instances of it — a worse lie than the silence it replaces.
+  A disclosure is for an axis nothing looks at, never for one whose findings you are printing.
+- **No AI-attribution / co-author-trailer check in the gate.** Considered and rejected at
+  0.10.0: `/gate` handing off to `/ship` is structurally a perfect chokepoint, but forgeward
+  is a plugin other people install and plenty of them legitimately want that trailer. If it
+  is ever added it is an opt-in config key defaulting to off — a separate decision, not a
+  reviewer rule. (A repo-local hook is the right layer for a personal policy; this is about
+  what ships to installers.)
+
 ## Tests
 
+- **A rulepack's fixtures are generated into a scratch dir and NEVER committed.** A `.ts` or
+  `.php` fixture living under `test/` would itself be scanned by forgeward's own gate on
+  every later PR — the suite's inputs would become the gate's findings.
+- **A suite that asserts SILENCE needs a trust check that runs first.** A fixture the engine
+  cannot parse turns every "the rule correctly does not fire here" assertion green, so a
+  non-empty `errors` array is a hard failure, not a warning. Not hypothetical: a fixture
+  syntax error masked results during development of `rules-test.sh`, and later a botched
+  mutation truncated a file by 141 lines and only this check caught it.
+- **`mktemp -d` needs its failure handled explicitly under `set -uo pipefail` without `-e`.**
+  A failed `mktemp` yields an empty `$TMP`, so `$TMP/fixtures` becomes the **absolute** path
+  `/fixtures` and the heredocs write outside the sandbox the file's header promises. It fails
+  with `EACCES` unprivileged and **succeeds silently in a root-run CI container**, which is
+  the environment where nobody is watching. Verify by pointing `TMPDIR` at a nonexistent
+  directory.
+- **Pin a blind spot as expected-silent only when this repo owns the rule — never when the
+  engine owns it.** A gap in a bundled pack should fail the suite the day it closes, so the
+  doc gets corrected instead of quietly becoming a lie. **The exception is the reason the
+  rule needs stating:** semgrep 1.169 scanning `.js/.mjs/.cjs/.jsx/.ts/.tsx` but silently
+  **not** `.mts`/`.cts` is an engine property, and pinning it would turn the suite red the
+  day a future semgrep fixes it. That one is recorded in the pack header and deliberately
+  left unasserted.
 - **No `printf … | grep -q` in a test helper under `set -o pipefail`.** `grep -q` exits
   on first match, `printf` takes SIGPIPE and exits 141, and pipefail promotes that to
   the pipeline's status — a passing assertion reads as a failure.

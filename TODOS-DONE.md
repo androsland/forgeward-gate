@@ -9,8 +9,17 @@ entries carry the same date, and #26 merged 39 minutes *after* #27 despite the l
 number, so both a date sort and a number sort get this file wrong. Resolve with
 `git log --first-parent` before inserting anything.
 
-Two passes so far: 12 entries at 0.10.0 (#27) and 4 more at 0.12.0. Each pass is
-relief, never a fix — `TODOS.md` was still over the ~50KB threshold after both.
+Three passes so far: 12 entries at 0.10.0 (#27), 4 more at 0.12.0, and 1 on
+2026-08-17. Each pass is relief, never a fix — `TODOS.md` was over the ~50KB
+threshold after all three, and pass 3 measured *why*: it archived **6,883 bytes**
+and wrote **5,491** back as the `## Completed` entry for the newly-merged work, a
+net **−1,392 bytes on an 85,990-byte file**. **Keeping "the 5 most recent" bounds
+the entry COUNT, not the byte count** — a pass removes one entry and adds one, so
+the section's size tracks how large recent entries are, and nothing here caps that.
+Anyone expecting this convention to shrink `TODOS.md` should stop expecting it;
+what it buys is that a sweep reads five current entries instead of eighteen stale
+ones. If the byte count is ever the actual problem, the lever is the open half
+(59,964 bytes across 10 topic sections, 71% of the file), not this one.
 
 Nothing was pruned. These entries carry the reversed decisions, the deliberate
 non-goals and the "we shipped the narrow fix on purpose, here is what it does not
@@ -20,6 +29,93 @@ their provenance — grep here before overriding one of them.
 
 `DECISIONS.md` remains the source of truth for *why* a design is the way it is. This
 file records what was done and what it deliberately left undone.
+
+- **P2 + P3: three rules that lived as prose in a personal `CLAUDE.md` became gate checks.**
+  Shipped 2026-08-14 as #26 (`41324b0`), 0.9.3 → 0.10.0. Full reasoning in `DECISIONS.md`.
+  Prose only fires if the model happens to recall it, it rots silently, and it does nothing
+  at all for anyone else who installs the plugin.
+
+  **The SQL vault-secret bullet** (`agents/security-reviewer.md` Step 3) covers three shapes
+  that the generic Secrets bullet and Semgrep `p/secrets` both miss, because **none of them
+  looks like a high-entropy literal**: a credential in a plaintext config table; a secret
+  leaking into **derived storage at execution time** (`cron.schedule(..., format(...))`
+  baking a token into `cron.job.command`, structurally invisible to any diff scanner because
+  the migration text may hold only a *reference* that gets resolved); and a generic
+  `get_secret(name text)` `GRANT`ed to `authenticated`/`anon`, which turns the vault into a
+  lookup API so one broken-authz path reaches *every* secret.
+  **Must NOT fire on** non-secret configuration in exactly such a table — URLs, feature
+  flags, publishable/anon keys designed to be public — nor on a row holding a secret's
+  *name*, which is the pattern being recommended. **Cannot see** the live database, so a
+  credential inserted by hand in `psql` or by a seed outside the diff is invisible; and it
+  cannot tell whether the platform *has* a vault, so on a plain Postgres the remedy is
+  "encrypt at rest / move it out of SQL", not "use the vault".
+
+  **`rules/env-config.yml`**, a second bundled Semgrep pack, wired into Step 2 the way
+  `wp-security.yml` already was but deliberately **without `--error`**: (1) `??` as an
+  env-var fallback, which only falls back on `null`/`undefined`, so a blank-but-present
+  variable — the routine output of a secrets sync and of most CI secret injection — reaches
+  the consumer as `''` and the default is silently discarded (observed in production:
+  `process.env.POLAR_SERVER ?? 'sandbox'` produced `new URL('')` and took down a Vercel
+  build at page-data collection); and (2) an env-dependent SDK client at module scope, which
+  evaluates at import time and so fails the whole build rather than the one route that
+  needed the credential. **Noise-checked against a 237-file production codebase before
+  shipping**, which is what surfaced the real false-positive class: `?? ""` is behaviourally
+  identical to `|| ""` for a string-or-undefined value and was 8 of 16 hits. Excluded.
+
+  **The placement decision is the substantive part, and it was a real choice rather than a
+  formality** — neither rule is a security finding; both are build safety. Chosen: ship in
+  the security pack and report **every** finding at Low, tagged defense-in-depth. The reason
+  generalizes and is worth keeping: **what a reviewer BLOCKS is the remit that matters, not
+  what it prints.** Critical/High is the only bar that fails a gate, so pinning the pack at
+  Low widens the reporting surface and leaves the blocking surface bit-for-bit unchanged —
+  which answers "don't widen security's remit" structurally rather than by intention. The
+  rejected alternative — disclose `build-config` as an axis no installed tool owns — is
+  incoherent while the detection exists: announcing "nothing covers build-config" in the
+  same run that just scanned for it and found two is a worse lie than the silence it
+  replaces. Enforced in three places that are supposed to agree: the rule's
+  `metadata.forgeward-report-severity: low`, the pack header prose, and the Step 2
+  instruction to report at Low *regardless of what the JSON says*, with an explicit "do not
+  promote one because the consequence sounds severe".
+
+  **`test/rules-test.sh` — 39 assertions**, house style, wired into `npm test`, in three
+  classes: positives, negatives (every legitimate configuration the rules must not fire on),
+  and **blind spots pinned as silent**, so a future semgrep that closes one fails the suite
+  and forces the doc to be corrected rather than quietly becoming a lie. Fixtures are
+  generated into a scratch dir and **never committed** — a `.ts` fixture under `test/` would
+  itself be scanned by forgeward's gate on every later PR. A **trust check runs first**: a
+  fixture semgrep cannot parse turns every silence-assertion green, so a non-empty `errors`
+  array is a hard failure, not a warning. Not hypothetical — a fixture syntax error masked
+  results during development, and later a botched mutation truncated a file by 141 lines and
+  the check caught it. Skips loudly when semgrep is absent (`1..0 # SKIP`).
+
+  **The gate found a real bug in this branch's own tests, and it was fixed rather than
+  deferred.** Under `set -uo pipefail` without `-e`, a failing `mktemp -d` yields an empty
+  `$TMP`, so `$TMP/fixtures` becomes the **absolute** path `/fixtures` and the heredocs write
+  outside the sandbox the file's own header promises they stay inside. Unprivileged that
+  fails with `EACCES`; a root-run CI container has a writable `/` and it succeeds silently.
+  Medium never fails a gate — fixed anyway, because it was two lines and it contradicted the
+  file's own stated invariant. Verified by pointing `TMPDIR` at a nonexistent directory.
+
+  **Measured, not assumed.** Mutation testing (exact single-line deletions from the pack)
+  caught **5 of 6**; the sixth is genuinely redundant under semgrep 1.169, which normalises
+  function forms — that redundancy is now *recorded in the pack* rather than hidden by
+  deleting a line the engine might stop covering. It also caught a **wrong causal claim in a
+  shipped artifact**: rule 2's message attributed an IIFE blind spot to the arrow-function
+  exclusion specifically, when the function-scope exclusions cause it collectively.
+  Extension coverage, measured with byte-identical content: `.js .mjs .cjs .jsx .ts .tsx`
+  scan; **`.mts` and `.cts` do not** — zero findings *and* zero errors, so the miss looks
+  exactly like a clean file. Recorded in the pack header, and deliberately **not** pinned as
+  expected behaviour in the suite, since that assertion would go red the day a future
+  semgrep fixes it. Step 1's extension list gained `.mjs`/`.cjs`, previously dropped before
+  the pack could see them.
+
+  **Deliberately not done, both with revisit conditions rather than left silent:** not
+  vendored into `ci-gate` — advisory WARNINGs turning a required check red is exactly the
+  green-on-arrival failure `ci-gate`'s first core rule forbids; and **no AI-attribution /
+  `Co-Authored-By` check**, considered and rejected. `/gate` handing off to `/ship` is
+  structurally a perfect chokepoint, but forgeward is a plugin other people install and
+  plenty of them legitimately want a co-author trailer. If it is ever added it is an opt-in
+  config key defaulting to off — a separate decision.
 
 - **P3: the completed half of `TODOS.md` was pure carrying cost on every sweep — 12 entries
   archived, 12 rules lifted.** Shipped 2026-08-14 as #27 (`f148a6a`), docs only. This file,

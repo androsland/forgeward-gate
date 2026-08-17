@@ -472,8 +472,11 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   is the same shape as the shellcheck pin's "an accepted cost that has never been paid is
   a prediction, not a measurement", arrived at independently in the same release. Two
   measurements of one idea in one release is a pattern worth keeping.
+  **#32 merged 2026-08-17** (`11af421`), so the first Dependabot bump this repo has ever
+  received is in `master` and the three server-side workflows passed on it. The loop is
+  closed end to end: configured → fired → reviewed on the merits → merged.
   (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16; observed
-  running via PR #32, 2026-08-16) **Priority:** P4
+  running via PR #32, 2026-08-16; merged 2026-08-17) **Priority:** P4
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
   `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
@@ -718,7 +721,15 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   A triage makes the file more accurate, not smaller, so anyone waiting for the byte count
   to fall as proof it worked will conclude it did not. Next pass on the same trigger as this
   one — a batch of merged work large enough that several entries are plausibly stale — not
-  on a number. (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16) **Priority:** P3
+  on a number.
+  **Trigger evaluated 2026-08-17 and deliberately NOT met.** Two PRs have merged since the
+  first triage: #33, which *was* the triage's own follow-through, and #32, a dependency bump
+  that touches no entry but its own. Re-triaging a file one day after it was triaged would
+  measure the triage, not the file. Recorded so the next pass can tell "not due" from
+  "forgotten" — the failure mode this entry exists to name is silence, and a trigger that is
+  checked and not met is only visible if the check is written down.
+  (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16; trigger re-checked 2026-08-17)
+  **Priority:** P3
 - **Nothing verifies the rule-extraction step that `CLAUDE.md` depends on.** The archive
   convention says a constraint is lifted into `CLAUDE.md` as its entry moves to
   `TODOS-DONE.md`, but that is judgment at archive time with no check behind it. A pass
@@ -739,7 +750,26 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   is ever closed.
   **The verification gap itself is untouched.** This pass extracted because a human
   remembered to; nothing would have failed if it had not, and that is still true for the
-  next one. (todos archive, 2026-08-14; second pass 2026-08-16) **Priority:** P3
+  next one.
+
+  **Third pass, 2026-08-17: one entry archived (#26), six rules lifted** — a whole
+  `## Reviewer scope and severity` section (what a reviewer BLOCKS is the remit that
+  matters; do not disclose an axis as unowned in the same run that scanned for it; the
+  rejected attribution check and why it stays rejected for a plugin other people install)
+  and three test rules (fixtures generated never committed; a silence-asserting suite needs
+  a trust check that runs first; `mktemp -d` failing under `set -uo pipefail` without `-e`
+  writes to an absolute `/fixtures` and succeeds silently as root). The sixth carries its own
+  exception, per the rule below it: **pin a blind spot as expected-silent only when this repo
+  owns the rule, never when the engine does** — `.mts`/`.cts` is deliberately unasserted
+  because a future semgrep fix would turn the suite red.
+  **What this pass adds to the finding: the extraction is not the only unverified half —
+  the CUT is too.** Nothing checks that `## Completed` is current before entries are moved,
+  and the check has now caught something **both times it has been run**: pass 2 found the
+  section stale by three merged PRs, pass 3 found it stale by two (#33 and #32, merged
+  2026-08-17 within 19 seconds of each other). Two for two is not a coincidence — the
+  section goes stale by construction, because the entry describing a PR can only be written
+  after that PR merges, and by then the branch that would have carried it is gone.
+  (todos archive, 2026-08-14; second pass 2026-08-16; third pass 2026-08-17) **Priority:** P3
 - **`CLAUDE.md` at the repo root ships to anyone who installs the plugin from this
   marketplace.** The plugin cache copies the repo, so the file lands beside
   `.claude-plugin/`. It is inert there — Claude Code loads `CLAUDE.md` from the cwd and
@@ -753,6 +783,77 @@ Only the five most recent are kept here — a sweep consults them to answer "did
 already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), including
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
+
+- **P3 ×4 + P4: four entries were closed by going and measuring them, and three of the four
+  measurements contradicted the entry.** Shipped 2026-08-17 as #33 (`8baee22`), docs and CI
+  config only — no executable code, no version bump (0.12.0 unchanged; the monotonic rule is
+  never-backward, not always-bump). `#32` (`11af421`, `actions/checkout` 4.4.0 → 7.0.1)
+  merged 19 seconds behind it.
+
+  **Dependabot stopped being an unverified automation.** The entry led with "configured but
+  has never been observed to run, and an unverified automation reads as coverage", and that
+  closed the same day it was written: #32 opened at 20:14 UTC, ~4 hours after
+  `.github/dependabot.yml` merged, and merged 2026-08-17. Service enabled, schedule fires
+  with nothing switched on in Settings, `actions` group name resolves. **The prediction the
+  entry recorded held exactly** — it said to expect a *major* bump needing reading rather
+  than merging on the tick, and a three-major jump arrived. The bounded-not-open claim was
+  confirmed from #32's own rollup rather than assumed: `suites`, `shell`, `monotonic` all
+  SUCCESS, four `sweep` entries correctly SKIPPED. **The lesson that outlives it: an
+  automation nobody has watched run is a claim, not a control**, and the check that settles
+  it is one glance at the PR list.
+
+  **The flake sweep ran clean and still does not settle its question.** `workflow_dispatch`
+  run `31970233140` on `master`: 25 runs, clean=25, `s7_fail_open=0`, `other_failures=0`,
+  `harness_rc=0`, at `FORGEWARD_S7_LOAD=4`. First in-CI measurement of the load-sensitivity
+  claim. Zero failures in 25 runs puts the 95% one-sided upper bound on the per-run flake
+  rate at **11.3%** — and an 11% flake on a required check is precisely the failure the entry
+  was opened to avoid, so **a clean sweep at n=25 is consistent with the outcome it was meant
+  to rule out**. 25 is the harness default, not the number that answers the question. Costed
+  the decisive version (n≈300 → 1.0%, ~2h of free runner time) and set the revisit trigger at
+  n≥100 with zero flakes, which `test.yml` accrues passively for nothing.
+
+  **The attribution entry undercounted its own scope, and sweeping is what showed it.** It
+  named "the three merged PR bodies", which reads as the complete set; the bylines were
+  stripped from #1/#2/#3 and re-read back from GitHub to confirm. Sweeping *every* PR, issue
+  and commit then found **14 commits on `master` carrying an AI co-author trailer and one
+  carrying a session permalink, out of 47** — invisible to an entry that only looked at PR
+  bodies. Deliberately not actioned: it means rewriting 15 commits and force-pushing a
+  **public** `master`, which is the owner's call. One apparent hit (#26) is a false positive —
+  prose *about* a rejected attribution check — and **that got demonstrated live**: the global
+  pre-PR hook blocked #33's own body, because the body quoted the byline while explaining it
+  had been removed. A substring match cannot distinguish the check from the thing checked
+  for. The prediction was paid within the hour of being written.
+
+  **The python3 entry overstated its own scope.** It called python3 "the only external tool
+  any script in this repo needs"; `test/rules-test.sh` needs `semgrep`, which degrades to a
+  loud `1..0 # SKIP` rather than failing — precisely why it read as not-a-dependency. **A
+  tool whose absence turns a suite green is still a dependency.** README now names both and
+  states the distinction most likely to mislead: hooks read JSON with `jq` *or* `python3` and
+  fail open, while `ci/check-version-monotonic.sh` requires it and fails closed.
+
+  **Two shipped files disagreed about a fact they shipped together.** `.github/dependabot.yml`
+  non-goal 3 said a version pinned inside a script does not exist here "today";
+  `.github/workflows/shellcheck.yml`, same release, pins `SHELLCHECK_VERSION` in `env:` and
+  downloads it in `run:` — and its own header states that limit from the other side. Also
+  "across three workflows" where four carry a `uses:` site. Both corrected with the original
+  wording quoted, so the correction is legible rather than silent.
+
+  **README's Validation section was stale in three places**, all found by re-running rather
+  than re-reading: "**Both** are framework-free" over **four** suites; `gate-test.sh` "(173
+  assertions)" against a measured **182**; and a sentence whose entire job was to say the
+  suite is "unchanged" carrying a count of 24. Counts now live in one place and the two
+  previously undocumented suites (version-check 51, rules 39) are described. **A number
+  nobody re-measures is a number that rots** — the one that existed only to say "unchanged"
+  is gone.
+
+  **Two cross-repo line citations into gstack became symbol references** and are labelled as
+  pointers into a repo this one neither controls nor can keep current. Both were verified
+  correct first: the claim was right, the citation *form* is what `CLAUDE.md` forbids. A
+  third apparent stale citation was deliberately left alone — it sits inside a `## Completed`
+  entry that is itself narrating that citation going stale, so it is quoted provenance, not a
+  live reference. And the wip-tag decision got the fact it turns on: `item2-wip-quote-stripping`
+  is local-only and `c7e56d0b` is not an ancestor of `origin/master`, so "keep it as an
+  archaeological record" was never the status quo — the status quo is *ephemeral*.
 
 - **P2 ×4 + P3 ×3: the suites reached CI, the quality axis stopped being claimed, and the
   open half was triaged for the first time.** 0.11.0 → 0.12.0, 2026-08-16. Three batches of
@@ -1006,90 +1107,3 @@ the non-goals and reversed decisions; the rules those produced are in
   surface absent — which is correct, and is also why nothing above was independently
   re-measured until the 0.10.1 branch, where the reviewer's own count corrected the
   permissions claim from a quantifier to a ratio.
-
-- **P2 + P3: three rules that lived as prose in a personal `CLAUDE.md` became gate checks.**
-  Shipped 2026-08-14 as #26 (`41324b0`), 0.9.3 → 0.10.0. Full reasoning in `DECISIONS.md`.
-  Prose only fires if the model happens to recall it, it rots silently, and it does nothing
-  at all for anyone else who installs the plugin.
-
-  **The SQL vault-secret bullet** (`agents/security-reviewer.md` Step 3) covers three shapes
-  that the generic Secrets bullet and Semgrep `p/secrets` both miss, because **none of them
-  looks like a high-entropy literal**: a credential in a plaintext config table; a secret
-  leaking into **derived storage at execution time** (`cron.schedule(..., format(...))`
-  baking a token into `cron.job.command`, structurally invisible to any diff scanner because
-  the migration text may hold only a *reference* that gets resolved); and a generic
-  `get_secret(name text)` `GRANT`ed to `authenticated`/`anon`, which turns the vault into a
-  lookup API so one broken-authz path reaches *every* secret.
-  **Must NOT fire on** non-secret configuration in exactly such a table — URLs, feature
-  flags, publishable/anon keys designed to be public — nor on a row holding a secret's
-  *name*, which is the pattern being recommended. **Cannot see** the live database, so a
-  credential inserted by hand in `psql` or by a seed outside the diff is invisible; and it
-  cannot tell whether the platform *has* a vault, so on a plain Postgres the remedy is
-  "encrypt at rest / move it out of SQL", not "use the vault".
-
-  **`rules/env-config.yml`**, a second bundled Semgrep pack, wired into Step 2 the way
-  `wp-security.yml` already was but deliberately **without `--error`**: (1) `??` as an
-  env-var fallback, which only falls back on `null`/`undefined`, so a blank-but-present
-  variable — the routine output of a secrets sync and of most CI secret injection — reaches
-  the consumer as `''` and the default is silently discarded (observed in production:
-  `process.env.POLAR_SERVER ?? 'sandbox'` produced `new URL('')` and took down a Vercel
-  build at page-data collection); and (2) an env-dependent SDK client at module scope, which
-  evaluates at import time and so fails the whole build rather than the one route that
-  needed the credential. **Noise-checked against a 237-file production codebase before
-  shipping**, which is what surfaced the real false-positive class: `?? ""` is behaviourally
-  identical to `|| ""` for a string-or-undefined value and was 8 of 16 hits. Excluded.
-
-  **The placement decision is the substantive part, and it was a real choice rather than a
-  formality** — neither rule is a security finding; both are build safety. Chosen: ship in
-  the security pack and report **every** finding at Low, tagged defense-in-depth. The reason
-  generalizes and is worth keeping: **what a reviewer BLOCKS is the remit that matters, not
-  what it prints.** Critical/High is the only bar that fails a gate, so pinning the pack at
-  Low widens the reporting surface and leaves the blocking surface bit-for-bit unchanged —
-  which answers "don't widen security's remit" structurally rather than by intention. The
-  rejected alternative — disclose `build-config` as an axis no installed tool owns — is
-  incoherent while the detection exists: announcing "nothing covers build-config" in the
-  same run that just scanned for it and found two is a worse lie than the silence it
-  replaces. Enforced in three places that are supposed to agree: the rule's
-  `metadata.forgeward-report-severity: low`, the pack header prose, and the Step 2
-  instruction to report at Low *regardless of what the JSON says*, with an explicit "do not
-  promote one because the consequence sounds severe".
-
-  **`test/rules-test.sh` — 39 assertions**, house style, wired into `npm test`, in three
-  classes: positives, negatives (every legitimate configuration the rules must not fire on),
-  and **blind spots pinned as silent**, so a future semgrep that closes one fails the suite
-  and forces the doc to be corrected rather than quietly becoming a lie. Fixtures are
-  generated into a scratch dir and **never committed** — a `.ts` fixture under `test/` would
-  itself be scanned by forgeward's gate on every later PR. A **trust check runs first**: a
-  fixture semgrep cannot parse turns every silence-assertion green, so a non-empty `errors`
-  array is a hard failure, not a warning. Not hypothetical — a fixture syntax error masked
-  results during development, and later a botched mutation truncated a file by 141 lines and
-  the check caught it. Skips loudly when semgrep is absent (`1..0 # SKIP`).
-
-  **The gate found a real bug in this branch's own tests, and it was fixed rather than
-  deferred.** Under `set -uo pipefail` without `-e`, a failing `mktemp -d` yields an empty
-  `$TMP`, so `$TMP/fixtures` becomes the **absolute** path `/fixtures` and the heredocs write
-  outside the sandbox the file's own header promises they stay inside. Unprivileged that
-  fails with `EACCES`; a root-run CI container has a writable `/` and it succeeds silently.
-  Medium never fails a gate — fixed anyway, because it was two lines and it contradicted the
-  file's own stated invariant. Verified by pointing `TMPDIR` at a nonexistent directory.
-
-  **Measured, not assumed.** Mutation testing (exact single-line deletions from the pack)
-  caught **5 of 6**; the sixth is genuinely redundant under semgrep 1.169, which normalises
-  function forms — that redundancy is now *recorded in the pack* rather than hidden by
-  deleting a line the engine might stop covering. It also caught a **wrong causal claim in a
-  shipped artifact**: rule 2's message attributed an IIFE blind spot to the arrow-function
-  exclusion specifically, when the function-scope exclusions cause it collectively.
-  Extension coverage, measured with byte-identical content: `.js .mjs .cjs .jsx .ts .tsx`
-  scan; **`.mts` and `.cts` do not** — zero findings *and* zero errors, so the miss looks
-  exactly like a clean file. Recorded in the pack header, and deliberately **not** pinned as
-  expected behaviour in the suite, since that assertion would go red the day a future
-  semgrep fixes it. Step 1's extension list gained `.mjs`/`.cjs`, previously dropped before
-  the pack could see them.
-
-  **Deliberately not done, both with revisit conditions rather than left silent:** not
-  vendored into `ci-gate` — advisory WARNINGs turning a required check red is exactly the
-  green-on-arrival failure `ci-gate`'s first core rule forbids; and **no AI-attribution /
-  `Co-Authored-By` check**, considered and rejected. `/gate` handing off to `/ship` is
-  structurally a perfect chokepoint, but forgeward is a plugin other people install and
-  plenty of them legitimately want a co-author trailer. If it is ever added it is an opt-in
-  config key defaulting to off — a separate decision.
