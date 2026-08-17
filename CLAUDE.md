@@ -120,6 +120,103 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **Version-field neutralization in `normalize_manifest` is per-manifest-path, never
   recursive.** A recursive strip removes `version` from dependency entries too, and the
   hash then stops noticing a dependency bump.
+- **A guard that `exit`s inside a command substitution does not stop the script — check
+  the status at the call site.** `snapshot_manifest`'s mode guard exits 1; each caller is
+  `part="$(snapshot_manifest …)"`, so the exit killed only the subshell and
+  `forgeward-diff-hash.sh` went on to print an ordinary-looking hash with status 0.
+  Observed, not reasoned: the guard's message appeared on stderr, a hash appeared on
+  stdout, and the script succeeded. `set -uo pipefail` does not catch it — there is no
+  `-e`. Every such call carries `|| exit 1`, and V10 pins it by injecting a bad mode into
+  a copy of the script and requiring no hash. **`-e` is NOT what this rejects, and saying
+  it was is the mistake to avoid repeating** — measured, `-e` halts this exact shape on
+  bash 5.1.16 and bash 5.3.15, and the `&&`-guarded lines survive it because a failing
+  left operand is exempt. Not dash: `set -uo pipefail` is fatal there, so the script never
+  runs and its non-zero status is `Illegal option`, not a halt — **a non-zero exit is not
+  evidence of the mechanism you are testing for.** `|| exit 1` wins on scope and locality,
+  not correctness, and the scope is **one line**: the unguarded
+  `diff_part="$(git diff …)"` assignment is the only statement whose behaviour changes
+  under `-e`. That is measured twice over, because it is a universal quantifier and this
+  bullet has already been wrong three times. `grep` over the file finds exactly one
+  unguarded assignment-from-substitution; the other four carry `|| exit 1` or `|| out=""`,
+  and every bare command sits behind a guard or is the final pipeline. An eight-case
+  failure battery (bad base, bad tip, dash-led base, non-repo cwd, no jq, no python3,
+  empty base, baseline) agrees: every divergent case halts at that one statement, and the
+  four non-divergent ones are byte-identical with and without `-e`. An earlier draft said
+  "every other command in the file" — the same universal-ahead-of-evidence shape the
+  bullet below it exists to warn about, committed inside the correction to it.
+  Swept `scripts/*.sh` and `ci/*.sh` when this was found — `hooks/` holds no shell, only
+  `hooks.json`. Functions that exit **directly**: `die`, `reject`, `deny`,
+  `snapshot_manifest`. Functions that exit **transitively**, by calling one of those:
+  `out_reject` and `_gl_target_guard` (→ `reject`), `require_blob` (→ `die`).
+  `snapshot_manifest` is the only one of those seven invoked inside a substitution; the
+  rest are called directly, from `case` arms or `||` guards. Checked the other direction
+  too — every function reached from inside a `$(…)` or `<(…)` was read, and
+  `snapshot_manifest` is the only one that can exit. Where another sits near an `exit`,
+  that `exit` is at **top level**, after the function body; that is the trap `check_root`
+  fell into.
+  **Deliberately no count of the substitution-invoked set appears above, and that is the
+  most useful thing in this bullet.** Four successive drafts asserted a closed census and
+  four were wrong: `check_root` misfiled as exit-bearing, `deny` missed entirely, the
+  transitive tier absent, and finally "thirteen" when the answer was fifteen. Each miss
+  had its own mechanism, which is why patching the number never held:
+    - a `sed` range ending at `/^}/` stops on the column-0 `}` of the JSON heredoc `deny`
+      emits, **truncating** before the `exit`;
+    - the same range **overruns** a one-liner definition into a genuinely later function,
+      sweeping that function's top-level `exit`s into the body. `warn` at
+      `forgeward-detect-base.sh:97` is the only instance in `scripts/`: the next column-0
+      `}` is at `:242`, so the range spans 146 lines;
+    - a **last** function in the file has nothing after it to terminate the range, so any
+      attributor that does not track the closing brace runs its body to EOF.
+      `check_root` is the last definition in `forgeward-detect-gstack-skill.sh`, closing
+      cleanly at `:127`; the `exit`s it was charged with are `check_root … && exit 0` at
+      `:146` — its own **call site** — and a bare `exit 1` at `:149`. `snap` is the same
+      shape twice over, at `forgeward-scan.sh:321` and
+      `forgeward-workspace-guard.sh:48` — last definition in each, no later column-0 `}`
+      at all, so the range runs to EOF and sweeps in whatever top-level `exit`s follow;
+    - matching `$(fn` finds only a substitution's **first** stage, so a function at the
+      tail of a pipe (`out="$(printf … | normalize_manifest …)"`, `read_version`) is
+      invisible;
+    - `grep` for `exit` counts the word in **comments** — `read_version` reads as
+      exit-bearing on a naive scan and is not.
+  All five are silent. **State the safety property and the method; do not assert a
+  closed count.** The property is what matters and it is stable: no function that can
+  `exit` is invoked inside a substitution except `snapshot_manifest`, which now checks
+  its status at the call site.
+  **This list itself shipped wrong three separate times, which is the point rather than
+  an embarrassment.** Its first version named `honor_cd` as a one-liner — it is four
+  lines at `forgeward-gate-check.sh:186-189` and has never been one — and it filed
+  `check_root` under the one-liner overrun, which cannot be its mechanism because
+  `check_root` closes at a column-0 brace like any other block. Its second version then
+  filed `snap` under that same overrun row, and `snap` is not that either: it is the
+  last definition in both its files with no later column-0 `}` anywhere, so it is the
+  EOF case, and removing it left `warn` as the row's only instance. So the table
+  explaining four wrong censuses has now been wrong three times on its own account, in
+  the same row twice. That is the reason the remedy is a property and a method, not a
+  better table: **prose describing a scan is a scan too, and nothing re-runs it.**
+  **Every figure below is quoted as the raw span `sed -n '/^fn()/,/^}/p' FILE | wc -l`
+  returns**, because two of these numbers previously used different conventions — one
+  counting the span, one counting the span minus the definition line — while being
+  presented as directly comparable. Quote the command with the number or the number is
+  not checkable.
+  **Non-goals, so the limits are not read as coverage:** this sweep is a snapshot,
+  nothing enforces it, and no test asserts it. It covers **12 of the 21 tracked shell
+  files** — the 11 in `scripts/` and the 1 in `ci/`. The 9 in `test/` and `live-test/`
+  are outside it, deliberately: a substitution-swallowed `exit` in a harness corrupts a
+  test result, not a marker, so it cannot produce a false PASS. That is a judgement about
+  blast radius, never a claim those files are clean — and spot-checking them reproduced
+  **three of the five mechanisms above**, one example each rather than three of one:
+  `denies`, `gl` and `_hook_path` in `gate-test.sh` are one-liners whose `/^}/` range
+  spans 63, 384 and 179 lines; `expansion:26` and `det:2169` both carry the word `exit`
+  in the comment `-> exit code` and read as exit-bearing to a naive `grep`; and
+  `rules-test.sh` closes on a last definition at `:204` with a top-level `exit 1` at
+  `:257`, which is the run-to-EOF case.
+  **`pre-push-test.sh` was cited alongside it for that third mechanism and did not
+  belong there** — `ppjq()` at `:144` is genuinely its last definition, but no executed
+  `exit` follows it anywhere: the file ends on the bare status of `[ "$FAIL" -eq 0 ]`,
+  and the three post-`:144` lines carrying the word are one comment and two `ok`/`nok`
+  message strings. It is a **fourth instance of the comment/string false positive**, not
+  an EOF case — the doc's own mechanism, misfiring inside the doc's own evidence for
+  that mechanism. Found by the round-7 security reviewer.
 - **"Is this gstack skill installed?" is answered by `forgeward-detect-gstack-skill.sh`,
   fail-closed — never by a prompt instruction.** Deferrals to a named gstack skill
   shipped unconditional once, and the axis silently went uncovered.

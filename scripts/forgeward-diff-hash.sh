@@ -92,6 +92,21 @@ tip="${2:-HEAD}"
 # repo — not just plugin repos. That is why this is its own release and not folded in
 # with anything else. V4 asserts the CURRENT bytes; it no longer claims markers survive.
 normalize_manifest() { # normalize_manifest <mode>   (json on stdin)
+  # AN UNRECOGNISED MODE IS RESOLVED ONCE, ABOVE THE INTERPRETER SPLIT. It used to be
+  # resolved inside each arm and the two disagreed: jq's `*) cat ;;` emitted the raw
+  # bytes, while the python3 arm had no default at all, so an unknown mode fell past
+  # both branches and still reached json.dumps -- canonicalized but NOT blanked. Same
+  # input, two different outputs, decided by which interpreter happened to be
+  # installed, which is the exact divergence the header above forbids in capitals.
+  # It was unreachable then and is unreachable now (every call site passes a literal),
+  # so this is not a behaviour fix -- it is a structural one: the question is asked in
+  # one place, so no future edit to one arm can answer it differently from the other.
+  # Raw passthrough is the right answer because it matches the no-tool `else` arm
+  # below: an unhandled manifest is hashed whole, so a version bump re-gates.
+  case "$1" in
+    top|plugins) : ;;
+    *) cat; return 0 ;;
+  esac
   if command -v jq >/dev/null 2>&1; then
     case "$1" in
       top)     jq -S -c -a '.version = "<<forgeward-gated>>"' 2>/dev/null ;;
@@ -100,8 +115,11 @@ normalize_manifest() { # normalize_manifest <mode>   (json on stdin)
                                            then .version = "<<forgeward-gated>>"
                                            else . end)
                       else . end' 2>/dev/null ;;
-      *)       cat ;;
     esac
+    # No `*)` arm here on purpose. The guard above already answered it, and a second
+    # answer sitting next to the first is how the two branches drifted apart in the
+    # first place -- an arm that looks load-bearing but is dead invites someone to
+    # "fix" the other branch to match it instead of deleting both.
   elif command -v python3 >/dev/null 2>&1; then
     python3 -I -c 'import json,sys
 try:
@@ -125,6 +143,21 @@ except Exception:
 # there, which is what keeps the payload byte-identical for repos without it.
 snapshot_manifest() { # snapshot_manifest <path> <mode>
   local raw out
+  # THE MODE IS VALIDATED HERE, NOT INSIDE normalize_manifest, because a die in there
+  # cannot be seen. The `2>/dev/null` below discards anything it writes to stderr, and
+  # the `|| out=""` plus the empty-check on the next line convert its exit status into
+  # raw passthrough -- byte-identical to the fallback and exactly as silent, so the
+  # die would be indistinguishable from the thing it was meant to warn about. A
+  # mistyped mode is a programming error, not a runtime condition: every call site
+  # below passes a literal. Failing loudly is therefore free at runtime and catches it
+  # at the moment someone adds a fourth manifest. If it somehow did fire in
+  # production the direction is still safe -- no hash, so the freshness check reads
+  # stale and the gate re-runs.
+  case "$2" in
+    top|plugins) : ;;
+    *) printf 'forgeward-diff-hash: unknown manifest mode "%s" for %s\n' "$2" "$1" >&2
+       exit 1 ;;
+  esac
   git cat-file -e "${tip}:${1}" 2>/dev/null || return 0
   raw="$(git show "${tip}:${1}" 2>/dev/null)"
   out="$(printf '%s' "$raw" | normalize_manifest "$2" 2>/dev/null)" || out=""
@@ -146,9 +179,55 @@ diff_part="$(git diff "${base}...${tip}" -- . \
   2>/dev/null)"
 
 # Part 2 — canonical snapshots at <tip>, version neutralized per manifest.
-pkg_part="$(snapshot_manifest package.json top)"
-plugin_part="$(snapshot_manifest .claude-plugin/plugin.json top)"
-market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)"
+#
+# `|| exit 1` ON EVERY CALL, and it is not decoration. snapshot_manifest's mode guard
+# ends in `exit 1`, but each call here is a command substitution, so that exit kills
+# only the SUBSHELL: without these the parent would print the guard's message to
+# stderr, assign an empty part, and go on to emit a perfectly ordinary-looking hash
+# with exit 0. Verified by running it that way before adding them -- the message
+# appeared, a hash was printed, and the script succeeded. `set -uo pipefail` does not
+# help here because there is no `-e`.
+#
+# AND `-e` IS NOT THE REASON, which is worth saying because the first version of this
+# comment said it was. It claimed `-e` "does not, reliably, across shells" catch an
+# assignment from a substitution. Measured instead of asserted: with `-e` set and these
+# suffixes removed, the script DID halt -- rc=1, no hash -- on bash 5.1.16 and bash
+# 5.3.15. The guarded-append lines below (`[ -n "$x" ] && payload=...`) also survive
+# `-e`, since a failing left operand of `&&` is exempt, and that exemption propagates
+# into a function called at that position. So `-e` would have worked on both shells
+# this script can actually run under, and anyone who reads this comment as a
+# correctness argument against it is being misled by it.
+#
+# NOT TESTED ON dash, AND IT CANNOT BE. `set -uo pipefail` at the top is fatal there --
+# dash has never supported `pipefail` and aborts with `Illegal option -o pipefail`
+# before reaching any of this. An earlier draft of this comment listed dash alongside
+# the two bash versions because its exit status was non-zero; that status was rc=2 from
+# the `set` line, not a halt at the guard. A non-zero exit is not evidence of the
+# mechanism you are testing for -- check WHY it is non-zero.
+#
+# The actual reason is scope and locality, and the scope is ONE line, not the file.
+# The only statement whose behaviour changes under `-e` is the unguarded
+# `diff_part="$(git diff ...)"` assignment in Part 1 -- with a bad base ref it is rc=0
+# and a printed hash today, rc=128 and no output under `-e`. Everything else either
+# already exits regardless (`base="${1:?...}"`), cannot fail, or is `-e`-exempt behind
+# a guard.
+#
+# That is a universal quantifier in a comment already wrong three times, so it is
+# measured twice rather than reasoned once. (1) Enumeration: exactly ONE unguarded
+# assignment-from-substitution exists in this file; the other four carry `|| exit 1`
+# or `|| out=""`. (2) A differential battery -- the whole script re-run with `-e`
+# under bad base ref, bad tip ref, dash-led base, non-repo cwd, missing jq, missing
+# python3, empty base, and the happy path. Four diverge, and all four halt at this
+# same statement; the other four are byte-identical with and without `-e`.
+#
+# One silently-changed statement is still a reason not to flip a file-wide option to
+# fix a three-line problem, but it is a much smaller reason than "every other command
+# in the file", which is what this said before.
+# `|| exit 1` checks the status where it is produced, is visible at the call site
+# rather than 130 lines up in a `set` line, and holds regardless of shell options.
+pkg_part="$(snapshot_manifest package.json top)" || exit 1
+plugin_part="$(snapshot_manifest .claude-plugin/plugin.json top)" || exit 1
+market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)" || exit 1
 
 # Assembled so that a repo with neither plugin manifest produces the EXACT bytes
 # this script produced before they were handled — same sections, same separators,
