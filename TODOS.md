@@ -271,7 +271,8 @@ did *not* close.
   failing loses provenance and reddens E10, while a stale E17 reddens nothing at all and
   quietly retires a security assertion. (0.9.0, 2026-08-06)
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
-  `[ -L ]`/`[ -f ]`/`[ -r ]` run at `forgeward-detect-environment.sh:97-99`, but `wc -c` and
+  The `[ -L ]` refusal and the `[ -f ]`/`[ -r ]` arm beside it run in
+  `forgeward-detect-environment.sh`'s config-reading block, but `wc -c` and
   `awk` read the file afterwards, so a process with concurrent write access to the checked-out
   tree could swap a regular file for a symlink inside that window. Raised by the 0.8.0 security
   review as informational and explicitly *not* filed as a finding: the attacker must already
@@ -350,8 +351,11 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 - **The review-ran check — warn-only, never blocking on a first version.** Gate on
   whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
   `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
-  standalone `/review` logs from `review/SKILL.md:1805` with no `via` key, while `/ship`
-  logs from `ship/sections/review-army.md:395` with `"via":"ship"`. Keying on
+  standalone `/review` reaches the `gstack-review-log` call in `review/SKILL.md` with no
+  `via` key, while `/ship` reaches the one in `ship/sections/review-army.md` with
+  `"via":"ship"`. Both re-verified 2026-08-16. These are **cross-repo** references into
+  gstack, which this repo neither controls nor can keep current, so grep for the
+  `gstack-review-log` invocation before acting on either. Keying on
   `via:"ship"` would fail exactly the people who ran `/review` correctly. Cannot block,
   because both call sites are model-executed prompt steps: a review that happened can
   leave no entry, which under-counts a measurement but manufactures false FAILs in an
@@ -386,7 +390,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   "skill emits the job on a never-touched case-2 repo and it goes green" in a
   single chain, which awaits a fresh case-2 repo; none exists in the fleet
   (nutriloop, the only hosted-public repo, was hand-tuned). Already disclosed in
-  `README.md:186`. Blocked externally, not by code. (PR #1, 2026-06-25; inherited
+  the *Gated e2e* row of `README.md`'s Validation table, with a pointer to it from the
+  ci-gate feature list. Blocked externally, not by code. (PR #1, 2026-06-25; inherited
   by `ci-gate` via `5d676ba`) **Priority:** P3
 
 - **`rules/env-config.yml` is deliberately NOT vendored into the CI security workflow.**
@@ -418,42 +423,57 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
-- **Local tag `item2-wip-quote-stripping`** preserves the third failed attempt at
-  the publish matcher (quote-stripping via bash extglob — correct but superlinear
-  in quote density, 63s on 3KB of quote-dense input). Superseded by the 0.7.1
-  awk-based design. Decide whether to keep it as an archaeological record or drop
-  it. (PR #8, 2026-08-01) **Priority:** P4
-- **Dependabot is configured but has never been observed to run, and an unverified
-  automation reads as coverage.** 0.12.0 settled the open half of the SHA-pin question —
-  `.github/dependabot.yml` takes the `github-actions` ecosystem, monthly, grouped, over the
-  manual `git ls-remote` alternative — but a config file in the tree is not evidence the
-  service is enabled for this repo, and the first proof either way is a PR that does or does
-  not arrive. Check after the first monthly window; if nothing comes, the setting lives in
-  the repo's Settings → Code security, not in the file. Two limits are stated in the config
-  header rather than here so they travel with it: it sees `uses:` in workflow files only (a
-  version pinned inside a script or a composite action is invisible to it), and a bump PR is
-  pushed server-side, so no forgeward gate and no local hook runs on it. That second one is
-  bounded rather than open: `test.yml` and `shellcheck.yml` are `pull_request`-triggered and
-  do run on a Dependabot PR server-side, and `version-check.yml` passes correctly (a
-  workflow-only bump touches no version field) — what is absent is the *local* gate and its
-  reviewers, not all checking.
-  **The single `*` group is safe today and will not stay that way.** `actions/checkout` is
-  the only third-party action in the repo and all four `uses:` sites carry a byte-identical
-  pin, so one group cannot conflate unrelated bumps. The day a second, unrelated action is
+- **Local tag `item2-wip-quote-stripping` is not an archive, and that is the fact the
+  decision turns on.** It preserves the third failed attempt at the publish matcher
+  (quote-stripping via bash extglob — correct but superlinear in quote density, 63s on 3KB
+  of quote-dense input), superseded by the 0.7.1 awk-based design. Measured 2026-08-16:
+  the tag is **local-only** (`git ls-remote --tags origin` returns nothing for it) and its
+  commit `c7e56d0b` is **not an ancestor of `origin/master`**, so it exists on exactly one
+  machine and a fresh clone has never had it. "Keep it as an archaeological record" is
+  therefore not the status quo — the status quo is *ephemeral*, and leaving it alone is
+  choosing that without saying so. Two real options: push the tag, which makes the record
+  durable and public, or drop it and accept that the prose above is the record. The
+  measurement (63s on 3KB) and the reason it lost are already written down here and in
+  `DECISIONS.md`; the tag adds the code, not the lesson. Deliberately not decided by an
+  agent — deleting the tag makes the commit unreachable and eventually collectable.
+  (PR #8, 2026-08-01; measured local-only 2026-08-16) **Priority:** P4
+- **Dependabot is observed running as of 2026-08-16, and the grouping is the one residual
+  left.** The "configured but never observed" half of this entry closed the same day it was
+  written: PR #32 opened at 20:14 UTC — `actions/checkout` 4.4.0 → 7.0.1, branch
+  `dependabot/github_actions/actions-7a5a078ad4` — roughly four hours after
+  `.github/dependabot.yml` merged. So the service is enabled for this repo, the schedule
+  fires without anything being switched on in Settings → Code security, and the `actions`
+  group name resolves. **The prediction this entry recorded held exactly**: it said to
+  expect "a **major** bump carrying real behaviour change, so it needs reading rather than
+  merging on the strength of the green tick", and a three-major jump is what arrived. It
+  was reviewed on the merits rather than on the tick, which is the only reason writing the
+  prediction down was worth anything.
+  **The bounded-not-open claim was also confirmed rather than assumed.** #32's own check
+  rollup: `suites`, `shell` and `monotonic` all SUCCESS, four `sweep` entries SKIPPED
+  (correct — `flake-sweep.yml` is dispatch/label-gated and must not fire per-PR). So a
+  Dependabot PR does get the three server-side workflows; what it does not get is the
+  *local* gate and its reviewers, which is what the config header says and now what the
+  evidence says.
+  **What is still open is the single `*` group.** `actions/checkout` is the only
+  third-party action in the repo and all four `uses:` sites carry a byte-identical pin, so
+  one group cannot conflate unrelated bumps *today*. The day a second, unrelated action is
   added, one PR starts carrying two independent supply-chain changes under one review —
   revisit the grouping at that point, not before. (Raised by the 0.12.0 gate's own
   supply-chain reviewer, which verified the pin resolves to the claimed tag by
   `git ls-remote` rather than trusting the trailing comment.)
-  **The pin is already three majors behind, so expect the first bump PR to be a major.**
-  Measured 2026-08-16: `11d5960a…` resolves to `v4`/`v4.4.0`, while `actions/checkout`
-  publishes `v3 v4 v5 v6 v7`. So this is not a hypothetical about future drift — the drift
-  has happened and nothing noticed for as long as the pin has been in the tree, which is
-  the concrete form of the "unverified automation reads as coverage" point above. Two
-  consequences for the check after the first monthly window: an *absent* PR is a stronger
-  signal that the service is off than it would be against a current pin, and an arriving
-  PR is a **major** bump carrying real behaviour change, so it needs reading rather than
-  merging on the strength of the green tick.
-  (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16) **Priority:** P3
+  **The staleness measurement stands and explains the size of the bump.** Measured
+  2026-08-16 before #32 arrived: `11d5960a…` resolves to `v4`/`v4.4.0` while
+  `actions/checkout` publishes `v3 v4 v5 v6 v7` — the drift had already happened and
+  nothing noticed for as long as the pin had been in the tree. That is the concrete form
+  of the "unverified automation reads as coverage" point this entry opened with, and it is
+  now retired by measurement rather than by assertion.
+  **The lesson that outlives the entry: an automation nobody has watched run is a claim,
+  not a control.** The check that settles it is cheap — one glance at the PR list — and it
+  is the same shape as the shellcheck pin's "an accepted cost that has never been paid is
+  a prediction, not a measurement", arrived at independently in the same release. Two
+  measurements of one idea in one release is a pattern worth keeping.
+  (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16; observed
+  running via PR #32, 2026-08-16) **Priority:** P4
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
   `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
@@ -467,20 +487,33 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   is wanted at all; the argument against is that these three files change perhaps twice a
   release and a bad one is caught the first time the plugin is installed.
   (security review round 3, 2026-08-07; re-scoped after round 4, 2026-08-07) **Priority:** P3
-- **`ci/check-version-monotonic.sh` now requires `python3`, and that obligation is documented
-  in exactly one place — its own header.** It is the only external tool any script in this repo
-  needs, and it is deliberate (see `DECISIONS.md`: stdlib `json` only, one arm, no `jq`
-  fallback, because two readers of the same JSON that can disagree is the diff-hash divergence
-  bug rebuilt on purpose). The check fails closed with a named message when it is absent, so
-  nothing silently skips. What is *not* settled: `README.md` and `CONTRIBUTING`-equivalent docs
-  do not mention it, so a contributor running `npm test` on a python-less box gets a clear
-  failure from the check and no prior warning. Also worth deciding once rather than per-script:
-  whether python3 is now an accepted repo-wide dependency for **CI-only** code while
-  user-machine scripts stay tool-free — that split is the actual rule being followed, and it is
-  currently implicit. Round 6 narrowed the dependency slightly: the call is now `python3 -I`, so
-  the floor is Python 3.4 (2014). An interpreter too old to accept the flag fails closed with
-  its own error plus `returned no usable answer` — verified against a PATH shim that rejects
-  `-I`, not assumed. (CI version check rounds 4 and 6, 2026-08-07) **Priority:** P3
+- **The `python3` obligation is in README now; what is still unwritten is the rule behind
+  it.** `ci/check-version-monotonic.sh` reads the three manifests with the stdlib `json`
+  module and has no `jq` fallback, deliberately (see `DECISIONS.md`: one arm, because two
+  readers of the same JSON that can disagree is the diff-hash divergence bug rebuilt on
+  purpose). It fails closed with a named message when python3 is absent, so nothing silently
+  skips.
+  **The docs half is done** (2026-08-16). README's Validation section states the requirement,
+  and states it against the thing most likely to be confused with it: the *hooks* read JSON
+  with `jq` **or** `python3` and fail open when neither exists, so README previously mentioned
+  python3 only in its optional role — which for a reader working out whether they need it is
+  worse than saying nothing.
+  **A second overreach was corrected on the way out.** This entry used to claim python3 was
+  "the only external tool any script in this repo needs". `test/rules-test.sh` needs
+  `semgrep`; it degrades to a loud `1..0 # SKIP` rather than failing, which is precisely why
+  it read as "not a dependency". A tool whose absence turns a suite green is still a
+  dependency, and README now names it as one.
+  **What is open is the rule, not the doc.** The split actually being followed is *posture*,
+  not location: user-machine scripts treat `python3` as **optional** and fail open, CI-only
+  code treats it as **required** and fails closed. That is defensible in both directions — a
+  hook that wedges the session is worse than one that under-enforces, and a CI check that
+  silently skips is worse than one that goes red — but it is written down nowhere, so the
+  next script to reach for an interpreter picks a posture by accident. It belongs in
+  `CLAUDE.md` the moment a second script forces the question.
+  Round 6 narrowed the dependency: the call is `python3 -I`, so the floor is Python 3.4
+  (2014). An interpreter too old to accept the flag fails closed with its own error plus
+  `returned no usable answer` — verified against a PATH shim that rejects `-I`, not assumed.
+  (CI version check rounds 4 and 6, 2026-08-07; README half done 2026-08-16) **Priority:** P3
 - **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
   investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
   ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
@@ -620,18 +653,52 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `master`. The roster this entry carried was also wrong and is corrected here: **four**
   suites, not three — gate **182** (not 171), pre-push 15, version-check 51, rules 39,
   re-counted 2026-08-16 from a live `npm test`.
-  **What is not closed:** a green tick from `test.yml` is evidence the suites pass *once* on
-  a shared runner, and nothing more — it is explicitly not evidence of non-flakiness, which
-  is why the workflow header says not to make it a required check yet. That question belongs
-  to `.github/workflows/flake-sweep.yml` (dispatch- or `flake-sweep`-label-triggered, default
-  25 runs at load 4), **which has not been run yet** — so as of 0.12.0 the load-sensitivity
-  claim is still unmeasured *in CI*, exactly as it was before, and only the measuring
-  instrument is new. Run the sweep, record the numbers here, then decide about required-check
-  status. (CI version check, 2026-08-06; suites wired in 0.12.0, 2026-08-16) **Priority:** P3
-- **The three merged PR bodies #1, #2 and #3 carry a `🤖 Generated with Claude Code`
-  byline.** Cosmetic and historical; noted only so it is a deliberate choice to
-  leave them rather than an oversight. Newer PRs do not carry it.
-  (observed 2026-08-03) **Priority:** P4
+  **The sweep has now been run** — `workflow_dispatch` run `31970233140` on `master`,
+  2026-08-16: **25 runs, clean=25, `s7_fail_open=0`, `other_failures=0`, `harness_rc=0`**, at
+  `FORGEWARD_S7_LOAD=4` on a runner reporting a 1-minute load average of 0.24 at start, ~24s
+  per run, ~10 minutes wall clock. Separately `test.yml` has 4 runs of its own, all success.
+  So the load-sensitivity claim is measured *in CI* for the first time, and nothing flaked.
+  **That is still not enough to make it required, and the arithmetic is why.** Zero failures
+  in 25 runs puts the 95% one-sided upper bound on the per-run flake rate at **11.3%**; the
+  harness says the same thing from the other end, that an 8% flake survives 25 clean runs
+  with probability 0.92²⁵ ≈ **12%**. An 11% flake on a required check is exactly the failure
+  this entry was opened to avoid — so a clean sweep at n=25 is *consistent with* the outcome
+  it was meant to rule out. 25 is the harness's default, not the number that answers this
+  question, and it would have been easy to read the green as the answer.
+  **What would settle it, costed.** The bound tightens as 1 − 0.05^(1/n): n=50 → 5.8%,
+  n=100 → 3.0%, **n≈300 → 1.0%**. At ~24s a run that is about two hours of runner time, and
+  this repo is public, so Actions minutes are free — a decisive answer is purchasable, not
+  merely desirable. The cheaper route is passive: `test.yml` already runs on every PR and
+  every push to `master`, so its own history accrues the same evidence for nothing. Revisit
+  when that history reaches **n≥100 with zero flakes**, or dispatch `flake-sweep.yml` with a
+  larger run count if the answer is wanted sooner. Until then `test.yml` stays advisory and
+  its header keeps saying why. (CI version check, 2026-08-06; suites wired in 0.12.0,
+  2026-08-16; swept clean at n=25, 2026-08-16) **Priority:** P3
+- **The three PR bodies are stripped; the git history is not, and it was never counted.**
+  PR bodies #1, #2 and #3 carried a `🤖 Generated with Claude Code` byline; all three were
+  edited on 2026-08-16 and re-read back from GitHub to confirm zero matches. The diffs were
+  checked first and removed exactly the byline plus its preceding blank line, nothing else.
+  **The entry's own scope was wrong, and sweeping is what showed it.** It said "the three
+  merged PR bodies", which read as the complete set. Sweeping every PR, every issue and
+  every commit instead found: no issues affected, no other PR body affected — and **14
+  commits on `master` carrying `Co-Authored-By: Claude` plus 1 carrying a `Claude-Session:`
+  permalink, out of 47**. Those were invisible to an entry that only ever looked at PR
+  bodies. (One apparent hit, PR #26, is a false positive: the match is prose *about* an
+  AI-attribution check that was considered and rejected, not a byline. A grep for this
+  cannot tell the two apart, which is worth knowing before anyone automates it — and this
+  is not hypothetical. The global pre-PR attribution hook **blocked this very PR**, because
+  the body quoted the byline while describing having removed it. A substring match cannot
+  distinguish the check from the thing checked for, so the body had to be reworded to
+  describe the byline without reproducing it. The prediction in the sentence above was paid
+  within the hour of being written, which is the same lesson the shellcheck pin taught.)
+  **The history half is deliberately not actioned, and it is not a P4.** Removing those
+  trailers means rewriting 15 commits and force-pushing `master` on a **public** repo:
+  every SHA downstream of the first rewritten commit changes, existing clones diverge, and
+  merged PRs' commit links rot. That is a destructive, outward-facing, one-way operation and
+  it is the repo owner's call, not something to fold into a docs PR. The alternatives are to
+  accept the history as-is (it is already published) or to rewrite deliberately with the
+  cost understood. Recorded rather than decided.
+  (observed 2026-08-03; PR bodies stripped and history measured 2026-08-16) **Priority:** P3
 
 ## Docs hygiene
 
