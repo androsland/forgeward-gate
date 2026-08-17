@@ -141,12 +141,20 @@ write-once and effectively gone after merge, which is why they live here now.
   is unreachable today and the fail direction on every reachable path is re-gate, never a
   false PASS. It goes live the moment someone adds a fourth manifest and mistypes the
   mode — and the failure would be a marker that reads fresh on one machine and stale on
-  another, which is the symptom the header says took a release of its own to fix. Cheapest
-  close is a `*)` arm in the python3 branch that mirrors `cat` (write `sys.stdin.buffer`
-  through untouched), or an explicit die on an unrecognised mode; the second is better,
-  because a silent passthrough on a typo'd mode means the version field is never blanked
-  and every bump re-gates for a reason nobody can see. Not fixed in this PR: the branch is
-  docs-only and a change to executable behaviour does not ride along with prose.
+  another, which is the symptom the header says took a release of its own to fix.
+  **Aligning the two arms is the fix; where the alignment is enforced is the part that is
+  easy to get wrong.** Mirroring `cat` in the python3 branch (write `sys.stdin.buffer`
+  through untouched) closes the divergence. Adding an explicit die on an unrecognised mode
+  *inside* `normalize_manifest` does not do more than that, and the first draft of this
+  entry claimed it did: `snapshot_manifest` swallows the die twice — the `2>/dev/null` at
+  `:130` discards whatever it writes to stderr, and `|| out=""` followed by
+  `[ -z "$out" ] && out="$raw"` at `:131` converts the non-zero status into raw
+  passthrough, which is **byte-identical to the mirrored-`cat` option and exactly as
+  silent**. For a die to be visible it has to be checked before that fallback — validate
+  the mode in `snapshot_manifest` ahead of `:130`, or at the top-level caller — or the
+  `2>/dev/null` has to be narrowed so a mode error survives while parse noise stays
+  suppressed. Not fixed in this PR: the branch is docs-only and a change to executable
+  behaviour does not ride along with prose.
   (security review, archive pass 3 branch, 2026-08-17) **Priority:** P3
 
 ## Reviewers

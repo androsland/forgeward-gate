@@ -50,11 +50,21 @@ commit that was fixing it — a line number cannot survive its own fix.
   *not* take the dependency, so a text match overcounts the surface by 50%. Run that grep
   **unscoped** and it returns **19**, and the surplus 13 is not what it sounds like: **zero**
   reviewer prompts mention `python3`, seven docs/config files discuss it, and six `test/`
-  harnesses match — of which **five genuinely invoke it** and only `denies-race-probe.sh`
-  merely names it in a comment. So the unscoped count is not "shipped scripts plus chatter":
-  it hides real call sites in `test/` behind files that only talk. The pathspec is what
-  confines the count to *shipped* scripts, and quoting the command without it is the same
-  error the bullet is about. And the third posture is narrower than it looks — but not
+  harnesses match — of which **four genuinely invoke it**, `denies-race-probe.sh` names it
+  in a comment, and `s7-flake-loop.sh:67` only runs `command -v python3` in a diagnostic
+  line. So the unscoped count is not "shipped scripts plus chatter": it hides real call
+  sites in `test/` behind files that only talk, and it flattens a **third** category —
+  a PATH probe that never executes the interpreter, which is the same shape
+  `forgeward-gate-check.sh:38` and `forgeward-pre-push.sh:46` use, except that there the
+  probe sits beside a real invocation and in `s7-flake-loop.sh` it is all there is. The
+  pathspec is what confines the count to *shipped* scripts, and quoting the command without
+  it is the same error the bullet is about.
+  **This paragraph got its own count wrong three times before it was run** — six-unscoped,
+  then five-invoke, each asserted from a `grep -c` that a reviewer had to correct. That is
+  not an embarrassing aside, it is the strongest evidence the bullet has: the failure mode
+  is not "someone else greps carelessly", it is that *counting matches is not counting
+  behaviour*, and the person writing the warning is as exposed to it as the person reading
+  it. And the third posture is narrower than it looks — but not
   as narrow as it first reads. `cat` at `normalize_manifest`'s `else` arm is reached only
   when `jq` **and** `python3` are both absent, which is the same condition under which the
   two hooks have already exited 0, so on that box enforcement is off regardless and the
