@@ -26,6 +26,31 @@ commit that was fixing it — a line number cannot survive its own fix.
   not hardening: A26 demonstrates an `-I`-stripped hook **allowing** a publish it
   should deny, and the shadowing file arrives with the branch you cloned to review —
   Python imports a file, not an index, so no write access to the checkout is needed.
+- **An interpreter dependency's posture is decided by WHO RUNS THE SCRIPT, not by what the
+  script does.** All four `python3` call sites read JSON, and they fail in three different
+  directions on purpose:
+  - **CI-only code requires it and fails CLOSED.** `ci/check-version-monotonic.sh` dies with
+    a named message (`python3 is required to read the manifests…`). A CI check that silently
+    skips is worse than one that goes red, and `ubuntu-latest` ships python3, so the
+    requirement costs nothing it does not buy.
+  - **User-machine hooks treat it as optional and fail OPEN.** `forgeward-gate-check.sh` and
+    `forgeward-pre-push.sh` each `exit 0` when neither `jq` nor `python3` is present, the
+    pre-push one saying so on stderr. A hook that wedges the session is worse than one that
+    under-enforces — and the server-side `ci-gate` is the boundary that does not depend on
+    what is installed on a laptop.
+  - **A helper on the gating path fails toward RE-GATING, never toward a false PASS.**
+    `forgeward-diff-hash.sh`'s `normalize_manifest` falls through to `cat`, so the version
+    field is never neutralized, the hash differs, and the marker reads stale. More gating,
+    not less. Any new arm here inherits that obligation.
+
+  **Two things this rule must not be read as claiming.** `git grep -l python3` finds **six**
+  tracked scripts and only **four** call it — `forgeward-detect-environment.sh` and
+  `forgeward-write-marker.sh` mention it in comments explaining why they deliberately do
+  *not* take the dependency, so a text match overcounts the surface by 50%. And the third
+  posture is narrower than it looks: `cat` is reached only when `jq` **and** `python3` are
+  both absent, which is the same condition under which the two hooks have already exited 0 —
+  so on that box enforcement is off regardless, and the re-gate direction is what protects
+  the marker afterwards rather than a live control at the time.
 - **`export LC_ALL=C` at the top of every tracked `*.sh` outside `test/`, and never a
   second locale mechanism beside it.** Both inline `LC_ALL=` prefixes were deleted when
   the script-wide pin landed, not kept — the two forms are not equivalent (`local` is

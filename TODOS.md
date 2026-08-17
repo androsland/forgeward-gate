@@ -506,17 +506,33 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `semgrep`; it degrades to a loud `1..0 # SKIP` rather than failing, which is precisely why
   it read as "not a dependency". A tool whose absence turns a suite green is still a
   dependency, and README now names it as one.
-  **What is open is the rule, not the doc.** The split actually being followed is *posture*,
-  not location: user-machine scripts treat `python3` as **optional** and fail open, CI-only
-  code treats it as **required** and fails closed. That is defensible in both directions — a
-  hook that wedges the session is worse than one that under-enforces, and a CI check that
-  silently skips is worse than one that goes red — but it is written down nowhere, so the
-  next script to reach for an interpreter picks a posture by accident. It belongs in
-  `CLAUDE.md` the moment a second script forces the question.
+  **The rule is now written down too (2026-08-17) — and enumerating the call sites to write
+  it showed the framing in this entry was wrong in two ways.** It said the split is *posture,
+  not location*: user-machine optional/fail-open, CI-only required/fail-closed. That is a
+  two-way split, and there are **three** postures.
+  1. **CI-only, required, fail-CLOSED** — `ci/check-version-monotonic.sh` dies by name.
+  2. **User-machine hook, optional, fail-OPEN** — `forgeward-gate-check.sh` and
+     `forgeward-pre-push.sh` both `exit 0` when neither `jq` nor `python3` is present.
+  3. **Helper on the gating path, optional, fails toward RE-GATING** —
+     `forgeward-diff-hash.sh`'s `normalize_manifest` falls through to `cat`, so the version
+     field is never neutralized, the hash differs, and the marker reads stale. The missing
+     one from the old framing, and the one that matters most, because it is the arm sitting
+     on the authorization path rather than beside it.
+
+  **And the surface is smaller than a grep says.** `git grep -l python3` returns **six**
+  tracked scripts; only **four** call it. `forgeward-detect-environment.sh` and
+  `forgeward-write-marker.sh` mention it purely in comments explaining why they deliberately
+  do *not* take the dependency — so the text match overcounts by 50%, which is the same
+  *text tools do not parse structure* class already in `CLAUDE.md`, arrived at from the
+  outside this time. Posture 3 also has a narrower reach than it first appears: `cat` is
+  reached only when `jq` **and** `python3` are both absent, which is exactly the condition
+  under which the two hooks have already exited 0. Both limits are written into the rule as
+  stated non-goals rather than left for the next reader to rediscover.
   Round 6 narrowed the dependency: the call is `python3 -I`, so the floor is Python 3.4
   (2014). An interpreter too old to accept the flag fails closed with its own error plus
   `returned no usable answer` — verified against a PATH shim that rejects `-I`, not assumed.
-  (CI version check rounds 4 and 6, 2026-08-07; README half done 2026-08-16) **Priority:** P3
+  (CI version check rounds 4 and 6, 2026-08-07; README half done 2026-08-16; rule written
+  down and the split corrected 2026-08-17) **Priority:** — done
 - **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
   investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
   ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
