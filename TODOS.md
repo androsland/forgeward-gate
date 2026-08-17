@@ -143,8 +143,15 @@ write-once and effectively gone after merge, which is why they live here now.
   mode — and the failure would be a marker that reads fresh on one machine and stale on
   another, which is the symptom the header says took a release of its own to fix.
   **Aligning the two arms is the fix; where the alignment is enforced is the part that is
-  easy to get wrong.** Mirroring `cat` in the python3 branch (write `sys.stdin.buffer`
-  through untouched) closes the divergence. Adding an explicit die on an unrecognised mode
+  easy to get wrong.** Mirroring `cat` in the python3 branch closes the divergence — but
+  **the mode has to be tested before `json.load`, not at the `if`/`elif` chain where the
+  modes are currently handled.** `json.load(sys.stdin)` at `:108` drains stdin before that
+  chain runs, so a `*)`-equivalent added alongside the existing branches — the natural
+  reading of "mirror `cat` in the python3 arm" — reads an already-consumed stdin and writes
+  nothing. It would *look* like it worked, because `:131` rescues the empty result back to
+  `$raw`, which means the mirror would silently depend on the very fallback this entry
+  exists to say is not a control. Test the mode first, write `sys.stdin.buffer.read()`
+  straight out. Adding an explicit die on an unrecognised mode
   *inside* `normalize_manifest` does not do more than that, and the first draft of this
   entry claimed it did: `snapshot_manifest` swallows the die twice — the `2>/dev/null` at
   `:130` discards whatever it writes to stderr, and `|| out=""` followed by

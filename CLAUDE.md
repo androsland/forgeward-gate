@@ -59,8 +59,10 @@ commit that was fixing it — a line number cannot survive its own fix.
   probe sits beside a real invocation and in `s7-flake-loop.sh` it is all there is. The
   pathspec is what confines the count to *shipped* scripts, and quoting the command without
   it is the same error the bullet is about.
-  **This paragraph got its own count wrong three times before it was run** — six-unscoped,
-  then five-invoke, each asserted from a `grep -c` that a reviewer had to correct. That is
+  **This paragraph was wrong three times before it was run** — first the unscoped six, then
+  a wrong account of what the surplus 13 actually was, then five-invoke where it is four.
+  Only the first and third were miscounts; the middle one paired a correct number with an
+  invented reason, which is the same defect wearing a number that checks out. That is
   not an embarrassing aside, it is the strongest evidence the bullet has: the failure mode
   is not "someone else greps carelessly", it is that *counting matches is not counting
   behaviour*, and the person writing the warning is as exposed to it as the person reading
