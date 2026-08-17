@@ -27,8 +27,9 @@ commit that was fixing it — a line number cannot survive its own fix.
   should deny, and the shadowing file arrives with the branch you cloned to review —
   Python imports a file, not an index, so no write access to the checkout is needed.
 - **An interpreter dependency's posture is decided by WHO RUNS THE SCRIPT, not by what the
-  script does.** All four `python3` call sites read JSON, and they fail in three different
-  directions on purpose:
+  script does.** All four scripts that call `python3` read JSON, and they fail in three
+  different directions on purpose. (Four *scripts*, five *invocations* — the `-I` bullet
+  above counts the latter, and `forgeward-gate-check.sh` holds two of them.)
   - **CI-only code requires it and fails CLOSED.** `ci/check-version-monotonic.sh` dies with
     a named message (`python3 is required to read the manifests…`). A CI check that silently
     skips is worse than one that goes red, and `ubuntu-latest` ships python3, so the
@@ -43,14 +44,22 @@ commit that was fixing it — a line number cannot survive its own fix.
     field is never neutralized, the hash differs, and the marker reads stale. More gating,
     not less. Any new arm here inherits that obligation.
 
-  **Two things this rule must not be read as claiming.** `git grep -l python3` finds **six**
-  tracked scripts and only **four** call it — `forgeward-detect-environment.sh` and
-  `forgeward-write-marker.sh` mention it in comments explaining why they deliberately do
-  *not* take the dependency, so a text match overcounts the surface by 50%. And the third
-  posture is narrower than it looks: `cat` is reached only when `jq` **and** `python3` are
-  both absent, which is the same condition under which the two hooks have already exited 0 —
-  so on that box enforcement is off regardless, and the re-gate direction is what protects
-  the marker afterwards rather than a live control at the time.
+  **Two things this rule must not be read as claiming.** `git grep -l python3 -- 'scripts/*.sh'
+  'ci/*.sh'` finds **six** scripts and only **four** call it — `forgeward-detect-environment.sh`
+  and `forgeward-write-marker.sh` mention it in comments explaining why they deliberately do
+  *not* take the dependency, so a text match overcounts the surface by 50%. Run that grep
+  **unscoped** and it returns **19**, because this file and the reviewer prompts discuss the
+  dependency too; the pathspec is load-bearing, and quoting the command without it is the
+  same error the bullet is about. And the third posture is narrower than it looks — but not
+  as narrow as it first reads. `cat` at `normalize_manifest`'s `else` arm is reached only
+  when `jq` **and** `python3` are both absent, which is the same condition under which the
+  two hooks have already exited 0, so on that box enforcement is off regardless and the
+  re-gate direction protects the marker *afterwards* rather than acting as a live control.
+  The raw-passthrough **posture** reaches further than that branch does: `snapshot_manifest`
+  falls back to `$raw` on any parse failure (`|| out=""`, then `[ -z "$out" ] && out="$raw"`),
+  which fires with `jq` installed-but-broken or a malformed manifest — a box where neither
+  hook has bailed and enforcement *is* live. The direction is unchanged, because raw bytes
+  still carry the version field and so a bump re-gates; only the reach is wider.
 - **`export LC_ALL=C` at the top of every tracked `*.sh` outside `test/`, and never a
   second locale mechanism beside it.** Both inline `LC_ALL=` prefixes were deleted when
   the script-wide pin landed, not kept — the two forms are not equivalent (`local` is

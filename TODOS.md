@@ -785,6 +785,27 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   2026-08-17 within 19 seconds of each other). Two for two is not a coincidence — the
   section goes stale by construction, because the entry describing a PR can only be written
   after that PR merges, and by then the branch that would have carried it is gone.
+  **And this pass finally put a verifier on the extraction — the result was the opposite
+  of the one the entry predicts.** The gate fired `security-reviewer` on the docs-only diff
+  with a docs-accuracy remit: check the new `CLAUDE.md` claims against the code rather than
+  reading them. It returned PASS with three Low findings, and **all three were in the
+  freshly-authored python3 bullet; zero were in the six extracted rules**, which it verified
+  against `rules/env-config.yml`, `agents/security-reviewer.md` and `test/rules-test.sh` and
+  found correct. That is a real distinction and it should change where the worry goes:
+  extraction *copies prose that was already checked when the entry was written*, so it
+  inherits that verification; writing a rule fresh from a live enumeration does not, and
+  fresh authorship is where the defects entered. The three: a printed `git grep -l python3`
+  that returns **19** unscoped where the claim needs the `-- 'scripts/*.sh' 'ci/*.sh'`
+  pathspec to return six (in the bullet whose whole point is that text matches overcount);
+  a stated non-goal that named only the toolless-box reach of the raw-passthrough posture
+  and missed `snapshot_manifest`'s parse-failure fallback, which fires with `jq` live and
+  both hooks un-bailed; and "four call sites" four lines under "five shipped sites", where
+  one counts scripts and the other invocations. All three fixed before the marker was
+  written. **The load-bearing claim held** — the reviewer independently traced
+  `normalize_manifest` → `snapshot_manifest` → `is_fresh` and confirmed the degraded arm
+  cannot produce a false PASS, for a stronger reason than the prose gave: `cat` is the
+  identity on the manifest bytes, so it partitions manifest states more finely than the
+  `jq` arm and cannot conflate two the canonical path would separate.
   (todos archive, 2026-08-14; second pass 2026-08-16; third pass 2026-08-17) **Priority:** P3
 - **`CLAUDE.md` at the repo root ships to anyone who installs the plugin from this
   marketplace.** The plugin cache copies the repo, so the file lands beside
