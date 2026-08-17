@@ -26,6 +26,56 @@ commit that was fixing it — a line number cannot survive its own fix.
   not hardening: A26 demonstrates an `-I`-stripped hook **allowing** a publish it
   should deny, and the shadowing file arrives with the branch you cloned to review —
   Python imports a file, not an index, so no write access to the checkout is needed.
+- **An interpreter dependency's posture is decided by WHO RUNS THE SCRIPT, not by what the
+  script does.** All four scripts that call `python3` read JSON, and they fail in three
+  different directions on purpose. (Four *scripts*, five *invocations* — the `-I` bullet
+  above counts the latter, and `forgeward-gate-check.sh` holds two of them.)
+  - **CI-only code requires it and fails CLOSED.** `ci/check-version-monotonic.sh` dies with
+    a named message (`python3 is required to read the manifests…`). A CI check that silently
+    skips is worse than one that goes red, and `ubuntu-latest` ships python3, so the
+    requirement costs nothing it does not buy.
+  - **User-machine hooks treat it as optional and fail OPEN.** `forgeward-gate-check.sh` and
+    `forgeward-pre-push.sh` each `exit 0` when neither `jq` nor `python3` is present, the
+    pre-push one saying so on stderr. A hook that wedges the session is worse than one that
+    under-enforces — and the server-side `ci-gate` is the boundary that does not depend on
+    what is installed on a laptop.
+  - **A helper on the gating path fails toward RE-GATING, never toward a false PASS.**
+    `forgeward-diff-hash.sh`'s `normalize_manifest` falls through to `cat`, so the version
+    field is never neutralized, the hash differs, and the marker reads stale. More gating,
+    not less. Any new arm here inherits that obligation.
+
+  **Two things this rule must not be read as claiming.** `git grep -l python3 -- 'scripts/*.sh'
+  'ci/*.sh'` finds **six** scripts and only **four** call it — `forgeward-detect-environment.sh`
+  and `forgeward-write-marker.sh` mention it in comments explaining why they deliberately do
+  *not* take the dependency, so a text match overcounts the surface by 50%. Run that grep
+  **unscoped** and it returns **19**, and the surplus 13 is not what it sounds like: **zero**
+  reviewer prompts mention `python3`, seven docs/config files discuss it, and six `test/`
+  harnesses match — of which **four genuinely invoke it**, `denies-race-probe.sh` names it
+  in a comment, and `s7-flake-loop.sh:67` only runs `command -v python3` in a diagnostic
+  line. So the unscoped count is not "shipped scripts plus chatter": it hides real call
+  sites in `test/` behind files that only talk, and it flattens a **third** category —
+  a PATH probe that never executes the interpreter, which is the same shape
+  `forgeward-gate-check.sh:38` and `forgeward-pre-push.sh:46` use, except that there the
+  probe sits beside a real invocation and in `s7-flake-loop.sh` it is all there is. The
+  pathspec is what confines the count to *shipped* scripts, and quoting the command without
+  it is the same error the bullet is about.
+  **This paragraph was wrong three times before it was run** — first the unscoped six, then
+  a wrong account of what the surplus 13 actually was, then five-invoke where it is four.
+  Only the first and third were miscounts; the middle one paired a correct number with an
+  invented reason, which is the same defect wearing a number that checks out. That is
+  not an embarrassing aside, it is the strongest evidence the bullet has: the failure mode
+  is not "someone else greps carelessly", it is that *counting matches is not counting
+  behaviour*, and the person writing the warning is as exposed to it as the person reading
+  it. And the third posture is narrower than it looks — but not
+  as narrow as it first reads. `cat` at `normalize_manifest`'s `else` arm is reached only
+  when `jq` **and** `python3` are both absent, which is the same condition under which the
+  two hooks have already exited 0, so on that box enforcement is off regardless and the
+  re-gate direction protects the marker *afterwards* rather than acting as a live control.
+  The raw-passthrough **posture** reaches further than that branch does: `snapshot_manifest`
+  falls back to `$raw` on any parse failure (`|| out=""`, then `[ -z "$out" ] && out="$raw"`),
+  which fires with `jq` installed-but-broken or a malformed manifest — a box where neither
+  hook has bailed and enforcement *is* live. The direction is unchanged, because raw bytes
+  still carry the version field and so a bump re-gates; only the reach is wider.
 - **`export LC_ALL=C` at the top of every tracked `*.sh` outside `test/`, and never a
   second locale mechanism beside it.** Both inline `LC_ALL=` prefixes were deleted when
   the script-wide pin landed, not kept — the two forms are not equivalent (`local` is
@@ -94,8 +144,50 @@ commit that was fixing it — a line number cannot survive its own fix.
   Both are stated as non-goals in the script and pinned as accepted-and-contained (P8l),
   not asserted away. Do not widen a claim about the wrapper to cover `stdin` mode.
 
+## Reviewer scope and severity
+
+- **What a reviewer BLOCKS is the remit that matters, not what it prints.** Critical/High
+  is the only bar that fails a gate, so a pack pinned at Low widens the *reporting* surface
+  and leaves the *blocking* surface bit-for-bit unchanged. That is how `rules/env-config.yml`
+  ships inside the security reviewer without widening security's remit — structurally,
+  rather than by intention. Enforce the pin in all three places that must agree: the rule's
+  `metadata.forgeward-report-severity`, the pack header, and the Step 2 instruction to report
+  at that severity **regardless of what the JSON says**, with an explicit "do not promote one
+  because the consequence sounds severe".
+- **Do not disclose an axis as unowned in the same run that just scanned for it.** The
+  rejected alternative to the Low pin was announcing `build-config` as covered by nothing
+  while the reviewer was finding instances of it — a worse lie than the silence it replaces.
+  A disclosure is for an axis nothing looks at, never for one whose findings you are printing.
+- **No AI-attribution / co-author-trailer check in the gate.** Considered and rejected at
+  0.10.0: `/gate` handing off to `/ship` is structurally a perfect chokepoint, but forgeward
+  is a plugin other people install and plenty of them legitimately want that trailer. If it
+  is ever added it is an opt-in config key defaulting to off — a separate decision, not a
+  reviewer rule. (A repo-local hook is the right layer for a personal policy; this is about
+  what ships to installers.)
+
 ## Tests
 
+- **A rulepack's fixtures are generated into a scratch dir and NEVER committed.** A `.ts` or
+  `.php` fixture living under `test/` would itself be scanned by forgeward's own gate on
+  every later PR — the suite's inputs would become the gate's findings.
+- **A suite that asserts SILENCE needs a trust check that runs first.** A fixture the engine
+  cannot parse turns every "the rule correctly does not fire here" assertion green, so a
+  non-empty `errors` array is a hard failure, not a warning. Not hypothetical: a fixture
+  syntax error masked results during development of `rules-test.sh`, and later a botched
+  mutation truncated a file by 141 lines and only this check caught it.
+- **`mktemp -d` needs its failure handled explicitly under `set -uo pipefail` without `-e`.**
+  A failed `mktemp` yields an empty `$TMP`, so `$TMP/fixtures` becomes the **absolute** path
+  `/fixtures` and the heredocs write outside the sandbox the file's header promises. It fails
+  with `EACCES` unprivileged and **succeeds silently in a root-run CI container**, which is
+  the environment where nobody is watching. Verify by pointing `TMPDIR` at a nonexistent
+  directory.
+- **Pin a blind spot as expected-silent only when this repo owns the rule — never when the
+  engine owns it.** A gap in a bundled pack should fail the suite the day it closes, so the
+  doc gets corrected instead of quietly becoming a lie. **The exception is the reason the
+  rule needs stating:** semgrep 1.169 scanning `.js/.mjs/.cjs/.jsx/.ts/.tsx` but silently
+  **not** `.mts`/`.cts` is an engine property, and pinning it would turn the suite red the
+  day a future semgrep fixes it. That one is recorded in the pack header and deliberately
+  left unasserted.
 - **No `printf … | grep -q` in a test helper under `set -o pipefail`.** `grep -q` exits
   on first match, `printf` takes SIGPIPE and exits 141, and pipefail promotes that to
   the pipeline's status — a passing assertion reads as a failure.
