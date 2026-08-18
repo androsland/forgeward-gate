@@ -99,7 +99,15 @@ fi
 # out of sync while buying no additional structural constraint, because `[a-z-]` already
 # excludes every character a splice needs (`"`, `,`, `{`, `}`) — which is the only thing
 # this check is defending. Same reasoning as `substitutes` beside it.
-_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*","seo_posture":"[a-z-]*"\}$'
+#
+# `config_warnings` is matched UNQUOTED and as digits, which is the narrowest arm in this
+# whole expression — one to three digits with no quotes around them cannot express any
+# character a splice needs. Written as `[0-9][0-9]?[0-9]?` rather than `[0-9]{1,3}`: the
+# interval is valid POSIX ERE and grep -E honours it, but this repo already avoids interval
+# expressions in its awk for portability and one spelling across both is worth more than
+# three saved characters. Three digits is the probe's own 999 cap, so a longer run is
+# out-of-contract output and correctly rejected rather than truncated.
+_env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)","gstack_cso":"(present|absent)","config":"(present|absent|unreadable)","substitutes":"[A-Za-z0-9_,-]*","seo_posture":"[a-z-]*","config_warnings":[0-9][0-9]?[0-9]?\}$'
 # This grep carried its own `LC_ALL=C` command prefix until the repo-wide pin at the top
 # of the file took over. Both forms reach a child process, so the prefix was effective and
 # not merely decorative — it was removed anyway, because two mechanisms claiming one

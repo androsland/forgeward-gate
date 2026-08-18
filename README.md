@@ -90,8 +90,19 @@ seo:
   simply-quoted scalars work; anchors, aliases, multi-document streams, escapes inside quotes
   and an indented `standalone:`/`seo:` do not. Anything it does not understand reads as *not
   configured*, so the cost of a shape it refuses is a disclosure you have already answered —
-  never a silently skipped check. Nothing validates the file or warns on unknown keys, so a
-  typo'd key is indistinguishable from an absent one.
+  never a silently skipped check.
+- **A discarded setting is counted and reported, since 0.13.0.** The gate prints one line —
+  `N setting(s) were read and discarded` — when the reader was addressed by something it
+  could not use: an unknown key under `standalone:` or `seo:`, an unknown top-level key, a
+  `posture:` outside the six literals, an item dropped by the charset or the caps, an
+  unterminated flow sequence. Before this, a typo'd `substitues:` produced byte-identical
+  output to having no config at all. It is a **count, not a list**: the value is interpolated
+  into the pass marker, and an integer is the only shape with no quote or brace to splice.
+  Three deliberate limits — a `0` is not a clean bill (a config that could not be opened also
+  reports `0`; the separate `config` field is what distinguishes those), `seo.routes` is
+  **not** counted because it is documented as unhonoured and warning on it would fire on a
+  configuration that followed the docs, and on a file using anchors or multi-document streams
+  the number is counted over lines that were never keys and nothing detects that.
 - **A symlink at this path is refused, not followed** — it reads as unreadable and the
   disclosure still fires. This knowingly breaks a monorepo that symlinks the file to a shared
   config elsewhere in the tree; such a repo must use a regular file. `[ -f ]` and `[ -r ]` both

@@ -5,6 +5,70 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## RESOLVED — a typo'd config key was byte-identical to no config at all
+
+**Date:** 2026-08-18 · **Version:** 0.13.0
+
+**Symptom.** A repo writes `substitues:` for `substitutes:`, or `posture: private_shareable`
+for `private-shareable`, or leaves a flow sequence unterminated at `[a, b`. Every one of those
+produces *exactly* the output of a repo with no `.forgeward/config.yml` — same JSON, same
+disclosures, same gate behaviour. The user believes an axis is silenced or a posture is pinned;
+the gate has read the file, understood none of it, and said nothing. Filed as the P2 left open
+by the 0.9.0 entry below, whose own "Not fixed" paragraph names all three shapes.
+
+**The direction was never in question — the silence was.** Dropping an unrecognised shape is
+correct here and stays: a refused shape costs a disclosure the user already answered, while
+honouring a half-parsed one costs a skipped check. What was missing is any way to tell a config
+that was *read and understood* from one that was *read and discarded*. So this is a visibility
+change and deliberately not a parsing change — **every rule in the reader accepts and rejects
+exactly what it did before**, and the counter is appended after all of them. Coupling the two
+would have shipped a behaviour change under a visibility change's review.
+
+**Decision 1 — a bare integer, not a message.** `config_warnings` counts; it names nothing. The
+probe's output is interpolated into the pass marker as JSON by `printf`, so every field is an
+injection surface, and an integer is the only shape with no representable `"`, `,`, `{` or `}`.
+It is consequently matched *unquoted* in `_env_ok` as `[0-9][0-9]?[0-9]?`, which is the
+narrowest arm in that whole expression — tighter than the quoted strings beside it, not looser.
+Capped at 999 in the awk, because the 64KB size cap upstream still admits a file with thousands
+of junk lines and the marker is read on every push. The cost is real and accepted: the user is
+told there is a reason to look at their config, not which line to look at.
+
+**Decision 2 — `seo.routes` is NOT counted, and this is the load-bearing call.** It is
+documented as having no effect in `README.md`, `skills/gate/SKILL.md` and
+`agents/seo-reviewer.md`, so a repo that pins it followed the docs. Warning on it would be
+correct about the mechanism and wrong about the product, and a count that fires on a
+conforming configuration teaches the reader to ignore the count — the same disclosure-fatigue
+failure that "say it once, and only when it is news" already exists to prevent. Its subtree is
+skipped by indent, which is the one and only place this reader treats indentation as structure.
+
+**The obligation this exercised, for the second time.** A new probe field is a **three**-file
+edit: the `printf`, `_env_ok` in `forgeward-write-marker.sh`, and E17's hardcoded payload in
+`test/gate-test.sh`. Both halves re-verified by mutation rather than assumed: with `_env_ok`
+left stale, E10 goes red and every marker degrades to `environment: {"probe":"unavailable"}`;
+with the trailing `$` dropped from `_env_ok`, the *current* E17 payload reddens E17 while the
+*stale* payload leaves the whole suite green — i.e. a forgotten payload retires a security
+assertion and reddens nothing. The obligation is now written at the probe's own `printf`, not
+only in `TODOS.md`, because that is the file someone editing it will have open.
+
+**Vacuity, checked in both directions.** Nine of the ten new assertions want a non-zero count,
+so a counter stuck on `1` would green all nine while being useless. E28 (a fully-honoured
+config) and E34 (`seo.routes` plus its subtree) are the only two asserting `0`, and they are
+the control. Mutating `warn()` to a no-op reddens exactly E29–E33 and E35–E37; flooring the
+count at `1` reddens exactly E28 and E34. Neither mutation reddens anything outside the block.
+
+**Stated so the limits are not mistaken for coverage.** `0` is **not** a clean bill — a config
+the probe could not open reports `0` too, and only the separate `config` field distinguishes
+them; the skill and README both say so, and the live-test's symlink step is written as that
+exact trap. The reader is still not a YAML parser, so on a file using anchors, aliases,
+multi-document streams or block scalars the number is counted over lines that were never keys
+and **nothing detects that case**. It cannot see a duplicate key (YAML resolves last-wins;
+both spellings look honoured and neither counts), and it cannot distinguish a key nested three
+levels deep from a legitimate one, because the reader only ever tracked two levels. An empty
+item (`substitutes: []`, a trailing comma) is deliberately not counted — nothing was named, so
+nothing was discarded.
+
+Suites: gate 194/194, pre-push 15/15, rules 39/39, version-check 51/51.
+
 ## DECISION — quality stays unowned by forgeward; "`/review` covers it" is withdrawn, and one measured sliver folds into `security-reviewer`
 
 **Date:** 2026-08-16 · **Version:** 0.12.0
@@ -1107,6 +1171,8 @@ warns on unknown keys, so a typo'd `substitutes:` or an invalid posture is indis
 from an absent one — both read as "not configured", which is the fail-open direction but still a
 silent one. `seo.routes` remains unread. An unterminated flow sequence (`[a, b`) reads as nothing
 configured rather than as an error. All three are in `TODOS.md`.
+*(Superseded 0.13.0 — the silence is closed by `config_warnings`, which counts all three; the
+dropping itself is unchanged and `seo.routes` is still unread by design. See the top entry.)*
 
 Suites: gate 171/171, pre-push 15/15. Eight mutations run against the new assertions (flow rule
 disabled, `unquote` neutered, posture rule disabled, enum → charset, `|` allowed into the
