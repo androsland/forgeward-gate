@@ -915,17 +915,70 @@ already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), incl
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
 
-**Currently 8, not 5, and that is a deferral rather than drift.** Archive pass 4 is due —
-this file is ~115KB against a ~50KB threshold and this section is ~43KB of it — but the
-split is prose-only bulk and 0.13.0 changed executable behaviour, so bundling the two would
-bury a script diff under a four-figure line count. It is the next branch, on its own. Read
-this section as "the 8 most recent" until then.
+Back to five as of archive pass 4 (2026-08-18), which cleared the deferral the 0.13.0
+entry recorded: the split was held back deliberately so a four-figure prose diff would not
+bury a script change, and it shipped on its own branch instead.
+
+- **Archive pass 4: the currency check came back CLEAN for the first time, and the cut
+  arithmetic was wrong until it was written down.** Shipped 2026-08-18, docs only — no code,
+  no version bump. Clears the deferral the 0.13.0 entry recorded, which held this split back
+  on purpose so a four-figure prose diff would not bury a script change.
+
+  **CURRENCY — clean, and that is news.** Passes 2 and 3 both caught `## Completed` stale,
+  and pass 3's entry called two-of-two "a pattern, not an accident". This pass enumerated
+  every merged PR with `gh pr list` and mapped it against the section rather than eyeballing
+  the newest date: 8 entries covering **#28–#36**, with **#32** (the `actions/checkout`
+  bump) folded into #33's entry rather than carrying one of its own, and nothing merged
+  after #36. No gap. The check still had to run to establish that — a clean result and an
+  unrun check are indistinguishable from the page.
+
+  **MERGE ORDER — the trap did not fire this time, and the check still ran.** `git log` on
+  all eight merge commits put #28 < #29 < #30 < #31 < #33 < #34 < #35 < #36, so PR-number
+  order and merge order agreed and any sort would have produced the same cut. Pass 3 hit the
+  inversion (#26 merged 39 minutes *after* #27) and `CLAUDE.md` now carries the rule; this is
+  what it looks like when a rule costs one command and buys nothing on a given day.
+
+  **CUT — four entries, not three, and the first plan said three.** Landing at "the 5 most
+  recent" means cutting **four** when the pass writes its own entry back, and the first
+  boundary drawn here was three, which would have left six. Caught by re-deriving the
+  arithmetic before the cut rather than after. Archived #31 (`9cddc11`, 0.12.0), #30
+  (`5144a37`, 0.11.0), #29 (`2844886`, 0.10.1) and #28 (`ce69eb5`) to `TODOS-DONE.md`,
+  newest-first at the top: **18,863 bytes**, in the same commit that removed them.
+
+  **EXTRACTION — three rules lifted, and the thinness is the evidence the ratchet works.**
+  Most of what these four entries produced was already in `CLAUDE.md`: the `python3 -I` rule
+  with its no-jq scope limit, the `export LC_ALL=C` pin with its deliberate `test/`
+  exception, "pin the VIOLATING form and guard the enumeration against emptiness", the
+  merge-order cut rule, and "a filing-only PR still gets a `## Completed` entry" all landed
+  in pass 3. What was *not* yet written down, and is now:
+
+  - **Rewriting a tracked script in place must preserve its mode.** `awk … > tmp && mv`
+    recreates at the umask default and silently de-executed eleven scripts when the
+    `LC_ALL` pin landed. A29 pins it; the rule was only ever in the archived entry.
+  - **When a filter caused the miss, delete the filter — do not extend it.** From the
+    rotation notice's `--include='*.jsonl'`, which could not see `tool-results/*.txt`.
+  - **A search over evidence that expires must report an empty result as UNVERIFIABLE.**
+    From the `cleanupPeriodDays` measurement, and it binds the filed
+    `forgeward-transcript-audit.sh` before that script exists.
+
+  **MEASURED, because pass 3's entry says to.** `TODOS.md` went **117,273 → 102,241
+  bytes**, a net **−15,032** after writing this entry back — against pass 3's net
+  −1,392 on 85,990. Four entries out instead of one is the whole difference; the convention
+  bounds the entry COUNT, and the byte count follows only from how many you cut. It is still
+  roughly **2× the ~50KB threshold**, and the reason is unchanged and structural: the open
+  half is **73,484 bytes across 10 topic sections, 72% of the file**, and nothing in this
+  pass touches it.
+
+  **What this pass did NOT do, stated so the numbers are not read as health:** it expired
+  nothing. A stale-but-open entry and a live one are indistinguishable to an archive pass,
+  and the open half grew as a share of the file (63% → 72%) precisely because only the
+  completed half was cut. Triaging the open half is a different job with a different risk —
+  archiving is reversible and pruning is not — and it remains undone.
 
 - **P2: `.forgeward/config.yml` said nothing when it was read and discarded.** Shipped on
-  `feat/config-warnings` (0.13.0) — **PR number and merge SHA not yet known at write time**,
-  because this entry is written in the same commit as the work so the PR is current when it
-  opens. The next sweep stamps them; an entry here without them means the branch has not
-  merged yet, not that the record is complete.
+  `feat/config-warnings` as **PR #36, merged `e250ec8`, 2026-08-18** (0.13.0). Stamped by
+  this sweep; the entry was written in the same commit as the work, so the PR was current
+  the moment it opened and the number was not knowable then.
 
   The probe gained `config_warnings`, an integer count of settings it was addressed by and
   could not use, and the gate renders one line when it is non-zero. **Visibility only — every
@@ -1247,256 +1300,3 @@ this section as "the 8 most recent" until then.
   live reference. And the wip-tag decision got the fact it turns on: `item2-wip-quote-stripping`
   is local-only and `c7e56d0b` is not an ancestor of `origin/master`, so "keep it as an
   archaeological record" was never the status quo — the status quo is *ephemeral*.
-
-- **P2 ×4 + P3 ×3: the suites reached CI, the quality axis stopped being claimed, and the
-  open half was triaged for the first time.** 0.11.0 → 0.12.0, 2026-08-16. Three batches of
-  deferred work that shared no code but shared a failure mode: **each was a place where this
-  repo asserted more coverage than it had.**
-
-  **CI — three workflows, one question each, because a green tick is read as an answer to
-  whatever question the reader had.** `test.yml` runs all four suites (gate 182, pre-push 15,
-  version-check 51, rules 39) on every PR and on `master`; its header says in capitals not to
-  make it a required check yet, because passing once is not evidence of non-flakiness.
-  `shellcheck.yml` runs `scripts/ ci/ live-test/` with **no exclusion flags** — the five
-  deliberate findings (SC2016 ×5, SC1003, SC2034 ×2, all verified against `HEAD` rather than
-  recalled) now carry inline `disable=` directives naming their reason at the site, so the
-  baseline is zero and a genuinely-wrong SC2016 still fires. It installs a **checksum-verified
-  v0.11.0** rather than using the runner's: it shipped unpinned in this same PR, went red on
-  the first run against `ubuntu-latest`'s 0.9.0 over three SC2015 false positives, and the
-  pin was the fix — suppressing them would have blinded three sites to satisfy a linter older
-  than the code. `test/*.sh` is out of scope, 241 findings at that pin, stated in the workflow
-  header so the tick is not over-read. `flake-sweep.yml`
-  owns the load-sensitivity question `test.yml` deliberately does not: `workflow_dispatch`
-  or the `flake-sweep` label, 25 runs at load 4 by default, driving the existing
-  `test/s7-flake-loop.sh`.
-
-  **The sweep workflow would have swallowed its own evidence, and that is the part worth
-  keeping.** The default runner shell is `bash -eo pipefail`, so a non-zero harness aborts
-  the step *before* the summary prints — losing exactly the output the workflow exists to
-  collect. The status is captured (`|| rc=$?`) and folded into the verdict instead. Second
-  fix in the same shape: an **unparseable** tally now fails rather than passing, because
-  defaulting an absent `done:` line to zero is how "died on run 1" reports as "ran 25 times
-  and found nothing".
-
-  **`.github/dependabot.yml`** settles the SHA-pin refresh question at the standard answer
-  (`github-actions`, monthly, grouped, limit 3) rather than the manual `ls-remote`. Three
-  non-goals are in its header: it does not judge the new code (a pin buys immutability, not
-  trust); **no npm entry deliberately**, since `package.json` is `private: true` with zero
-  dependencies and no lockfile, and the day a real dependency lands, forgeward's own
-  `supply-chain-reviewer` starts firing on it; and it sees `uses:` in workflow files only.
-
-  **The error-path fold: measured, then folded, and the losing half of the rule recorded.**
-  The pre-committed decision rule was ≥1 true High per 5 PRs → build a seventh reviewer,
-  below that → fold. It measured 0, so rules 1 (discarded failure signal) and 3 (unchecked
-  conditional-write result) went into `security-reviewer` Step 3 and no reviewer was built.
-  Rules 2 and 4 fired zero times anywhere and were **not** folded — adding prompt weight to
-  every security review in exchange for a rule that has never fired is a cost with no
-  measured return. The precondition this needed first is also done: Step 3 now defines
-  fail-open and fail-closed, requires a finding to **name the direction and what a caller
-  then believes that is not true**, and requires a stated failure consequence to reach High —
-  an unnarratable High is unfalsifiable, and a gate that FAILs on findings nobody can check
-  gets switched off.
-
-  **The quality axis: forgeward stopped asserting another tool's coverage.** The measured
-  finding was reciprocal deferral — on `04a04fb`, gstack's `/review` skipped `maintainability`
-  as `covered-by-forgeward-and-coverage-audit` while forgeward's README skipped quality
-  because `/review` covers it, so both installed still meant nobody reviewed it. Scope stated
-  as 2 of 22 entries, an existence proof rather than a rate. `README.md` now says forgeward
-  does not review code quality and no longer claims gstack does it for you;
-  `skills/gate/SKILL.md` prints a PRESENT-case clause naming what the probe can and cannot
-  see; `DECISIONS.md` carries the entry either way, generalised to **a deferral may name an
-  owner; it may never assert coverage**. `docs/axis-proposals.md` Q2 is marked SUPERSEDED
-  rather than edited into agreement. The gstack half is another repo's code and stays open.
-
-  **Docs: the archive convention was applied to itself.** `## Completed` was stale by three
-  merged PRs, so #26 and #28 were reconstructed into it and #27 into `TODOS-DONE.md` from
-  their commit bodies **before** any cut — and the cut order was resolved with
-  `git log --first-parent`, which changed the answer: **#26 merged 39 minutes after #27
-  despite the lower number**, so both a date sort and a number sort would have archived the
-  wrong entry. 275 lines moved out, six rules lifted into `CLAUDE.md` on the way (parsing
-  structured documents, an option that sends refs the argument list never names, a new
-  `## Running other people's tools` section, five test rules, three docs rules). Then the
-  first-ever triage of the open half, counted rather than described: **four entries deleted
-  outright** (the fold decision and its precondition, the `DECISIONS.md`-entry-either-way,
-  and the stale-`## Completed` finding), **two replaced by narrower successors** (the SHA-pin
-  refresh policy → Dependabot-configured-but-unobserved; open-half-untriaged → nothing
-  expires an entry), **three narrowed in place** (quality axis, shellcheck, suites-in-CI),
-  and one empty section heading removed. Also repaired: two `see ## Completed` pointers that
-  went stale when their targets were archived, one entry carrying **two contradicting
-  `**Priority:**` markers** (headline P2, appended paragraph P3), and a suite roster wrong
-  since 2026-08-06 (three suites and gate 171; it is four and 182).
-
-  **Not done, deliberately:** the sweep has **not been run**, so the load-sensitivity claim
-  is still unmeasured in CI and only the instrument is new; `test.yml` is not a required
-  check; Dependabot is configured but unobserved, and a config file is not evidence the
-  service is enabled. All three are filed above rather than implied by the workflows'
-  existence.
-
-- **P2 ×2 + P3: the two repo-wide interpreter/locale conventions were written down but only
-  partially applied, and neither was pinned by anything.** Fixed 2026-08-15. Closes the
-  four-`python3 -c`-sites item, the "locale pinning should be repo-wide" item, and the
-  `awk`/`wc -c` asymmetry P3 in one lane.
-
-  `python3 -I` now sits at all five shipped sites (`forgeward-diff-hash.sh`,
-  `forgeward-gate-check.sh` ×2, `forgeward-pre-push.sh`, and the CI check that already had
-  it), and `export LC_ALL=C` at the top of all **13** tracked `*.sh` outside `test/` — the
-  11 in `scripts/`, `ci/check-version-monotonic.sh`, and `live-test/setup.sh`. Both inline
-  `LC_ALL=C` command prefixes were **removed** rather than kept beside the pin, on the
-  standing one-mechanism-per-invariant rule; the sites carry a comment saying so, because a
-  reader who finds the prefix gone needs to know it was replaced and not simply dropped.
-
-  **The `-I` entry's threat model was wrong and the correction is the substantive part of
-  this commit.** It read: "reaching it at all requires write access to the user's checkout —
-  which `TODOS.md` already discloses as defeating the local gate outright", concluding "a
-  hardening item, not a live bypass". It is a live bypass. Python imports a *file*, not an
-  index, so the shadowing `json.py` arrives with the branch you cloned in order to review it
-  — no local write access, and the fork-author escalation the entry reserved for the CI check
-  applies here too. Demonstrated end to end, not argued: with `jq` off the PATH and a
-  `json.py` committed to the branch, an `-I`-stripped `forgeward-gate-check.sh` **ALLOWS** a
-  publish that the shipped one denies. That is A26, and it carries both controls — the
-  bypass leg must ALLOW or the assertion is measuring nothing, and the same mutant without
-  the `json.py` must still DENY or it is merely broken.
-
-  **Scope limit, stated because the demonstration is narrower than the flag:** the bypass is
-  the no-jq arm only. With a working `jq` installed, `json_get` never reaches `python3` and
-  the shadow is inert. The exposure is real and conditional, and A26 says nothing about a
-  machine with jq.
-
-  Pinned by A25–A29 in `test/gate-test.sh` (177 → 182 assertions), each mutation-checked:
-  strip `-I` from any shipped site → A25 red; strip it from the hook → A25 and A26 red;
-  delete one script's pin → A27 red; put an inline `LC_ALL=` back → A28 red; `chmod -x` a
-  tracked-755 script → A29 red. A25 and A27 are deliberately counted as the **violating**
-  form and enumerated from `git ls-files`, so a *new* site added without the flag fails —
-  "five sites carry `-I`" would go green the day a sixth arrived without it.
-
-  A29 exists because this commit nearly shipped without it. Inserting the pin across eleven
-  files with `awk > tmp && mv` replaced each at the umask default, dropping all eleven from
-  755 to 644; every invocation became `Permission denied` and the plugin was completely
-  broken. The suite caught it only as 28 unrelated assertions collapsing at once — nothing
-  named the cause. A29 names it.
-
-  `test/` is excluded from A27 **deliberately**: the suite spawns these scripts as children,
-  so a pin there would be inherited by every one of them and the property A27 checks would
-  become untestable from inside the test that checks it. Note also what the pin bought the
-  E-series for free — E18 previously asserted "the config reader works under the *test
-  runner's* locale", because it could not pin what the script did not pin; the script now
-  pins itself, so E18 asserts behaviour under `LC_ALL=C`.
-
-  **Two stale line references were corrected on the way out, and the correction is to stop
-  citing lines at all.** The locale entry cited `forgeward-detect-environment.sh:103` for the
-  `LC_ALL=C wc -c` and `:112` for the bare `awk`; by the time it was read they were at `:131`
-  and `:150`, and inserting the pin moved them again to `:140` and `:159` — drifting twice,
-  the second time inside the very commit that was fixing the citation. Both now read as "the
-  `config_state` block", per `CLAUDE.md`'s cite-by-symbol rule, which is the only form that
-  survives its own fix.
-
-  **The predicted rotation collision landed and was resolved by rebase, and the prediction
-  named the wrong entry to cut.** This branch and #29 were cut from the same `master` and each
-  archived the 0.8.0 `/ship`-handoff entry while adding its own, so the second to merge
-  conflicted. `TODOS-DONE.md` needed no decision — both sides made the byte-identical
-  insertion, so git took one copy and the file came out equal to master's. `TODOS.md` kept
-  both new entries, leaving six. The filed plan said to cut "the version-monotonicity entry,
-  2026-08-06"; the entry actually cut is the config-keys one, because **both carry the same
-  `Fixed 2026-08-06` line and only the merge order separates them** — config-keys is #20
-  (`246a715`, 2026-08-06) and monotonicity is #22 (`c057dc9`, 2026-08-07), which the prose
-  dates cannot show. An oldest-out cut decided from the date printed in the entry would have
-  archived the newer of the two. Checked with `git log`, not read off the page.
-
-- **P1 + P2: the 0.9.2 rotation notice searched one persistence channel of two, and read
-  its own empty result as clean.** Fixed 2026-08-15, shipped in 0.10.1. Both halves were
-  filed 2026-08-14 as follow-ups to the notice itself; both are wording and flags, no code.
-
-  **The missed channel.** A large tool result is truncated in the JSONL at 30 000
-  characters and written in full to `tool-results/<id>.txt`, the transcript keeping only a
-  `persistedOutputPath` pointer. Every command in the notice carried `--include='*.jsonl'`,
-  so none of them could match a `.txt`. Measured on one machine: 277 such files, two
-  matching the notice's own pattern set, and one holding a private key the truncated JSONL
-  did not contain. So the copy the notice could not see was simultaneously the copy with the
-  weaker permissions and the copy with more in it.
-
-  **The permissions claim was tightened after the gate reviewer re-measured it**, and the
-  correction is the entry's own lesson applied to itself. The first draft said the `.txt`
-  files are 0644 "where the transcripts are 0600" — a universal read off a sample. The
-  reviewer's independent count was 279 of 279 at 0644 against **1878 of 1879** at 0600, the
-  exception being a transcript that was itself 0644. The direction of the finding is
-  unchanged and the outlier makes the exposure marginally worse rather than better, but
-  "all transcripts are 0600" was not a thing either of us had established. The README now
-  carries the counts instead of the quantifier.
-
-  `--include` was **dropped** rather than widened to two extensions. Widening is the
-  smaller diff and the worse fix: an extension list is the same shape of narrowing that
-  caused the defect, and it would miss a third channel exactly as silently. The path does
-  the scoping now.
-
-  **The false-clean read.** Claude Code expires its own transcripts — `cleanupPeriodDays`
-  defaults to 30 — and the unit it reaps is the **session directory**, aged by the parent's
-  recency rather than per file. Measured: 0 of 247 top-level session transcripts survive
-  past 30 days, while **20 of 1574** subagent transcripts do, alive only because their
-  parent session stayed in use. So the leak channel this notice is about is precisely the
-  one that outlives the window, and a short-lived session's evidence is gone inside the
-  month. Both directions mislead, and this was hit for real: a transcript identified as
-  holding an AKIA-shaped value on 2026-08-13 was gone on 2026-08-14 at age 31, before it
-  could be re-examined, so that finding is now permanently unresolvable. The notice now
-  says an empty result means **unverifiable**, not **safe**, and tells anyone who ran
-  0.2.0–0.9.1 in a repo with an untracked credential file to rotate regardless.
-
-  This is the same false-clean shape as the 0.9.3 path bug, arriving by two further routes
-  — which is the reason the notice now states its own limits at every command rather than
-  once at the top. **Blind spots, stated rather than papered over:** one machine, one Claude
-  Code version (2.1.232); `cleanupPeriodDays` is user-configurable, so 30 is a default and
-  not a guarantee; whether the 30 000-character threshold or the 0644 mode is stable across
-  versions was not checked; and none of it was checked on Windows.
-
-  Untested by construction: this is prose in `README.md`, and no suite in this repo asserts
-  anything about it. The surviving P2 above — a possible `forgeward-transcript-audit.sh` —
-  is where these two facts would become executable rather than documentary.
-
-- **P1 + P2 FILED, not fixed (the fix is the entry above): the rotation notice's two
-  unstated assumptions, measured.** #28 (`ce69eb5`), 2026-08-14 — one file, `TODOS.md`, no
-  code and no version bump. Recorded here because a filing-only PR leaves nothing behind in
-  the tree, and this one is the entire evidence base 0.10.1 was written from.
-
-  Both entries were filed *beneath* "Nothing in forgeward can scrub a subagent transcript",
-  which is correctly scoped — no cleanup this plugin performs touches one — and that correct
-  scoping is exactly what hid the two assumptions sitting behind it: that the evidence is
-  still on disk, and that the transcript is where it lives.
-
-  **Expiry (P2).** `cleanupPeriodDays` defaults to 30, and the unit reaped is the SESSION
-  DIRECTORY, aged by the parent's recency rather than per file. One machine, 2026-08-14,
-  Claude Code 2.1.232, setting unset: **0 of 247** top-level session transcripts older than
-  30 days, **0 of 207** orphaned `subagents/` directories, and **20 of 1574** subagent
-  transcripts older than 30 days — alive only because their parent session stayed in use. So
-  the leak channel the notice is about is the one that outlives the window, while a
-  short-lived session's evidence is gone inside the month. Both directions break the notice.
-
-  **`tool-results/` (P1).** A tool result over 30 000 characters is truncated in the JSONL
-  and written in full to `tool-results/<id>.txt`, the transcript keeping a
-  `persistedOutputPath` pointer; every command in the notice carried `--include='*.jsonl'`.
-  Same machine, same day: **277** such files, all `.txt`, all mode 0644 beside 0600
-  transcripts. Two matched the notice's own pattern set, and in one a private key was
-  present in the persisted file and **absent from the truncated JSONL copy**.
-
-  **What those two files actually held is the part worth keeping, and it is not what the
-  headline suggests.** Both were local Supabase CLI Docker output, carrying two different
-  classes of key that were harmless for two different reasons:
-
-  - the PEM private key is **baked into the `supabase/kong:2.8.1` image** — byte-identical
-    across two unrelated projects captured three weeks apart and the live container. Public
-    by construction.
-  - the `pgsodium_root.key` value is **not** public: absent from the `supabase/postgres`
-    image layer, different between two local projects, and unchanged in the affected project
-    from the Aug 4 capture to that day. It is inert for an unrelated reason — `pgsodium` is
-    not an installed extension in that database (`pgcrypto` only) and it carries zero
-    `pgsodium` security labels, so no column is encrypted under it, and a local container's
-    key has no bearing on the hosted project.
-
-  A notice written off the first reason alone under-reports the second class entirely. That
-  is why 0.10.1's wording says an empty result means **unverifiable**, not **safe**.
-
-  **Blind spots, carried forward unchanged:** one machine, one Claude Code version;
-  `cleanupPeriodDays` is user-configurable, so 30 is a default and not a guarantee; whether
-  the 30 000-character threshold or the 0644 mode is stable across versions, or on Windows,
-  was not checked. The gate fired **no reviewers** on this diff — one prose file, every
-  surface absent — which is correct, and is also why nothing above was independently
-  re-measured until the 0.10.1 branch, where the reviewer's own count corrected the
-  permissions claim from a quantifier to a ratio.

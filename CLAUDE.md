@@ -83,6 +83,15 @@ commit that was fixing it — a line number cannot survive its own fix.
   trusted. A27/A28 enumerate from `git ls-files`, so a new script is in scope the day
   it is added. `test/` is out of scope on purpose: the suite spawns these scripts, so a
   pin there would be inherited and make the property untestable from inside the test.
+- **Rewriting a tracked script in place must preserve its mode.** `awk … > tmp && mv tmp
+  script` recreates the file at the umask default, dropping 755 to 644. When the `LC_ALL`
+  pin landed this de-executed **eleven** scripts at once and broke the plugin outright;
+  every invocation became `Permission denied`, and the suite surfaced it only as 28
+  unrelated assertions collapsing together, naming nothing. A29 names it now. Edit in
+  place, or restore the mode explicitly, and read `git diff` for `mode change` lines before
+  committing. Applies to tracked *executables* — `rules/*.yml` and the docs are 644 by
+  design and must stay that way.
+
 - **The matcher trusts `strip_quoted`'s residue only when it is never shorter than the
   input.** The residue's word boundaries are not bash's, so the three-character refusal
   is a complete cover rather than a heuristic — do not relax it into a pattern list.
@@ -345,6 +354,26 @@ commit that was fixing it — a line number cannot survive its own fix.
   lifted, only one of five sites carried the flag and the gap was already filed; stating
   the rule bare would have converted a filed hole into a claim of coverage. If the
   exception is too awkward to state, the rule is not ready to leave `TODOS.md`.
+- **When a filter caused the miss, delete the filter — do not extend it.** The 0.9.2
+  rotation notice searched with `--include='*.jsonl'` and so could not see
+  `tool-results/<id>.txt`, where a tool result over 30 000 characters is persisted in full
+  while the transcript keeps only a pointer. Widening it to two extensions was the smaller
+  diff and the worse fix: an extension list is the same shape of narrowing that caused the
+  defect, and it would miss a third channel exactly as silently. The path does the scoping
+  now. This is about filters that *scope a search*; it is not an argument against the
+  scanner allow-lists above, which exist to bound what a tool may be told to do.
+- **A search over evidence that expires must report an empty result as UNVERIFIABLE, not
+  clean.** Claude Code reaps whole session directories on `cleanupPeriodDays` (default 30),
+  aged by the parent's recency rather than per file — measured on one machine: 0 of 247
+  top-level transcripts survived past 30 days, while **20 of 1574** subagent transcripts
+  did, alive only because their parent session stayed in use. So the channel that leaks is
+  the one that outlives the window, and a short-lived session's evidence is gone inside the
+  month; one AKIA-shaped finding was already lost that way between two consecutive days.
+  Any audit tooling this repo grows — the filed `forgeward-transcript-audit.sh` is the live
+  candidate — must say what it could not check and keep the rotate-regardless advice for
+  the window it cannot see. The measurement is one machine and one Claude Code version
+  (2.1.232), `cleanupPeriodDays` is user-configurable, and none of it was checked on
+  Windows; treat 30 as a default, not a guarantee.
 - **A filing-only PR still gets a `## Completed` entry.** It leaves nothing in the tree,
   so the measurement it was built on is the only durable thing it produced — and the next
   pass will re-derive it from scratch if the entry is missing. #28 is the worked example.
