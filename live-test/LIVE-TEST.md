@@ -414,6 +414,11 @@ YAML
 
 The probe must print `"substitutes":"quality","seo_posture":"private-shareable"` — note the
 flow sequence and the quoted scalar, both of which read as *nothing configured* before 0.9.0.
+It must also print **`"config_warnings":0`**: every key here is either honoured or, in
+`seo.routes`' case, documented as unhonoured, and the count must not fire on a config that
+followed the docs. This is the negative half of the 0.13.0 check and the easier one to get
+wrong — a counter that warned here would be correct about the mechanism and wrong about the
+product.
 
 Now run `/forgeward:gate` on a change that touches a public page. Expected, in the firing
 decision:
@@ -429,11 +434,19 @@ decision:
 Then break it and confirm the failure is loud in the right direction:
 ```bash
 printf 'seo:\n  posture: not-a-real-posture\n' > .forgeward/config.yml
-"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # seo_posture must be EMPTY
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # seo_posture EMPTY, config_warnings 1
+printf 'standalone:\n  substitues:\n    - quality\n' > .forgeward/config.yml
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # a typo'd key: config_warnings 1
 ln -sf /etc/hostname .forgeward/config.yml                # a symlink is refused, not followed
-"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # config must read "unreadable"
+"$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"     # config "unreadable", warnings 0
 rm -rf .forgeward
 ```
+
+On the typo'd-key run, `/forgeward:gate` must print the one-line note naming the path and the
+count — and must still gate normally, writing the marker on all-PASS. **The symlink run is the
+`0` that is not a clean bill**: the count is `0` because nothing was read at all, and only
+`config: unreadable` says so. A gate that reports "no config problems" there has read the
+wrong field.
 
 **TESTED — 2026-08-06, plugin 0.9.0 installed from cache.** Every assertion above held,
 including the three that only a model can satisfy: the seo-reviewer reported
@@ -452,6 +465,11 @@ Two caveats on how it was run, so the next person does not over-read this:
   `NOT COVERED: quality` would be absent whether or not the substitute worked, so the
   assertion is vacuous there. If you re-run this on a genuinely gstack-free machine, that
   is the stronger test and worth preferring.
+- **The `config_warnings` assertions above are NOT covered by that stamp** — they were added
+  in 0.13.0, after it. The probe's own numbers were verified directly against these exact
+  fixtures and are pinned by E28–E37 in `test/gate-test.sh`; what remains unverified live is
+  the half only a model can satisfy, namely that the gate actually prints the one-line note
+  and still writes the marker. Re-run this section to close that.
 
 ---
 

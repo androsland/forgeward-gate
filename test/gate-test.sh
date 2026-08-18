@@ -2548,8 +2548,11 @@ E16M="$(fakeprobe dup '{"a":"b"},"diff_hash":"FORGEDHASH","passed":false,"z":{}'
 # would otherwise accept; the moment a field is added to the probe and not added here, the
 # payload is rejected on its prefix instead and removing the `$` no longer turns it red.
 # Verified by mutation when `seo_posture` was added: with the field in this string,
-# dropping `$` from `_env_ok` reddens E17; with the stale string, it does not.
-E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":"","seo_posture":""},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
+# dropping `$` from `_env_ok` reddens E17; with the stale string, it does not. Re-verified
+# the same way when `config_warnings` was added in 0.13.0 — which is the second time this
+# payload has had to move with the probe, and the reason the obligation is now written at
+# the probe's own printf rather than only in TODOS.md.
+E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":"","seo_posture":"","config_warnings":0},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
 [ -f "$E17M" ] && notforged "$E17M" TAILFORGE \
   && ok "env: a valid-prefix-plus-appendix splice is rejected (the shape match is anchored at BOTH ends)" \
   || nok "env E17" "marker '$E17M'"
@@ -2708,6 +2711,151 @@ E27J="$( cd "$ER" && PATH="$E27SHIM:$PATH" CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$ENV_
   && ok "env: an awk that exits 0 without the field separator reads UNREADABLE, not empty" \
   || nok "env E27" "shimmed '$E27J' real '$E27OK'"
 rmcfg
+
+# --- E28..E37: config_warnings, the count of settings read and discarded ---------
+# Everything E1..E27 pins is about what the reader HONOURS. This block is about what it
+# throws away, which until 0.13.0 it did in total silence — a typo'd key produced byte-
+# identical output to no config at all, so the user had no way to tell a config that was
+# read and understood from one that was read and discarded.
+#
+# THE VACUITY TRAP HERE RUNS THE OTHER WAY from E1/E2's, and E28 is the control that
+# catches it. Nine of the ten assertions below want a NON-ZERO count, so a counter wired
+# to return a constant 1 would green all nine while being useless. E28 is the only one
+# asserting 0 on a config that is fully honoured; without it, "warns on a typo" would be
+# indistinguishable from "warns always", which is the same disclosure-fatigue failure the
+# gate's own "say it once, and only when it is news" rule exists to prevent.
+#
+# Read as a pair with E34, which is the other half: E28 proves 0 is reachable on a config
+# that uses everything, E34 proves 0 survives a key that is documented as unhonoured. A
+# counter that fired on `seo.routes` would be *correct* about the mechanism and *wrong*
+# about the product, because README, skills/gate/SKILL.md and agents/seo-reviewer.md all
+# already tell that user the key has no effect.
+jnum() { # jnum <json> <key> -> value of an UNQUOTED numeric field
+  printf '%s' "$1" | sed -n 's/.*"'"$2"'":\([0-9]*\).*/\1/p'
+}
+
+# E28: THE POSITIVE CONTROL. Every honoured shape at once, nothing discarded -> 0.
+mkcfg 'standalone:
+  substitutes: [quality, deep-audit]
+seo:
+  posture: private-shareable'
+E28J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E28J" config_warnings)" = 0 ] \
+  && [ "$(jfield "$E28J" substitutes)" = "quality,deep-audit" ] \
+  && [ "$(jfield "$E28J" seo_posture)" = private-shareable ] \
+  && ok "env: a fully-honoured config warns ZERO (the counter is not stuck on)" \
+  || nok "env E28" "got '$E28J'"
+
+# E29: the entry's own first example. A misspelled key under `standalone:` used to be
+# byte-identical to no config; the second clause pins that it is still not HONOURED, so
+# this is a visibility change and not a parsing one.
+mkcfg 'standalone:
+  substitues:
+    - quality'
+E29J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E29J" config_warnings)" = 1 ] && [ -z "$(jfield "$E29J" substitutes)" ] \
+  && ok "env: a typo'd key under standalone warns once and is still not honoured" \
+  || nok "env E29" "got '$E29J'"
+
+# E30: the same class one level over, under `seo:`. Kept separate from E29 rather than
+# folded in: the two sections are tracked by different state, and a counter wired only
+# into the `standalone:` branch would pass E29 while missing every `seo:` typo.
+mkcfg 'seo:
+  postures: private-shareable'
+E30J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E30J" config_warnings)" = 1 ] && [ -z "$(jfield "$E30J" seo_posture)" ] \
+  && ok "env: a typo'd key under seo warns once and is still not honoured" \
+  || nok "env E30" "got '$E30J'"
+
+# E31: an invalid VALUE, not an invalid key — the other half of E22, which pins that such
+# a posture is dropped. It stays dropped; it is now also counted.
+mkcfg 'seo:
+  posture: private_shareable'
+E31J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E31J" config_warnings)" = 1 ] && [ -z "$(jfield "$E31J" seo_posture)" ] \
+  && ok "env: a posture outside the six literals warns once and is still dropped" \
+  || nok "env E31" "got '$E31J'"
+
+# E32: the shape the reader's header calls out by name. An unterminated flow sequence
+# matches neither the flow rule (which requires the closing bracket) nor the block header,
+# so it reaches the counter as an unrecognised key under `standalone:` — which is the
+# right answer for the user even though the mechanism is incidental.
+mkcfg 'standalone:
+  substitutes: [quality, deep-audit'
+E32J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E32J" config_warnings)" = 1 ] && [ -z "$(jfield "$E32J" substitutes)" ] \
+  && ok "env: an unterminated flow sequence warns once and adopts nothing" \
+  || nok "env E32" "got '$E32J'"
+
+# E33: a typo in a TOP-LEVEL key. Pairs with E7, which pins that such a section's list is
+# not adopted — the count is what tells the user WHY nothing was adopted. Exactly one, not
+# two: the indented `substitutes:` beneath it is inside no tracked section and is not a
+# discarded setting, it is a line belonging to a key that does not exist.
+mkcfg 'standlaone:
+  substitutes:
+    - quality'
+E33J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E33J" config_warnings)" = 1 ] && [ -z "$(jfield "$E33J" substitutes)" ] \
+  && ok "env: an unknown top-level key warns ONCE, not once per line beneath it" \
+  || nok "env E33" "got '$E33J'"
+
+# E34: THE MUST-NOT-FIRE CASE, and the reason the counter looks at indentation at all.
+# `seo.routes` is documented in three shipped files as having no effect, so a repo that
+# pins it followed the docs and must not be nagged. Its whole subtree is skipped by
+# indent. The second clause is load-bearing: a `skip` that never released would also
+# produce zero warnings while swallowing the `posture:` line after it.
+mkcfg 'seo:
+  routes:
+    "/blog/*": public-indexed
+    "/app/*": private-closed
+  posture: private-closed'
+E34J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E34J" config_warnings)" = 0 ] \
+  && [ "$(jfield "$E34J" seo_posture)" = private-closed ] \
+  && ok "env: seo.routes and its subtree warn ZERO, and the posture after it is still read" \
+  || nok "env E34" "got '$E34J'"
+
+# E35: the item-level bounds E14/E15 pin are counted PER ITEM, not once for the list —
+# 40 items against a 32-item cap is 8 discarded settings. Written as the arithmetic of the
+# other two caps rather than a bare 8 so this does not become a third place stating 32.
+{ printf '%s\n' 'standalone:' '  substitutes:'
+  i=1; while [ "$i" -le 40 ]; do printf '    - axis%s\n' "$i"; i=$((i+1)); done
+} > "$ER/.forgeward/config.yml"
+E35J="$(envprobe "$EMPTY_CFG")"
+E35N="$(jfield "$E35J" substitutes | tr ',' '\n' | grep -c .)"
+[ "$(jnum "$E35J" config_warnings)" = "$((40 - E35N))" ] && [ "$E35N" = 32 ] \
+  && ok "env: items dropped by the 32-item cap are counted one apiece" \
+  || nok "env E35" "got '$E35J'"
+
+# E36: the count is bounded like every other value that reaches the marker. The 64KB size
+# cap upstream still admits a file with thousands of junk lines, and this field is read on
+# every push. 999 is the cap; a file with more warnings than that reports 999 and not a
+# truncation flag, because a config in that state has a problem the exact number does not
+# sharpen. Also guards the marker's `[0-9][0-9]?[0-9]?` arm, which a 4-digit count fails.
+{ i=1; while [ "$i" -le 1010 ]; do printf 'junk%s:\n' "$i"; i=$((i+1)); done; } \
+  > "$ER/.forgeward/config.yml"
+E36J="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E36J" config_warnings)" = 999 ] \
+  && ok "env: the warning count is capped at 999 so the marker's digit bound cannot overflow" \
+  || nok "env E36" "got '$E36J'"
+rmcfg
+
+# E37: the field survives into the marker AS A NUMBER. E10 proves the environment object
+# round-trips; this proves the one non-string field is not quoted along the way, because
+# `_env_ok` matches it unquoted and a probe that quoted it would degrade every marker to
+# `probe: unavailable` — the silent failure the coupling comment above warns about.
+E37R="$TMP/env-marker-warn"; mkrepo "$E37R"
+mkdir -p "$E37R/.forgeward"
+printf '%s\n' 'standalone:' '  substitues:' '    - quality' > "$E37R/.forgeward/config.yml"
+( cd "$E37R" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
+   && git checkout -q -b feat && echo b > b.txt && git add -A && git commit -qm work \
+   && CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" \
+) >/dev/null 2>&1
+E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
+[ -f "$E37J" ] \
+  && python3 -I -c 'import json,sys; e=json.load(open(sys.argv[1]))["environment"]; sys.exit(0 if e.get("config_warnings")==1 and isinstance(e["config_warnings"],int) and not isinstance(e["config_warnings"],bool) else 1)' "$E37J" \
+  && ok "env: config_warnings reaches the marker as a JSON number, not a quoted string" \
+  || nok "env E37" "marker '$E37J'"
 
 # =============================================================================
 # A25–A29 — the two repo-wide conventions, pinned.

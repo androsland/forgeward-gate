@@ -254,16 +254,56 @@ Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B s
 0.8.0** — entry archived to [`TODOS-DONE.md`](TODOS-DONE.md). What follows is what it
 did *not* close.
 
-- **Nothing validates `.forgeward/config.yml` or warns on an unknown key, so a typo is
-  indistinguishable from an absent key.** `substitues:`, `postures:`, an invalid posture
-  value, an unterminated flow sequence (`[a, b`) — every one reads as "not configured" and
-  produces exactly the output of a repo with no config at all. The direction is right (a
-  refused shape costs a disclosure you already answered, never a skipped check) but the
-  silence is not: the user has no way to tell a config that was read and understood from one
-  that was read and discarded. The cheap version is a `config_warnings` count in the probe's
-  JSON that the gate renders as one line; the expensive version is a real schema. Note the
-  probe emits JSON with no channel for prose, so this is a shape change, not a `printf`.
-  (0.9.0, 2026-08-06) **Priority:** P2
+- **The warning is a COUNT, so a user with five of them still has to find their own typo.**
+  Closed the silence in 0.13.0, not the diagnosis: `config_warnings: 3` says look at the file,
+  never which three lines. The constraint that forced it is structural rather than lazy — the
+  probe's output is interpolated into the pass marker as JSON by `printf`, and an integer is
+  the only shape with no representable `"`, `,`, `{` or `}`, which is also what lets `_env_ok`
+  match it more tightly than the quoted fields beside it. Naming the keys means either
+  escaping repo-controlled strings on the path that authorizes a push (the thing every other
+  decision in that file exists to avoid), or giving the probe a second output channel the
+  marker does not read — which is the shape worth pricing if this is ever reopened, since the
+  gate already runs the probe directly and does not learn the count from the marker.
+  (0.13.0, 2026-08-18) **Priority:** P3
+- **Nothing detects the case where `config_warnings` is meaningless.** The reader is not a
+  YAML parser, so on a file using anchors, aliases, multi-document streams or block scalars
+  it counts over lines that were never keys — a number that looks like a diagnosis and is
+  noise. The count is honest about *shapes the reader knows*; it has no way to notice it is
+  out of its depth, and there is no cheap test for "this file is YAML I do not implement"
+  short of implementing it. Written into the probe header, the skill and README as an
+  explicit non-goal rather than left implied. Reopen only alongside a real parser.
+  (0.13.0, 2026-08-18) **Priority:** P4
+- **`config_warnings` cannot see a duplicate key, which is the one malformed shape that is
+  also silently *honoured*.** YAML resolves duplicates last-wins; this reader has no notion
+  of a key it has already seen, so `posture:` twice under `seo:` sets the posture twice and
+  counts nothing — both spellings look honoured and one of them silently lost. Distinct from
+  every other case the counter covers, all of which are *discards*. Cheap to add for the two
+  tracked paths specifically (a seen-flag per key, not a general mechanism); left out of
+  0.13.0 to keep that change purely additive over the existing rules.
+  (0.13.0, 2026-08-18) **Priority:** P4
+- **A column-0 comment inside the `seo.routes` subtree releases the skip, and the rest of the
+  subtree then gets counted.** Raised by the security reviewer on the 0.13.0 gate run and
+  reproduced before filing: the subtree exemption is indent-based, and a `#` line at column 0
+  has indent 0, which is never `> skip`, so the skip clears one line early and every remaining
+  `routes:` child is matched by the generic indented-key rule instead. (The column-0 section
+  reset does not fire on it — that rule excludes `#` — so `in_seo` is still set.) Measured on a
+  two-route fixture: column-0 comment → `config_warnings:1`; the same file without it → `0`;
+  the same file with the comment *indented* → `0`. `seo_posture` was honoured in all three. So
+  it over-counts only: it cannot suppress a warning that should fire, and it cannot swallow
+  `posture:` or `substitutes:`, both matched by rules that run before the skip-continuation
+  rule and at any indent. That direction — disclose more, never less — is why it did not block
+  the gate. The fix is one clause (do not release the skip on a comment line), but it changes
+  the reader's rule ordering, which is exactly the property 0.13.0 was careful to leave alone,
+  so it wants its own commit and its own assertion rather than riding on the release that
+  introduced it. (security review, 2026-08-18) **Priority:** P3
+- **The gate's one-line config note is model-rendered and has not been live-tested.** 0.13.0
+  pins the probe's numbers in E28–E37 and verified them by hand against the live-test
+  fixtures, but the half only a model can satisfy — that `/forgeward:gate` actually prints
+  the `N setting(s) were read and discarded` line, and still writes the marker on all-PASS —
+  is unverified. `live-test/LIVE-TEST.md` §5 carries the steps and is explicitly marked as
+  NOT covered by its own 2026-08-06 / 0.9.0 stamp. Same class as every other model-behaviour
+  claim in that file: the script side is testable and tested, the rendering side is not.
+  (0.13.0, 2026-08-18) **Priority:** P3
 - **`seo.routes` is documented and unread, now deliberately and in writing.** 0.9.0 wired
   `seo.posture` and declined the per-route mapping: glob keys in a flow mapping need the YAML
   parser the reader exists to avoid. All three mentions (README, `skills/gate/SKILL.md`,
@@ -271,7 +311,13 @@ did *not* close.
   a broken promise — but a repo with a marketing site and an app on one origin genuinely
   wants it, which is the case the whole posture-per-route-group design is built around.
   Reopening it means taking a YAML dependency outright, not growing the awk.
-  (0.9.0, 2026-08-06) **Priority:** P3
+  **0.13.0 hardened the disclosure rather than closing the gap**: `config_warnings`
+  deliberately does not count `routes:` or anything indented under it, because a repo that
+  pins it followed three shipped documents and a count that fires on a conforming
+  configuration teaches the reader to ignore the count. That makes "documented as unread" a
+  load-bearing contract now, not just a note — if `routes:` is ever honoured, or ever
+  un-documented, the counter's skip has to move with it.
+  (0.9.0, 2026-08-06; amended 0.13.0, 2026-08-18) **Priority:** P3
 - **The marker's `schema` field is written by nothing-reads-it, and so is `environment`.**
   Grepped: outside its own write site and its comment, the only reader of `schema` anywhere
   is E10 — a test asserting it equals the current number. No freshness check consults it,
@@ -302,7 +348,15 @@ did *not* close.
   `$` stops turning it red. Verified in both directions by mutation. So a new probe field is
   now a **three**-file edit, and the third is the one whose omission is silent: `_env_ok`
   failing loses provenance and reddens E10, while a stale E17 reddens nothing at all and
-  quietly retires a security assertion. (0.9.0, 2026-08-06)
+  quietly retires a security assertion.
+  **Exercised a second time in 0.13.0** (`config_warnings`), and both halves re-verified by
+  mutation rather than taken from this entry: a stale `_env_ok` reddens E10 and degrades
+  every marker to `{"probe":"unavailable"}`; a dropped trailing `$` reddens E17 with the
+  current payload and leaves the suite fully green with the stale one. Two-for-two means
+  this is the normal cost of a probe field, not a one-off. The obligation is now stated at
+  the probe's own `printf` — the file someone editing the output actually has open — with
+  this entry as the provenance rather than the only record.
+  (0.9.0, 2026-08-06; re-confirmed 0.13.0, 2026-08-18)
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
   The `[ -L ]` refusal and the `[ -f ]`/`[ -r ]` arm beside it run in
   `forgeward-detect-environment.sh`'s config-reading block, but `wc -c` and
@@ -861,11 +915,51 @@ already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), incl
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
 
+**Currently 8, not 5, and that is a deferral rather than drift.** Archive pass 4 is due —
+this file is ~115KB against a ~50KB threshold and this section is ~43KB of it — but the
+split is prose-only bulk and 0.13.0 changed executable behaviour, so bundling the two would
+bury a script diff under a four-figure line count. It is the next branch, on its own. Read
+this section as "the 8 most recent" until then.
+
+- **P2: `.forgeward/config.yml` said nothing when it was read and discarded.** Shipped on
+  `feat/config-warnings` (0.13.0) — **PR number and merge SHA not yet known at write time**,
+  because this entry is written in the same commit as the work so the PR is current when it
+  opens. The next sweep stamps them; an entry here without them means the branch has not
+  merged yet, not that the record is complete.
+
+  The probe gained `config_warnings`, an integer count of settings it was addressed by and
+  could not use, and the gate renders one line when it is non-zero. **Visibility only — every
+  rule in the reader accepts and rejects exactly what it did before**, verified by the whole
+  pre-existing E1–E27 block staying green unchanged. The counters are appended after every
+  existing rule precisely so they cannot shadow one.
+
+  **Two deliberate non-fires, and the second is the load-bearing one.** An empty item
+  (`substitutes: []`, a trailing comma) names nothing, so nothing was discarded. And
+  `seo.routes` plus its whole subtree is skipped by indent, because it is documented as
+  unhonoured in README, `skills/gate/SKILL.md` and `agents/seo-reviewer.md` — a count that
+  fires on a configuration that followed the docs trains the reader to ignore the count.
+  That is the one place this reader treats indentation as structure.
+
+  **`0` is not a clean bill, and this is now written in three shipped files** because it is
+  the trap the field creates: a config the probe could not open at all also reports `0`, and
+  only the separate `config` field distinguishes them. The live-test's symlink step is
+  written as exactly that trap.
+
+  **The vacuity direction here is the reverse of E1/E2's.** Nine of the ten new assertions
+  want a non-zero count, so a counter stuck on `1` would green all nine while being useless;
+  E28 (a fully-honoured config) and E34 (`seo.routes` plus subtree) are the only two
+  asserting `0` and exist as that control. Confirmed by mutation: `warn()` as a no-op reddens
+  exactly E29–E33 and E35–E37, flooring the count at `1` reddens exactly E28 and E34, and
+  neither touches anything outside the block.
+
+  **The three-file obligation was exercised for the second time and both failure modes
+  re-measured rather than quoted** — see the entry under `## Standalone posture`. Suites at
+  HEAD: gate 194/0, pre-push 15/0, rules 39/0, version-check 51/0.
+
 - **P3: the two-arm unknown-mode divergence closed, and the fix's own guard turned out not
-  to halt.** Shipped on `fix/normalize-manifest-mode-divergence` — **PR number and merge SHA
-  not yet known at write time**, because this entry is written in the same commit as the
-  work so the PR is current when it opens. The next sweep stamps them; an entry here
-  without them means the branch has not merged yet, not that the record is complete.
+  to halt.** Shipped on `fix/normalize-manifest-mode-divergence` as **PR #35, merged
+  `840d936`, 2026-08-18** — stamped by this sweep, as the placeholder that stood here asked
+  for.
 
   **The fix is structural, not behavioural, and that was the choice.** The entry named
   aligning the two arms as the remedy; aligning them leaves two implementations that can

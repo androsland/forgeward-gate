@@ -95,9 +95,54 @@ gs_cso="$(probe cso)"
 #
 # AN UNRECOGNISED POSTURE IS DROPPED SILENTLY, and that is the fail-open direction here: a
 # typo'd or invented value reads as "not pinned", so the seo-reviewer classifies by
-# detection — its normal job — instead of acting on a pin nobody can honour. The cost is
-# that a typo is indistinguishable from an absent key. Nothing in this file validates the
-# config or warns on unknown keys; see TODOS.md.
+# detection — its normal job — instead of acting on a pin nobody can honour. Same for every
+# other shape above: refusing costs a disclosure the user already answered, never a skipped
+# check, so the DROPPING stays. What changed is that it is no longer SILENT.
+#
+# `config_warnings` COUNTS THE DROPS. It is a count and nothing else — no key names, no line
+# numbers, no prose. Three reasons it is a bare integer rather than a message: this output is
+# interpolated into the pass marker as JSON by `printf`, so every field is an injection
+# surface and an integer is the only shape with no representable `"`, `,`, `{` or `}`; the
+# marker's shape check in `forgeward-write-marker.sh` validates against a closed vocabulary,
+# which prose has none of; and the caller renders one line, for which "n settings were read
+# and discarded" is enough to send someone to their own config. Someone wanting the offending
+# keys named should read the file — this field exists to tell them there is a reason to.
+#
+# IT CHANGES NOTHING ABOUT WHAT IS HONOURED. Every rule below that accepted or rejected a
+# line before still accepts or rejects it identically; the counter is additive. That is
+# deliberate: this entry was filed because silence is bad feedback, not because the parsing
+# is wrong, and coupling a visibility fix to a behaviour change would make the behaviour
+# change ship unreviewed.
+#
+# WHAT IT COUNTS — one per setting the reader was addressed by and could not use:
+#   1. a top-level key that is not `standalone:` or `seo:`
+#   2. an indented key under `standalone:` that is not `substitutes:`  (`substitues:`)
+#   3. an indented key under `seo:` that is not `posture:` or `routes:`  (`postures:`)
+#   4. a `posture:` value outside the six literals, including an empty one
+#   5. a `substitutes` item dropped by the charset, the 64-char cap or the 32-item cap
+#   6. an unterminated flow sequence (`substitutes: [a, b`), which reaches rule 2
+#
+# WHAT IT DELIBERATELY DOES NOT COUNT, written here because an unstated limit reads as a
+# claim of coverage:
+#   - `seo.routes` and everything indented under it. It is documented in README,
+#     `skills/gate/SKILL.md` and `agents/seo-reviewer.md` as having no effect, so a repo that
+#     pins it followed the docs; warning about it would fire on a legitimate configuration
+#     and train the reader to ignore the count. Its subtree is skipped by INDENT, which is
+#     the one place this reader looks at indentation as structure.
+#   - an empty item (`substitutes: []`, or a trailing comma). Nothing was named, so nothing
+#     was discarded.
+#   - comments and blank lines, at any indent.
+#
+# WHAT IT STRUCTURALLY CANNOT SEE, same reason: this is still not a YAML parser, so a file
+# using anchors, aliases, multi-document streams or block scalars produces a count over lines
+# that were never keys — the number is meaningless there, and nothing detects that case. It
+# also cannot see a DUPLICATE key (YAML resolves last-wins; both spellings are honoured-
+# looking here and neither is counted), and it cannot see a key nested three levels deep as
+# distinct from a legitimate one, because the reader only ever tracked two.
+#
+# ZERO IS NOT A CLEAN BILL. `config_warnings: 0` on a config the reader could not open at all
+# reads exactly like 0 on a perfect one — `config` carries that distinction, not this field,
+# and a caller must read both.
 #
 # SYMLINKS ARE REFUSED, NOT FOLLOWED. `[ -f ]` and `[ -r ]` both follow links, so before
 # this check a repo could commit `.forgeward/config.yml` as a git symlink (mode 120000)
@@ -128,6 +173,7 @@ cfg=""
 config_state="absent"
 substitutes=""
 seo_posture=""
+config_warnings=0
 if [ -n "$cfg" ] && [ -L "$cfg" ]; then
   config_state="unreadable"
 elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
@@ -143,9 +189,10 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
     config_state="unreadable"
   else
     config_state="present"
-    # Two values come back on ONE line separated by `|`, which neither can contain: the
-    # substitute charset excludes it and the posture is compared against six literals.
-    # A separator rather than two lines because splitting lines in bash 3.2 without
+    # Three values come back on ONE line separated by `|`, which none can contain: the
+    # substitute charset excludes it, the posture is compared against six literals, and
+    # the third field is `%d` of a counter this program owns.
+    # A separator rather than three lines because splitting lines in bash 3.2 without
     # `read -d` or a second tool is clumsier than a parameter expansion, and this keeps
     # the script's tool set at git/wc/awk.
     #
@@ -172,6 +219,15 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
       function trim(s) {
         sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s
       }
+      # Capped at 999 for the same reason every other value here is bounded: this lands in
+      # a marker read on every push, and the 64KB size cap upstream still permits a file
+      # with thousands of junk lines. The cap is not reported as a cap — a config that
+      # produces 999 warnings has a problem the exact number does not sharpen.
+      function warn() { if (w < 999) w++ }
+      # The ONLY place this reader treats indentation as structure, and it is confined to
+      # skipping a subtree it has already decided not to read. `match` sets RLENGTH, which
+      # is the portable way to measure a leading run without a substr loop.
+      function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
       # Bounded on BOTH axes as well as charset. Charset alone stops forgery but not
       # size: a 5000-character all-alphanumeric name passes every metacharacter check
       # and lands in the marker verbatim. Not a forgery path — found by an injection
@@ -184,16 +240,22 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
       # budget than a block one.
       function additem(v) {
         v = unquote(v)
+        # An empty item is not a discarded setting — `[]` and a trailing comma both split
+        # to one here and neither named anything — so it returns before the counter.
+        if (v == "") return
         if (n < 32 && length(v) <= 64 && v ~ /^[A-Za-z0-9_-]+$/) {
           out = (out=="" ? v : out "," v); n++
-        }
+        } else warn()
       }
       # Track only the two-level paths standalone -> substitutes and seo -> posture. Any
       # line at column 0 that is not one of those two headers ends both sections, so a
       # later top-level key cannot have its list or its posture adopted.
-      /^standalone:[[:space:]]*$/ { in_s=1; in_sub=0; in_seo=0; next }
-      /^seo:[[:space:]]*$/        { in_seo=1; in_s=0; in_sub=0; next }
-      /^[^[:space:]#]/            { in_s=0; in_sub=0; in_seo=0 }
+      # `skip` is cleared by all three because a column-0 line ends every subtree by
+      # definition; clearing it here rather than at the bottom keeps the reset on the
+      # rules that already own section state instead of splitting the invariant in two.
+      /^standalone:[[:space:]]*$/ { in_s=1; in_sub=0; in_seo=0; skip=0; next }
+      /^seo:[[:space:]]*$/        { in_seo=1; in_s=0; in_sub=0; skip=0; next }
+      /^[^[:space:]#]/            { in_s=0; in_sub=0; in_seo=0; skip=0 }
       # Flow sequence, complete on its own line. Requires the closing bracket: an
       # unterminated `[a, b` falls through to the list-closing rule and reads as nothing
       # configured, which discloses. Both strips are anchored - `^[^[]*\[` takes
@@ -234,23 +296,60 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
         if (v == "public-indexed" || v == "private-shareable" || v == "private-closed" ||
             v == "staging-preview" || v == "authenticated-shareable" || v == "unknown")
           posture = v
+        else
+          warn()   # includes a bare `posture:` with no value — a key that named nothing
         next
       }
       # A non-item line at the substitutes indent level closes the list.
       in_sub && /^[[:space:]]+[^[:space:]-]/ { in_sub=0 }
-      END { printf "%s|%s\n", out, posture }
+
+      # --- counting, and it must stay LAST ------------------------------------------
+      # Every rule above either honoured its line or ignored it on purpose, and each of
+      # them ends in `next`. So a line arriving here is one nothing above claimed, which
+      # is exactly the population this field is about. Putting the counters last is what
+      # lets them be purely additive: they cannot shadow a rule that used to fire.
+      #
+      # The two exceptions are the rules that deliberately fall through — the column-0
+      # reset above and the list-closer immediately preceding — and both want their line
+      # counted, which is why they do not `next`.
+      skip > 0 { if (indent($0) > skip) next; skip = 0 }
+      in_seo && /^[[:space:]]+routes:/ { skip = indent($0); next }
+      # An indented key under either section. `[^[:space:]#-]` excludes comments and block
+      # sequence items; `[^:]*:` requires a colon, so a bare word or a stray value line is
+      # not counted as a key. An unterminated `substitutes: [a, b` lands here, correctly.
+      (in_s || in_seo) && /^[[:space:]]+[^[:space:]#-][^:]*:/ { warn(); next }
+      # A top-level key that is neither `standalone:` nor `seo:` — those two `next`ed far
+      # above and can never reach this line. Anchored at column 0, so `---`, a comment and
+      # any indented line are all excluded by the pattern itself.
+      /^[A-Za-z_][A-Za-z0-9_-]*:/ { warn() }
+      END { printf "%s|%s|%d\n", out, posture, w }
     ' "$cfg" 2>/dev/null)"; then
-      # Exit status 0 is not enough: the END block always prints the separator, so output
-      # without one means awk produced something other than this program did - the same
-      # "it ran" vs "it worked" distinction that cost 0.7.3 and 0.7.6.
+      # Exit status 0 is not enough: the END block always prints BOTH separators, so output
+      # with fewer means awk produced something other than this program did - the same
+      # "it ran" vs "it worked" distinction that cost 0.7.3 and 0.7.6. The pattern counts
+      # two on purpose; `*"|"*` would accept the old two-field line from a half-upgraded
+      # copy of this script and silently read the posture as the warning count.
       case "$_cfgout" in
-        *"|"*) substitutes="${_cfgout%%|*}"; seo_posture="${_cfgout#*|}" ;;
-        *)     config_state="unreadable"; substitutes=""; seo_posture="" ;;
+        *"|"*"|"*)
+          substitutes="${_cfgout%%|*}"
+          _rest="${_cfgout#*|}"
+          seo_posture="${_rest%%|*}"
+          config_warnings="${_rest#*|}"
+          # Re-validated here rather than trusted from awk. The field is interpolated into
+          # the marker and `%d` on a non-numeric string is undefined across printf
+          # implementations, so a count that is not digits is treated as the awk-exploded
+          # case below - the same refusing direction the size cap takes.
+          case "$config_warnings" in
+            ''|*[!0-9]*)
+              config_state="unreadable"; substitutes=""; seo_posture=""; config_warnings=0 ;;
+          esac
+          ;;
+        *) config_state="unreadable"; substitutes=""; seo_posture=""; config_warnings=0 ;;
       esac
     else
       # awk absent or exploded: say so rather than claiming an empty list, so the caller
       # discloses instead of silently believing nothing was configured.
-      config_state="unreadable"; substitutes=""; seo_posture=""
+      config_state="unreadable"; substitutes=""; seo_posture=""; config_warnings=0
     fi
   fi
 elif [ -n "$cfg" ] && [ -e "$cfg" ]; then
@@ -265,7 +364,18 @@ fi
 # against its complete literal shape, anchored at both ends. Adding, removing or
 # reordering a field here without editing `_env_ok` in the same commit makes every marker
 # record `environment: {"probe":"unavailable"}` — safe, but provenance is lost silently
-# except for E10 going red.
-printf '{"gstack_ship":"%s","gstack_review":"%s","gstack_cso":"%s","config":"%s","substitutes":"%s","seo_posture":"%s"}\n' \
-  "$gs_ship" "$gs_review" "$gs_cso" "$config_state" "$substitutes" "$seo_posture"
+# except for E10 going red. Adding `config_warnings` in 0.13.0 was the second time this
+# obligation was exercised and it is now known to be a THREE-file edit, not two: E17's
+# hardcoded payload in test/gate-test.sh pins the shape match's trailing anchor by feeding
+# it the probe's genuine output plus an appendix, so a stale payload is rejected on its
+# prefix instead and quietly stops testing the anchor. That third one reddens nothing.
+#
+# `config_warnings` is the only UNQUOTED value here, and the asymmetry is deliberate: it is
+# a count, JSON has numbers, and `[0-9]` is a strictly narrower vocabulary than any quoted
+# field beside it — a bare integer cannot carry the `"`/`,`/`{`/`}` a splice needs, so the
+# marker's shape check is tighter on this field than on the strings, not looser. `%d`
+# rather than `%s` because the value has already been proven to be digits and `%d` fails
+# loudly on anything else.
+printf '{"gstack_ship":"%s","gstack_review":"%s","gstack_cso":"%s","config":"%s","substitutes":"%s","seo_posture":"%s","config_warnings":%d}\n' \
+  "$gs_ship" "$gs_review" "$gs_cso" "$config_state" "$substitutes" "$seo_posture" "$config_warnings"
 exit 0

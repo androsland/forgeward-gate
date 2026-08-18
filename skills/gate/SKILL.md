@@ -191,6 +191,40 @@ quality does neither job well.
 has already answered and you say nothing at all. A disclosure that repeats after being
 answered is nagging, and nagging is how gates get switched off.
 
+### The config was read — say whether it was understood
+
+The probe also returns `config_warnings`, an integer count of settings in
+`.forgeward/config.yml` that it was addressed by and could not use: an unknown key under
+`standalone:` or `seo:`, an unknown top-level key, a `posture:` outside the six literals,
+an item dropped by the substitutes charset or caps, an unterminated flow sequence.
+
+**If `config_warnings` is greater than 0, print exactly one line** — the count and the
+path, nothing more:
+`NOTE: .forgeward/config.yml — 2 setting(s) were read and discarded (unknown key, or a value outside the accepted set). Everything else applied normally.`
+
+Then **carry on and gate normally.** Discarding is the correct, deliberate behaviour: the
+reader refuses shapes it cannot honour so a misconfiguration costs a redundant disclosure
+rather than a silently skipped check. What was missing until 0.13.0 was any way for the
+user to tell a config that was *read and understood* from one that was *read and
+discarded* — the two produced byte-identical output, so a typo'd `substitues:` looked
+exactly like no config at all. This line closes that and nothing else. Never FAIL on it,
+never withhold the marker, never re-fire a reviewer.
+
+**Do not name the offending keys** — the probe deliberately returns a count and no
+strings, because its output is interpolated into the pass marker and an integer is the
+only shape with nothing to splice. You do not have the key names and must not guess them;
+the line's job is to send someone to their own file.
+
+**Three things this count does not mean, and you must not imply otherwise.** `0` is not a
+clean bill — a config the probe could not open at all also reports `0`, and `config` is
+the field that separates those, so read both and prefer `config`'s answer when it says
+`unreadable` or `absent`. It says nothing about `seo.routes`, which is documented as
+unhonoured in three shipped files and is deliberately **not** counted, so a repo pinning it
+gets no line here and the separate Step 1a note about it still applies. And the reader is
+not a YAML parser: on a file using anchors, aliases, multi-document streams or block
+scalars the number is counted over lines that were never keys, and nothing detects that
+case — so treat a large count as "look at your config", never as a defect tally.
+
 **`quality` is the one axis where PRESENT is also a disclosure, and it is a different
 sentence from the absent case.** The deferral is reciprocal, and that was observed rather
 than theorised: in one repo's review log gstack's `/review` skipped its `maintainability`
