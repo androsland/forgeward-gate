@@ -2543,17 +2543,37 @@ E16M="$(fakeprobe dup '{"a":"b"},"diff_hash":"FORGEDHASH","passed":false,"z":{}'
 # the shape regex would produce. Pinned separately from E16 because that single-character
 # regression is invisible to E16 and to every other assertion in this file.
 #
-# THE PREFIX MUST STAY EXACTLY CURRENT, or this assertion quietly stops testing anything.
-# It only exercises the trailing anchor while the opening bytes are a shape `_env_ok`
-# would otherwise accept; the moment a field is added to the probe and not added here, the
-# payload is rejected on its prefix instead and removing the `$` no longer turns it red.
-# Verified by mutation when `seo_posture` was added: with the field in this string,
-# dropping `$` from `_env_ok` reddens E17; with the stale string, it does not. Re-verified
-# the same way when `config_warnings` was added in 0.13.0 — which is the second time this
-# payload has had to move with the probe, and the reason the obligation is now written at
-# the probe's own printf rather than only in TODOS.md.
-E17M="$(fakeprobe tail '{"gstack_ship":"absent","gstack_review":"absent","gstack_cso":"absent","config":"absent","substitutes":"","seo_posture":"","config_warnings":0},"diff_hash":"TAILFORGE","passed":false,"z":{}')"
-[ -f "$E17M" ] && notforged "$E17M" TAILFORGE \
+# THE PREFIX IS DERIVED, NOT TYPED, and that is the whole of this block. E17 exercises the
+# trailing anchor only while its opening bytes are a shape `_env_ok` would otherwise
+# accept, so a payload that has fallen behind the probe is refused on its PREFIX instead
+# and dropping the `$` stops turning it red. That was a live hazard twice — `seo_posture`
+# in 0.9.0 and `config_warnings` in 0.13.0 each had to be hand-copied here — and mutation
+# confirmed both times that the stale string leaves the whole suite green while the current
+# one reddens. A forgotten copy retired a security assertion and reddened NOTHING, which
+# made it the one leg of the probe-field obligation with no signal at all. Deriving the
+# prefix from $E1J (the live probe, every root neutralised, captured at E1) deletes the
+# hand-copy rather than restating the warning: a new field lands here the moment the probe
+# emits it, so the payload cannot go stale and the leg is closed by construction.
+#
+# WHAT THIS DOES NOT COVER, stated so the derivation is not read as more than it is: it
+# cannot see `_env_ok` falling behind the probe. In that direction the derived prefix is
+# refused, the marker degrades to {"probe":"unavailable"}, and E17 goes green for the wrong
+# reason. E10 is what reddens there — it runs the real probe through the real writer and
+# requires the marker's environment to carry probe keys — so the two cover opposite
+# directions and neither is sufficient alone. Do not "simplify" either into the other.
+#
+# The `case` is the emptiness floor this repo requires of any derived assertion (an
+# assertion built on a value that can be empty asserts a property of nothing). If $E1J is
+# empty or is not a probe line, E17 must go RED rather than splice a nonsense payload and
+# pass on it — a broken probe would otherwise green the very assertion this block exists
+# to make.
+E17P="$E1J"
+case "$E17P" in
+  '{"gstack_ship":'*'}') ;;
+  *) E17P="" ;;
+esac
+E17M="$(fakeprobe tail "$E17P"',"diff_hash":"TAILFORGE","passed":false,"z":{}')"
+[ -n "$E17P" ] && [ -f "$E17M" ] && notforged "$E17M" TAILFORGE \
   && ok "env: a valid-prefix-plus-appendix splice is rejected (the shape match is anchored at BOTH ends)" \
   || nok "env E17" "marker '$E17M'"
 

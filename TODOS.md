@@ -340,6 +340,20 @@ did *not* close.
   regex stops being readable and taking the parser dependency becomes the better trade.
   (security review, 2026-08-06) **Priority:** P2
 
+  **The revisit condition is MET and the named remedy is still refused — recorded so the
+  trigger is not re-evaluated from scratch every pass.** The probe emits seven fields and
+  `_env_ok` is a single 247-byte line, which is past "a handful". But this entry's own
+  suggested trade — "taking the parser dependency" — is refused by `CLAUDE.md`'s **one reader
+  per shape, never a second parser arm**, and by the reason `forgeward-write-marker.sh`
+  avoids an interpreter in the first place: it sits on the **push-authorizing** path, where a
+  dependency that is present on the author's box and absent on an installer's decides whether
+  a marker is written. So the trade this entry proposed is not available at the price it
+  assumed. What 0.13.1 did instead is lower the cost the coupling was being judged on: the
+  edit is two files, not three, and the silent leg is gone. **The coupling itself is
+  unchanged and this entry stays open** — a literal shape match still has to move whenever
+  the probe's line does. Reopening should argue about the two-file cost that actually exists
+  now, not the three-file one that no longer does. (re-evaluated 0.13.1, 2026-08-19)
+
   **A second obligation was found the first time this was exercised** (0.9.0 added
   `seo_posture`): **E17's hardcoded payload must be updated in the same commit too.** That
   assertion pins the shape match's *trailing* anchor by feeding it the probe's genuine output
@@ -357,6 +371,18 @@ did *not* close.
   the probe's own `printf` — the file someone editing the output actually has open — with
   this entry as the provenance rather than the only record.
   (0.9.0, 2026-08-06; re-confirmed 0.13.0, 2026-08-18)
+
+  **CLOSED in 0.13.1 — the third leg is gone, and the fix was to delete the copy rather than
+  to warn harder about it.** E17 now derives its prefix from `$E1J`, the live probe captured
+  at E1 with every root neutralised, so there is no hand-copied literal left to fall behind:
+  a new field appears in the payload the moment the probe emits it. A new probe field is a
+  **two**-file edit again — the `printf` and `_env_ok` — and that is now stated at the
+  `printf` itself. **What it does not do:** it cannot see `_env_ok` falling behind the probe.
+  In that direction the derived prefix is refused, the marker degrades to
+  `{"probe":"unavailable"}`, and E17 goes green for the wrong reason; **E10 is what reddens
+  there**, so the two cover opposite directions and neither is sufficient alone. E17 also
+  carries an emptiness floor, because an assertion built on a derived value that can be empty
+  otherwise asserts a property of nothing.
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
   The `[ -L ]` refusal and the `[ -f ]`/`[ -r ]` arm beside it run in
   `forgeward-detect-environment.sh`'s config-reading block, but `wc -c` and
@@ -918,6 +944,74 @@ the non-goals and reversed decisions; the rules those produced are in
 Back to five as of archive pass 4 (2026-08-18), which cleared the deferral the 0.13.0
 entry recorded: the split was held back deliberately so a four-figure prose diff would not
 bury a script change, and it shipped on its own branch instead.
+
+At **six** since 0.13.1 (2026-08-19) — the section drifts above five between archive
+passes and is cut back at the next one; it is not trimmed entry-by-entry.
+
+- **A security assertion was pinned by a hand-copied literal, and forgetting to update it
+  was the one failure in this repo with no red anywhere.** Shipped on
+  `fix/e17-derive-payload` as **PR #TBD, merged `TBD`, 2026-08-19** (0.13.1). Written in the same commit as the
+  work, so the PR was current the moment it opened and the number was not knowable then —
+  *next sweep: stamp the PR number and merge SHA here.*
+
+  **The defect is the absence of a signal, not a wrong answer.** E17 asserts that
+  `_env_ok` is anchored at *both* ends by handing `forgeward-write-marker.sh` the probe's
+  genuine output with a forgery appended. For that to test the trailing anchor, the opening
+  bytes must be a shape `_env_ok` accepts — and they were typed by hand, with nothing
+  comparing them to the probe. Add a field to the probe, leave the copy alone, and the
+  payload is refused on its **prefix** instead: `notforged` still returns true, E17 still
+  prints `ok`, and dropping the trailing `$` — the exact one-character regression E17 exists
+  to catch — reddens nothing at all.
+
+  **It read as handled precisely because it had always been handled.** The copy moved twice
+  and both times correctly (`seo_posture` 0.9.0, `config_warnings` 0.13.0). The obligation
+  was written in three places and honoured on both occasions. What kept E17 honest was a
+  person remembering; the failure mode of forgetting was silent, while the other two legs of
+  the same obligation are loud (a stale `_env_ok` reddens E10 and degrades every marker to
+  `{"probe":"unavailable"}`).
+
+  **The fix deletes the copy rather than warning about it harder.** E17 derives its prefix
+  from `$E1J` — the live probe captured at E1 with all three roots neutralised — so a new
+  field is in the payload the moment the probe emits it. `grep` confirms no literal copy of
+  the probe's output line remains anywhere in the suite. A probe field is a **two**-file
+  edit again, stated at the `printf` itself.
+
+  **Non-goals, in the test and in `DECISIONS.md` rather than left implied.** It cannot see
+  `_env_ok` falling behind the probe — that direction refuses the derived prefix, degrades
+  the marker, and greens E17 for the wrong reason; **E10 reddens there**, and neither
+  assertion is sufficient alone. It does not decouple the probe from the marker writer; that
+  coupling is a separate open P2 whose price this dropped from three files to two. The
+  emptiness floor checks that `$E1J` *looks like* a probe line, not that it is correct — E1,
+  E2 and E9 own that.
+
+  **The P2's revisit trigger was re-evaluated, not actioned.** The probe is past "a handful
+  of fields", so the trigger is met — but the remedy the entry named ("take the parser
+  dependency") is refused by `CLAUDE.md`'s one-reader-per-shape rule and by
+  `forgeward-write-marker.sh` sitting on the **push-authorizing** path, where an interpreter
+  present on the author's box and absent on an installer's decides whether a marker is
+  written. Recorded in the entry so the trigger is not re-derived every pass; the entry
+  stays open.
+
+  **MUTATION — both directions, and the decisive leg is the last pair.**
+  Every mutated leg printed a verification line confirming its mutation was actually present
+  before the suite ran — a green from a mutation that silently failed to apply proves nothing.
+
+  | mutation | gate suite | E17 |
+  |---|---|---|
+  | base (unmutated) | 194/0 | `ok` |
+  | drop the `$` from `_env_ok`, nothing else | 193/1 | **RED, and only E17** |
+  | 8th probe field + `_env_ok` updated (the correct two-file edit) | 194/0 | `ok` — no test edit needed |
+  | …that field addition **plus** the dropped `$`, with this commit's E17 | 193/1 | **RED** |
+  | …the same, with **master's** E17 | 194/0 | **GREEN** |
+
+  The last two legs are byte-identical apart from which `test/gate-test.sh` runs. Master's
+  leg prints *"a valid-prefix-plus-appendix splice is rejected (the shape match is anchored
+  at BOTH ends)"* — its own unchanged wording — while the anchor it names is gone.
+
+  Isolated outside the harness, same scripts, anchor dropped: the derived payload writes a
+  marker carrying `diff_hash=TAILFORGE` — the forgery lands, `notforged` fails, E17 reddens.
+  Master's stale 7-field payload writes a marker carrying the **real** diff hash: refused on
+  its prefix, `notforged` returns true, E17 greens.
 
 - **Archive pass 4: the currency check came back CLEAN for the first time, and the cut
   arithmetic was wrong until it was written down.** Shipped 2026-08-18, docs only — no code,
