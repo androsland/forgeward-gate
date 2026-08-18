@@ -2028,7 +2028,12 @@ sys.stdout.buffer.write(json.dumps(d,sort_keys=True,separators=(",",":")).encode
 # meaningful where jq is the branch that would otherwise be taken.
 if command -v jq >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   NOJQ="$TMP/nojq"; mkdir -p "$NOJQ"
-  for t in env bash git sha256sum awk python3; do
+  # `cat` joined this list for V9, the only assertion here that reaches a raw
+  # passthrough arm. Without it that arm has nothing to exec and emits EMPTY, so V9
+  # goes red comparing raw against empty — a true failure signal for a false reason,
+  # which is worse than either a pass or an honest fail. V5-V8 never noticed because
+  # they only ever drive the two real modes with python3 present.
+  for t in env bash git sha256sum awk python3 cat; do
     p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOJQ/$t"
   done
   v_saved="$( cd "$RV" && git rev-parse HEAD )"
@@ -2083,8 +2088,54 @@ if command -v jq >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   { [ -n "$n_jq" ] && [ -n "$n_py" ] && [ "$n_jq" != "$n_py" ]; } \
     && ok "manifests: number-literal divergence between jq and python3 is still present and DISCLOSED (known residual, pinned)" \
     || nok "disclosed numeric residual changed" "jq='$n_jq' py='$n_py' — if these now MATCH, delete V8 and the BLIND SPOT paragraph in forgeward-diff-hash.sh"
+
+  # V9: the two arms must agree on an UNRECOGNISED mode, not merely on the real ones.
+  # V5-V8 all drive the script through its public interface, which takes <base> [tip]
+  # and passes mode literals internally, so none of them can reach a default arm — and
+  # the two defaults disagreed for as long as both existed: jq's `*) cat ;;` emitted
+  # the raw bytes while the python3 branch had no default at all, fell past both
+  # conditionals, and still reached json.dumps, canonicalized but NOT blanked. Same
+  # input, two outputs, decided by which interpreter was installed. Unreachable in
+  # production and therefore untestable through the front door, so this reaches in and
+  # extracts the function. The extraction is asserted BEFORE it is used: a reformat
+  # that breaks the sed range fails loudly here rather than quietly reducing this
+  # assertion to comparing two empty strings.
+  nm_fn="$(sed -n '/^normalize_manifest()/,/^}/p' "$HASH")"
+  nm_raw='{"b":2,"a":1,"version":"9.9.9"}'
+  case "$nm_fn" in
+    *"normalize_manifest()"*)
+      nm_jq="$( eval "$nm_fn"; printf '%s' "$nm_raw" | normalize_manifest bogus-mode 2>/dev/null )"
+      nm_py="$( PATH="$NOJQ" bash -c 'eval "$1"; printf "%s" "$2" | normalize_manifest bogus-mode 2>/dev/null' _ "$nm_fn" "$nm_raw" )"
+      { [ "$nm_jq" = "$nm_py" ] && [ "$nm_jq" = "$nm_raw" ]; } \
+        && ok "manifests: jq and python3 agree on an unrecognised mode — raw passthrough, no silent canonicalization" \
+        || nok "unknown-mode arm divergence" "jq='$nm_jq' py='$nm_py' raw='$nm_raw' — the branches answer differently for a mode neither handles, so the same manifest hashes differently depending on what is installed"
+      ;;
+    *)
+      nok "V9 extraction failed" "could not extract normalize_manifest from $HASH — the sed range no longer matches, so V9 asserted NOTHING"
+      ;;
+  esac
 else
-  ok "manifests: python3-fallback comparison SKIPPED — V5/V6/V7/V8 all need BOTH jq and python3 present, so the jq/python3 hash-parity guarantee is UNVERIFIED on this machine"
+  ok "manifests: python3-fallback comparison SKIPPED — V5/V6/V7/V8/V9 all need BOTH jq and python3 present, so the jq/python3 hash-parity guarantee is UNVERIFIED on this machine"
+fi
+
+# V10: the mode guard must HALT, not merely complain — and it needs no interpreter, so
+# it runs unconditionally. snapshot_manifest's guard ends in `exit 1`, but every call
+# site is a command substitution, where that exit kills only the SUBSHELL. The first
+# cut of this fix did exactly that: it printed the guard's message to stderr, assigned
+# an empty part, and went on to emit an ordinary-looking hash with status 0 — a die
+# that did not die, which is the same defect the guard was written to prevent. The
+# `|| exit 1` on each call site is what makes it real. Pinned here so removing one of
+# them fails a test instead of silently restoring a hash nobody should trust.
+BM="$TMP/badmode-diff-hash.sh"
+awk '{gsub(/snapshot_manifest \.claude-plugin\/marketplace\.json plugins/,"snapshot_manifest .claude-plugin/marketplace.json bogus-mode")}1' "$HASH" > "$BM"
+chmod +x "$BM"
+if grep -q 'bogus-mode' "$BM"; then
+  bm_out="$( cd "$RV" && "$BM" main 2>/dev/null )"; bm_rc=$?
+  { [ "$bm_rc" -ne 0 ] && [ -z "$bm_out" ]; } \
+    && ok "manifests: an unknown mode at a call site halts with no hash (exit inside \$(...) alone would not)" \
+    || nok "mode guard does not halt" "rc=$bm_rc out='$bm_out' — a mistyped mode still emits a hash that looks legitimate"
+else
+  nok "V10 setup failed" "could not inject a bad mode into a copy of $HASH — the call-site text no longer matches, so V10 asserted NOTHING"
 fi
 
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude

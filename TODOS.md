@@ -124,45 +124,39 @@ write-once and effectively gone after merge, which is why they live here now.
   another feature branch. Stated as a blind spot in the script header and
   `skills/gate/SKILL.md`; recorded here so the limit is not mistaken for coverage.
   (PR #6, 2026-08-01) **Priority:** —
-- **`normalize_manifest`'s two arms disagree on an unknown mode, which is the exact
-  divergence class its own header forbids.** `scripts/forgeward-diff-hash.sh:69` says
-  **"THE TWO BRANCHES MUST EMIT THE SAME BYTES, not merely the same semantics"**, and the
-  paragraph under it documents a shipped bug of precisely this shape — `jq -S`
-  pretty-printing where `json.dumps` was compact, so the same manifest hashed differently
-  on a machine with `jq` than on one without, and a marker written on one read as stale on
-  the other. The alignment fixed `top` and `plugins`. It did not fix the default: the `jq`
-  arm has `*) cat ;;` at `:103` and emits **raw** bytes, while the python3 arm has no
-  default at all — an unknown mode falls past both `if`/`elif` and still reaches
-  `json.dumps(d, sort_keys=True, separators=(",",":"))` at `:116`, emitting bytes that are
-  **canonicalized but not blanked**. Same input, two different outputs, decided by which
-  interpreter is installed.
-  **Latent, not live, and the reason it is latent is worth stating precisely:** the three
-  call sites at `:149-151` pass string literals (`top`, `top`, `plugins`), so the `*)` arm
-  is unreachable today and the fail direction on every reachable path is re-gate, never a
-  false PASS. It goes live the moment someone adds a fourth manifest and mistypes the
-  mode — and the failure would be a marker that reads fresh on one machine and stale on
-  another, which is the symptom the header says took a release of its own to fix.
-  **Aligning the two arms is the fix; where the alignment is enforced is the part that is
-  easy to get wrong.** Mirroring `cat` in the python3 branch closes the divergence — but
-  **the mode has to be tested before `json.load`, not at the `if`/`elif` chain where the
-  modes are currently handled.** `json.load(sys.stdin)` at `:108` drains stdin before that
-  chain runs, so a `*)`-equivalent added alongside the existing branches — the natural
-  reading of "mirror `cat` in the python3 arm" — reads an already-consumed stdin and writes
-  nothing. It would *look* like it worked, because `:131` rescues the empty result back to
-  `$raw`, which means the mirror would silently depend on the very fallback this entry
-  exists to say is not a control. Test the mode first, write `sys.stdin.buffer.read()`
-  straight out. Adding an explicit die on an unrecognised mode
-  *inside* `normalize_manifest` does not do more than that, and the first draft of this
-  entry claimed it did: `snapshot_manifest` swallows the die twice — the `2>/dev/null` at
-  `:130` discards whatever it writes to stderr, and `|| out=""` followed by
-  `[ -z "$out" ] && out="$raw"` at `:131` converts the non-zero status into raw
-  passthrough, which is **byte-identical to the mirrored-`cat` option and exactly as
-  silent**. For a die to be visible it has to be checked before that fallback — validate
-  the mode in `snapshot_manifest` ahead of `:130`, or at the top-level caller — or the
-  `2>/dev/null` has to be narrowed so a mode error survives while parse noise stays
-  suppressed. Not fixed in this PR: the branch is docs-only and a change to executable
-  behaviour does not ride along with prose.
-  (security review, archive pass 3 branch, 2026-08-17) **Priority:** P3
+- **The fix for the two-arm divergence is unreachable from any call site, so nothing but
+  V9/V10 can tell if it rots.** `normalize_manifest`'s unknown-mode guard and
+  `snapshot_manifest`'s mode guard both sit on paths that no production call reaches —
+  every call site passes a string literal. They are structural, not behavioural, which
+  means the ordinary signal that a guard broke (something visibly stops working) will
+  never fire here. The two assertions added with the fix are the entire detection
+  surface, and both are text-coupled to the script: V9 extracts `normalize_manifest`
+  with a `sed` range anchored on `^normalize_manifest()`, V10 rewrites the literal
+  `snapshot_manifest .claude-plugin/marketplace.json plugins` with `awk`. Renaming
+  either would make the extraction silently match nothing — so both were given explicit
+  `nok` arms that FAIL when the pattern misses rather than skipping, which is the
+  difference between a test that notices its own irrelevance and one that goes green on
+  an empty set. Recorded because that is a mitigation, not a solution: the coupling is
+  still there, and a rename plus a mechanical fix to the `nok` arm would restore the
+  green without restoring the coverage. (self-review, 2026-08-17) **Priority:** P4
+- **The marker is HEAD-pinned, so choosing to fix a Low finding costs a full re-review —
+  and the cost is real enough to be measured, not estimated.** The docs-only PR #34 took
+  **five** gate rounds, converging 3 → 2 → 2 → 0 findings. Every finding across all five
+  rounds was **Low**, so by the severity contract in [`CLAUDE.md`](CLAUDE.md) not one of
+  them could have failed the gate; every round after the first was voluntary. The
+  mechanism is not a bug: the marker stores a hash of HEAD's reviewed state, so any commit
+  after a PASS unpins it, and that is exactly what stops a fix from riding in unreviewed
+  behind a green marker. But it makes the *marginal* cost of acting on advisory output
+  equal to the *total* cost of the review, which inverts the incentive the Low tier exists
+  to create: the cheapest response to a Low finding is to ignore it. **Not proposing a
+  partial-re-review escape hatch** — "re-review only the files that changed" is how a
+  cross-file regression ships, and the hash covers the whole reviewed surface for that
+  reason. The tractable direction is to stop paying for rounds nobody asked for: batch
+  Low fixes to one round, or let the operator say up front that Lows will not be actioned
+  this pass. **n=1, and the shape of the 1 matters** — a docs PR is where advisory findings
+  are densest and where fixing them is cheapest, so it is the *most* favourable case for
+  re-rounds, not a typical one. Do not generalize the 5 to code PRs without measuring one.
+  (operational note, 2026-08-17) **Priority:** P3
 
 ## Reviewers
 
@@ -866,6 +860,228 @@ Only the five most recent are kept here — a sweep consults them to answer "did
 already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), including
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
+
+- **P3: the two-arm unknown-mode divergence closed, and the fix's own guard turned out not
+  to halt.** Shipped on `fix/normalize-manifest-mode-divergence` — **PR number and merge SHA
+  not yet known at write time**, because this entry is written in the same commit as the
+  work so the PR is current when it opens. The next sweep stamps them; an entry here
+  without them means the branch has not merged yet, not that the record is complete.
+
+  **The fix is structural, not behavioural, and that was the choice.** The entry named
+  aligning the two arms as the remedy; aligning them leaves two implementations that can
+  drift again, which is precisely how this bug was born from the `top`/`plugins` alignment
+  that preceded it. Instead the unknown-mode question is now asked **once, above the
+  interpreter split**, and the `jq` arm's `*) cat ;;` — the arm that used to answer it —
+  was deleted rather than mirrored. A second answer sitting beside the first is what
+  invites someone to "fix" one branch to match the other. Raw passthrough is the answer
+  because it matches the no-tool `else` arm: an unhandled manifest is hashed whole, so a
+  version bump re-gates.
+
+  **`exit 1` inside `$( )` kills the subshell, not the script — and this was found by
+  running the fix, not by reading it.** `snapshot_manifest` gained a mode guard ending in
+  `exit 1`; every call site is a command substitution, so the first version printed the
+  guard's message to stderr, assigned an empty part, and emitted **a perfectly ordinary
+  hash with status 0** — a louder version of the silence the guard was added to break.
+  Fixed with `|| exit 1` on all three calls. `set -uo pipefail` does not catch it — there
+  is no `-e`.
+
+  **`-e` is not the reason, and three separate drafts of that claim were wrong — the
+  errors are the part worth keeping.** Draft one asserted, without measuring, that `-e`
+  "does not, reliably, across shells" catch an assignment from a substitution; measured,
+  it **does** halt this exact shape on bash 5.1.16 and bash 5.3.15, and the `&&`-guarded
+  appends survive it because a failing left operand is exempt. Draft two added dash to
+  that list on the strength of a non-zero exit; that exit was `rc=2` from `Illegal option
+  -o pipefail` at the `set` line, so the script never ran — **a non-zero exit is not
+  evidence of the mechanism you are testing for.** Draft three, written *inside* the
+  correction to draft one, said `-e` "changes the error semantics of every other command
+  in the file"; enumerated, the only statement that changes is the unguarded
+  `diff_part="$(git diff …)"` assignment. The real argument for `|| exit 1` is scope and
+  locality over **one** line, not correctness over a file. That last claim is a universal
+  in a bullet already wrong three times, so it is measured twice: `grep` finds exactly one
+  unguarded assignment-from-substitution in the file, and an eight-case failure battery
+  (bad base, bad tip, dash-led base, non-repo cwd, no jq, no python3, empty base,
+  baseline) halts at that same statement in every divergent case and is byte-identical in
+  the other four.
+
+  **The repo sweep that shipped with this was wrong three times, and the method matters
+  more than the list.** It filed `check_root` as exit-bearing — it is not; it returns 0/1
+  and the `exit 0` sits at its *call site*. It missed `deny` entirely, because the `sed`
+  range used to read function bodies ends at `/^}/` and `deny` emits a JSON heredoc whose
+  closing brace is in column 0, so the range stopped short of its `exit`. And it had **no
+  transitive tier at all**, so it read as complete while omitting three functions that
+  exit by calling one that does — caught in round 3, where the reviewer flagged
+  `_gl_target_guard` and re-enumerating turned up `require_blob` as well.
+
+  Corrected and verified both directions: **direct** exits are `die`, `reject`, `deny`,
+  `snapshot_manifest`; **transitive** are `out_reject` and `_gl_target_guard` (→ `reject`)
+  and `require_blob` (→ `die`); and among the functions invoked inside a command
+  substitution, `snapshot_manifest` is the only one that can exit. The rest return — and
+  where one sits near an `exit`, that `exit` is at top level, after the body. That is
+  precisely the trap `check_root` fell into.
+
+  **Then a fourth draft was wrong too, and that is what settled the shape of the fix.**
+  Round 4 caught the replacement asserting "thirteen functions are invoked inside a
+  substitution" when a pattern that also matches pipe tails finds fifteen — and fifteen is
+  not asserted as final either, it is just what the better method saw. Matching `$(fn`
+  catches only a substitution's *first* stage, so `normalize_manifest` and `read_version`,
+  both at the tail of a pipe inside `$( )`, were invisible. Four drafts, five distinct
+  mechanisms once they were separated properly, one shape:
+
+  | mechanism | effect | victim |
+  |---|---|---|
+  | `sed` range ends at `/^}/` | truncates at a heredoc's column-0 brace | `deny` |
+  | same range vs. a one-liner def | overruns into a genuinely later function | `warn` (span 146) |
+  | last def in file — no terminator | body runs to EOF, swallowing the call site | `check_root`, `snap` (×2) |
+  | pattern anchored to `$(fn` | misses a pipe's tail stage | `normalize_manifest`, `read_version` |
+  | `grep exit` counts comments | false positive | `read_version` |
+
+  All five fail silently. **So the count was removed rather than corrected to fifteen** —
+  a closed census that has been wrong every time it was asserted is the wrong shape for a
+  shipped doc, and the safety property never depended on it. `CLAUDE.md` now states the
+  property and the method, plus explicit non-goals. The property itself survived every one
+  of these errors untouched; only the prose around it kept breaking.
+
+  **And then the table above was wrong twice, which is the fifth iteration and the one
+  that justifies the whole approach.** Round 5's reviewer caught the first: the one-liner
+  row cited `honor_cd`, which is a four-line function at `forgeward-gate-check.sh:186-189`
+  and has never been one line. Pushing on its second note — that it could not verify
+  `check_root` as the one-liner-overrun victim — found the other, and the reviewer was
+  right to doubt it: `check_root` closes at a column-0 `}` at
+  `forgeward-detect-gstack-skill.sh:127` like any ordinary block, so that mechanism cannot
+  be what misfiled it. The real one is that it is the **last** definition in its file, so
+  an attributor with no closing-brace tracking runs its body to EOF and charges it with
+  `check_root … && exit 0` at `:146` — its own call site — and `exit 1` at `:149`. Both
+  rows are now corrected above. **A table explaining four bad scans was itself a bad scan**;
+  prose describing a sweep is a sweep, and nothing re-runs it.
+
+  **And then it was wrong a third time, in the same row, caught by round 7.** The
+  one-liner-overrun row also cited `snap` in `forgeward-scan.sh` and
+  `forgeward-workspace-guard.sh`. It is not that mechanism either: `snap` is the **last**
+  definition in both files (`:321` of 358, `:48` of 71) and neither file has a later
+  column-0 `}` at all, so the range runs to true EOF — the same mechanism as `check_root`,
+  one row down. Moving it leaves `warn` as the overrun row's only instance in `scripts/`,
+  and `warn` genuinely is one: defined at `forgeward-detect-base.sh:97`, next column-0 `}`
+  at `:242`, so the range crosses into a later function's body. **Three corrections, two
+  of them in the same row, all found by a reviewer rather than by me.** The row that keeps
+  breaking is always the one asserting *which function* illustrates a mechanism — never
+  the mechanism itself, never the safety property.
+
+  **And the correction to that row introduced the next error, which is what finally
+  identified the generator.** The rewritten text listed which `exit`s each `snap` range
+  swallows, joining an exhaustive list for one file to an incomplete one for the other
+  with "respectively" — so the incomplete half read as complete. It was caught in the very
+  next round, in text written by the round before it. The verification pattern I used is
+  what produced it: anchored to `exit` at a line start or right after a separator, it
+  silently skipped the indented ones. **Each amend adds prose about the last correction,
+  and that new prose is the next round's failure surface — so correcting sustains the
+  loop rather than ending it.** The move that actually terminates is a **subtractive**
+  edit: the itemized list was deleted, not completed, and replaced with the
+  non-exhaustive phrasing the row above already used. Which `exit`s get swallowed was
+  never load-bearing; the mechanism is that the range reaches EOF at all. **Prefer
+  deleting a detail to correcting it, whenever the detail carries no weight** — a
+  completed enumeration is still an enumeration, and it can rot the moment either file
+  changes.
+
+  **The units were inconsistent too, and that is the smaller finding with the longer
+  reach.** "Up to 145 lines" for `warn` counted the span minus the definition line, while
+  63/384/179 for the `test/` trio counted the raw span — two conventions in one document,
+  presented as directly comparable. Both are now the raw span that
+  `sed -n '/^fn()/,/^}/p' FILE | wc -l` returns, and `CLAUDE.md` now quotes that command
+  next to the numbers. A figure without the command that produced it is not checkable, and
+  an uncheckable figure in a doc about verification is the thing this entry is about.
+
+  **Non-goals, now quantified rather than directional.** The sweep covers **12 of the 21
+  tracked shell files**: 11 in `scripts/`, 1 in `ci/`. The 9 in `test/` and `live-test/`
+  are excluded on purpose — a substitution-swallowed `exit` in a harness corrupts a test
+  result, not a marker, so it cannot produce a false PASS. That is a blast-radius
+  judgement, not a claim they are clean, and spot-checking proves the distinction matters:
+  **three of the five mechanisms reproduce** in files no sweep has ever read, with one
+  example each rather than three of one —
+
+  | mechanism | reproduced in `test/` |
+  |---|---|
+  | one-liner overrun | `denies`, `gl`, `_hook_path` in `gate-test.sh` — spans 63, 384, 179 |
+  | comment/string false positive | `expansion:26`, `det:2169` — both `-> exit code` in the def-line comment; `pre-push-test.sh` past `:144` — one comment, two message strings |
+  | last def → body runs to EOF | `rules-test.sh:204` last def, top-level `exit 1` at `:257` |
+
+  The first draft of this paragraph cited only the three one-liners and still said "three
+  of the five mechanisms" — a true claim carrying evidence for a third of itself, which is
+  the same shape as everything else in this entry. Verified the population is complete
+  rather than sampled: no tracked file carries a shell shebang without a `.sh` extension,
+  and `hooks/` holds only `hooks.json`.
+
+  **Row 3 lost half its evidence in round 7, and the way it lost it is the entry's thesis
+  in miniature.** It originally read `pre-push-test.sh:144`, `rules-test.sh:204`, "each
+  with a top-level `exit` after". True of `rules-test.sh`. False of `pre-push-test.sh`:
+  `ppjq()` at `:144` is genuinely its last definition, but **no executed `exit` follows it
+  at all** — the file terminates on the bare status of `[ "$FAIL" -eq 0 ]`, and the three
+  lines after `:144` carrying the word are the comment at `:148` and the `ok`/`nok`
+  strings at `:154`/`:155`. So it was never an EOF instance; it is a **fourth instance of
+  the comment/string false positive**, and it has been moved to row 2. A citation for the
+  comment-false-positive mechanism was itself produced by the comment false positive.
+
+  **Both new assertions were proven red on the old code before being wired in.** V9 (the
+  two arms agree on an unrecognised mode) fails on `origin/master` with
+  `jq='{"b":2,"a":1,…}'` against `py='{"a":1,"b":2,…}'` — the divergence itself, visible in
+  the key order. V10 (a bad mode at a call site halts with no hash) fails on old code with
+  `rc=0` and a legitimate-looking hash. A test that has never been observed to fail is a
+  claim about the code, not evidence about it. Suites after: gate-test 184/0, pre-push
+  15/0, rules 39/0, version-check 51/0.
+
+  **No marker churn, and this was checked rather than assumed.** Running the old and the
+  new script over the same input gives identical canonical bytes on both the `jq` path and
+  the python3-only path, so no repo takes a re-gate for this. That mattered enough to verify
+  because the script header records a prior alignment whose byte change cost a release of
+  its own — the one-time cost is paid when the *reachable* modes move, and these did not.
+
+  Quoted against a **fixed** range, `origin/master~1..origin/master`: all four combinations
+  — {old script, new script} × {jq, no jq} — give `33751462a160ba83df171dfe`. **The fixed
+  range is load-bearing.** This paragraph previously quoted the hash of
+  `origin/master...HEAD`, which is a hash of the branch's *own diff* and so changes with
+  every amend; it was stale before anyone could read it. A number that the act of committing
+  invalidates is worse than no number, because it looks verifiable. It also survived one
+  round longer than the same error in the commit message and the PR body, both of which were
+  corrected while this file was not — two tracked files disagreeing inside one commit, which
+  is a failure this very entry records happening earlier on the same branch.
+
+  The first attempt at the no-jq arm compared two **empty** strings and reported a match:
+  the shim `PATH` was hand-listed and missing tools the script needs, so both sides failed
+  identically. That is the green-on-an-empty-set failure the `nok` arms added to V9/V10 in
+  this same commit exist to prevent, committed while verifying the commit that argues for
+  them. Redone by mirroring the whole real `PATH` minus `jq` and asserting non-emptiness
+  before comparing.
+
+  **The residue is filed, not waved off:** both guards sit on paths no call site reaches,
+  so V9/V10 are the entire detection surface and both are text-coupled to the script. That
+  is an open P4 under `## Gate — base detection and freshness`, not a closed question.
+
+- **Archive pass 3: the currency check caught staleness for the second consecutive pass, and
+  the PR's own headline count was wrong.** Shipped 2026-08-17 as #34 (`f0ac18e`), docs only —
+  `CLAUDE.md`, `TODOS.md`, `TODOS-DONE.md`, +385/−100. No version bump (0.12.0 unchanged).
+
+  **CURRENCY.** `## Completed` was stale by two merged PRs — #33 (`8baee22`) and #32
+  (`11af421`), nineteen seconds apart — both written up from their commit bodies before
+  anything moved. Pass 2 found it stale by three, pass 3 by two. **Two for two is the
+  mechanism, not luck:** the entry describing a PR can only be written after that PR
+  merges, and by then the branch that would have carried it is gone. The convention's
+  *cut* step is still unverified by anything; only the extraction was ever named.
+
+  **CUT.** One entry archived: #26 (`41324b0`, 0.10.0). Inserted at the TOP of
+  `TODOS-DONE.md` rather than below #27, because #26 merged 39 minutes *after* #27 despite
+  the lower number — established with `git log --first-parent`, not from the number or the
+  date, which is what that file's header tells the next reader to do.
+
+  **EXTRACTION — and the count in the title is wrong.** The squash title says seven rules,
+  the commit body says six, and the merged diff adds **eight** bullets to `CLAUDE.md`
+  (`git show f0ac18e -- CLAUDE.md | grep -c '^+- \*\*'`), none of them a move: zero bullets
+  were removed, and neither `An interpreter dependency's posture…` nor `Pin a blind spot as
+  expected-silent…` existed at `f0ac18e^`. The body's six was true when the first commit was
+  written; two more landed in later commits on the same branch and neither the body nor the
+  title was re-derived. **A count written before the branch finished is a claim about a
+  draft, not about what merged** — the only moment it can be true is after the last commit.
+  Recorded rather than silently corrected because the drift is the finding: the same PR that
+  lifted "state only what you actually checked" into `CLAUDE.md` shipped a headline number
+  that had gone stale inside its own branch.
 
 - **P3 ×4 + P4: four entries were closed by going and measuring them, and three of the four
   measurements contradicted the entry.** Shipped 2026-08-17 as #33 (`8baee22`), docs and CI
