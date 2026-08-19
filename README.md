@@ -328,11 +328,13 @@ see limits.
 
 ## Validation / what's tested
 
-**Automated suites — `npm test`.** Four suites, all framework-free, all exercising the
+**Automated suites — `npm test`.** Five suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
-repos: `gate-test.sh` (182), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`rules-test.sh` (39). Every suite prints its own count on its last line, so these are
-re-measurable rather than taken on trust.
+repos: `gate-test.sh` (194), `pre-push-test.sh` (15), `version-check-test.sh` (51),
+`rules-test.sh` (39), `transcript-audit-test.sh` (37) — 336 assertions. Every suite prints
+its own count on its last line, so these are re-measurable rather than taken on trust; the
+numbers here were last re-measured against a full run at 0.16.0, and `package.json`'s `test`
+script, not this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
 requirement of `ci/check-version-monotonic.sh`: it reads the three manifests with the stdlib
@@ -344,7 +346,7 @@ green run that checked less than it appears to. Both differ from the **hooks**, 
 JSON with `jq` *or* `python3` and fail open when neither exists: for the hooks `python3` is
 optional, for the version check it is not.
 
-`test/gate-test.sh` (182 assertions) — the in-editor layer:
+`test/gate-test.sh` (194 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
@@ -405,6 +407,19 @@ switch the pack off), and **blind spots** (each limit documented in the rulepack
 silent). Fixtures are generated into a scratch directory at run time and never written into
 the repo: the plugin's own artifact contract applies to its own tests, and a committed `.ts`
 fixture would be scanned by forgeward's gate on every subsequent PR.
+
+`test/transcript-audit-test.sh` (37 assertions) — `scripts/forgeward-transcript-audit.sh`,
+whose property under test is unusual: it must FIND credential shapes and then NOT show them.
+Nearly every failure mode is an assertion about absence, and an absence assertion passes for
+free on a script that crashed, printed nothing, or searched the wrong directory — so the
+suite opens with a **trust check** that proves the leak assertion can fail, and every silence
+check is paired with a positive control. Fixtures plant one needle in all three known
+persistence channels plus an undocumented fourth, so a refactor that reintroduces a channel
+list fails here rather than in someone's transcripts. It also pins the precision boundary
+(`AKIA` + 15 characters must *not* match), the four exit codes, the presence of the words
+UNVERIFIABLE and "rotate regardless" in a run that found nothing, and — with a deliberately
+broken `stat` on `PATH` — that a platform without GNU `stat` reports its permissions count as
+`UNAVAILABLE` rather than as a confident `0`.
 
 **Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
 session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
@@ -489,13 +504,25 @@ forgeward, or in any cleanup this plugin performs has touched them. **Claude Cod
 cleanup does** — read "an empty result can also mean the evidence is already gone" below
 before you take a search that finds nothing as reassurance.
 
-There are **two** persistence channels under each session, and the second is the one a
-notice like this usually misses:
+There are **at least three** persistence channels, and that count is a floor rather than a
+total — the third was found by running the audit script below over a real machine, after two
+revisions of this notice had confidently enumerated two:
 
 ```
 ~/.claude/projects/<project-slug>/<session-uuid>/subagents/agent-*.jsonl
 ~/.claude/projects/<project-slug>/<session-uuid>/tool-results/<id>.txt
+~/.claude/projects/<project-slug>/<session-uuid>.jsonl          <- the parent session itself
 ```
+
+Measured on one machine, over the ten prefixed shapes below: **20 hits — 14 under
+`subagents/`, 1 under `tool-results/`, 5 at the top level**. A quarter of them sat outside
+both channels this notice used to name. (A `memory/` directory exists alongside these and
+held no hit in that run, which is not evidence that it cannot.)
+
+The rule that survives the correction is the one already stated above and below: **scope by
+path, never by channel.** `grep -r` from `~/.claude/projects/` finds all three precisely
+because it was never told about any of them. A channel list is a filter wearing a different
+hat, and it fails the same way — silently, on the channel nobody has thought of yet.
 
 A large tool result is **truncated in the JSONL at 30 000 characters** and written in full
 to `tool-results/`, with the transcript keeping only a `persistedOutputPath` pointer. The
@@ -517,6 +544,37 @@ Note the **session-uuid** level — a glob that omits it (`projects/*/subagents/
 nothing and exits `No such file or directory`, which reads exactly like "clean". Search
 recursively from `projects/` instead and let the depth take care of itself.
 
+**This repo ships the whole procedure as a script**, so you do not have to paste the
+commands below:
+
+```bash
+scripts/forgeward-transcript-audit.sh          # every project on the machine
+scripts/forgeward-transcript-audit.sh --urls   # add the connection-URL pass
+```
+
+It searches every project by default rather than the one you are standing in, because the
+slug is keyed to the session's **launch directory** and the repo you care about may have no
+slug of its own — measured on the machine this was written on, **none of 26 slugs contained
+`forgeward`**, so a repo-scoped audit would have reported the repo shipping this script
+clean. It prints filenames and counts only, never a matched value; it reports how many files
+and session directories it searched, so an empty result has a denominator; and it ends with a
+block naming what the run did **not** establish. Exit `1` means a prefixed shape matched, `0`
+means none did, `2` means there was nothing to search. Read its header before trusting a
+clean run — the limits are the point of it.
+
+What follows is the same procedure by hand, kept because a security notice whose only remedy
+is "run our script" is not much of a notice, and because the script is one more thing that
+can be wrong.
+
+**Redact the filenames before you paste them anywhere** — this applies to every command
+below just as much as to the script, because they print the same paths. They are not the
+credential, but a project slug is a directory path with the punctuation flattened, so it
+carries a home-directory name and repo or client names; and the natural next move after a hit
+is pasting the list into an issue, a chat, or a prompt, each of which publishes that to
+someone who was not going to see it. The script prints this reminder next to each list it
+emits. A command you paste into your own terminal cannot, so it is said once here, before any
+of them.
+
 (On Windows: `%USERPROFILE%\.claude\projects\…`.) `-l` prints filenames only, so this does
 not put a value back on your screen:
 
@@ -533,6 +591,9 @@ grep -rlE \
   -e 'xox[baprs]-[A-Za-z0-9-]{10,}' \
   ~/.claude/projects/ 2>/dev/null
 ```
+
+That output is a list of paths carrying your directory names — see the redaction note above
+before it leaves your terminal. The same goes for each command that follows.
 
 Then, **separately**, credentials with no distinctive prefix — a password inside a
 connection URL. This is kept out of the command above on purpose: on the machine this

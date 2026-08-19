@@ -431,11 +431,27 @@ commit that was fixing it — a line number cannot survive its own fix.
   did, alive only because their parent session stayed in use. So the channel that leaks is
   the one that outlives the window, and a short-lived session's evidence is gone inside the
   month; one AKIA-shaped finding was already lost that way between two consecutive days.
-  Any audit tooling this repo grows — the filed `forgeward-transcript-audit.sh` is the live
-  candidate — must say what it could not check and keep the rotate-regardless advice for
+  Any audit tooling this repo grows — `scripts/forgeward-transcript-audit.sh` since 0.16.0 —
+  must say what it could not check and keep the rotate-regardless advice for
   the window it cannot see. The measurement is one machine and one Claude Code version
   (2.1.232), `cleanupPeriodDays` is user-configurable, and none of it was checked on
   Windows; treat 30 as a default, not a guarantee.
+- **Scope a transcript search by PATH, never by a list of channels.** The README enumerated
+  the persistence channels as two (`subagents/*.jsonl`, `tool-results/*.txt`) through two
+  revisions; the first real run of `forgeward-transcript-audit.sh` put **5 of 20** prefixed
+  hits at the top level, `<project-slug>/<session-uuid>.jsonl`, outside both. A channel list
+  is an `--include` filter in different clothes and fails the same way: silently, on the
+  channel nobody has thought of yet. `grep -r` from `~/.claude/projects/` found all three
+  because it was told about none of them. Three is now a **floor**, not a total — a
+  `memory/` directory sits beside them and simply held no hit that run. Same rule as the
+  filter bullet above, arrived at from the other direction.
+- **The transcript audit's default scope is every project on the machine, and that is not
+  over-reach.** A project slug is keyed to the session's LAUNCH directory, so a repo has no
+  slug of its own unless someone launched a session in it — measured here, **0 of 26** slugs
+  contained `forgeward`, meaning a repo-scoped audit would report the repo that ships the
+  script clean while it is the one repo guaranteed to have been discussed. `--project SLUG`
+  narrows it; nothing derives a slug from a repo path, because that derivation is what
+  produces a confident empty result.
 - **A filing-only PR still gets a `## Completed` entry.** It leaves nothing in the tree,
   so the measurement it was built on is the only durable thing it produced — and the next
   pass will re-derive it from scratch if the entry is missing. #28 is the worked example.
