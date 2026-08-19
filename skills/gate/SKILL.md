@@ -169,16 +169,46 @@ exist; it now detects and self-adjusts). Two axes are still owned by a partner t
 
 It prints one line of JSON and always exits 0 — it is informational, and must never
 stop a gate run. It also carries `seo_posture` for Step 1a, so one run serves both
-steps. Read `gstack_review`, `gstack_cso`, and `substitutes`:
+steps. Read `gstack_review`, `gstack_cso`, `gstack_ship`, and `substitutes`:
 
-| axis | owner | when its owner is absent |
-|------|-------|--------------------------|
-| `quality` | gstack `/review` (`gstack_review`) | Nothing on this machine reviews code quality or design. No forgeward reviewer picks it up. |
-| `deep-audit` | gstack `/cso` (`gstack_cso`) | `security-reviewer` still runs, diff-scoped — it does **not** replace a whole-repo audit. `/forgeward:ci-gate` is the closest standing substitute. |
+| axis | owner | run by | when it will not run |
+|------|-------|--------|----------------------|
+| `quality` | gstack `/review` (`gstack_review`) | the Step 3 handoff — `/ship` Step 9 dispatches the pre-landing review and its specialists | Nothing on this machine reviews code quality or design. No forgeward reviewer picks it up. |
+| `deep-audit` | gstack `/cso` (`gstack_cso`) | nothing here; the user runs it | `security-reviewer` still runs, diff-scoped — it does **not** replace a whole-repo audit. `/forgeward:ci-gate` is the closest standing substitute. |
 
-If an axis's owner is absent AND its name is not in `substitutes`, add one line to the
-firing decision, e.g.
-`NOT COVERED: quality — gstack /review is not installed and no forgeward reviewer owns this axis.`
+**`quality` keys on `gstack_ship`, NOT on `gstack_review`, and the difference is a real
+hole rather than a nicety.** The gate never invokes `/review` itself (see the box below
+for why it must not), so the axis is covered only when the Step 3 handoff reaches
+`/ship`, whose Step 9 runs it. Four cases, and the second is the one a
+`gstack_review`-keyed check gets wrong:
+
+- **`gstack_ship: present`** — say so, once: `quality — deferred to /ship Step 9, which
+  runs it after this gate passes.` The user needs this to know it is coming and not to
+  run `/review` a second time by hand.
+- **`gstack_ship: absent` and `gstack_review: present`** — the skill exists and nothing
+  will run it, because the handoff that would have is not there. Say:
+  `NOT COVERED this pass: quality — /review is installed but nothing here invokes it; gstack /ship is absent, and the handoff is what runs it. Run /review yourself before merging.`
+  Keying this on `gstack_review` reports the axis as owned while it goes unreviewed.
+- **`gstack_ship: present` but the user does not take the handoff** — you cannot detect
+  this and must not pretend to. It is the *common* case, not an edge one:
+  `docs/axis-proposals.md` records gate → push-and-PR-by-hand as forgeward's own most
+  frequent workflow, chosen deliberately because `/ship` would re-bump the version. The
+  first bullet's wording is therefore "deferred to /ship Step 9, **which runs it after
+  this gate passes**" — a statement about where the axis is owed, not a claim that it
+  was paid.
+- **both absent** — `NOT COVERED: quality — gstack /review is not installed and no forgeward reviewer owns this axis.`
+
+> **Never invoke `/review` from inside this gate, and this is not a gap waiting to be
+> filled.** Its `allowed-tools` include `Edit` and `Write`; forgeward's gate is read-only
+> and proves it in Step 2 by snapshotting the tree and diffing it after. A reviewer that
+> may legitimately edit code cannot run inside that envelope without either making the
+> workspace guard fire on correct behaviour or gutting the guarantee it exists to give.
+> Its scope also differs: `/review` resolves its own base branch, while Step 0 resolves
+> the **publish boundary**, and the two are not the same ref. Running it before the gate
+> (which the handoff effectively does, in the other order) keeps both contracts intact.
+
+If an axis's owner is absent AND its name is not in `substitutes`, add the matching line
+above to the firing decision.
 
 Then **carry on and gate normally**. This is disclosure, not refusal, and the
 distinction is the whole design (`docs/axis-proposals.md` §3): forgeward is fully
@@ -313,6 +343,9 @@ than the one it cleans up. Print the paths and let the user run
 
   - **`gstack_ship: absent`** → **do not attempt the Skill call.** Stop here and report:
     `forgeward gate: PASS (fired: …). Marker written. gstack /ship is not installed — commit, push and open the PR yourself; the marker is already in place, so the push hook will allow it.`
+    If `gstack_review: present`, add the second line, because this is the branch where
+    the quality axis silently goes unrun (Step 1c):
+    `Quality was not reviewed — /ship Step 9 is what runs /review, and /ship is absent. Run /review before merging.`
 
   The handoff is a **convenience, not part of the gate**. The gate is the review and
   the marker, and both are complete before this branch is reached — so a missing

@@ -452,6 +452,20 @@ did *not* close.
 
 ## Quality axis
 
+- **The gate cannot tell whether the handoff it offered was actually taken, so the
+  `quality` disclosure is a statement about what is owed, not what ran.** (filed with
+  0.15.0, 2026-08-19) Step 3 invokes `/ship` via the Skill tool and reports
+  `Handing off to /ship`; nothing afterwards observes whether Step 9 reached the review
+  army, whether the user interrupted, or whether they took the far more common route of
+  gate → push-and-PR by hand (which forgeward itself does, because `/ship` re-bumps the
+  version). So on the `gstack_ship: present` branch the axis is reported as deferred and
+  may simply never run. **The tractable check is the one `docs/axis-proposals.md`
+  already specced and shelved**: match a dashboard entry on `skill:"review"` + `commit` +
+  specialists-dispatched, treating a missing `via` as standalone — and it cannot block on
+  a first version, because its input is absent for runs that legitimately happened. Worth
+  reviving now that the disclosure is keyed correctly and the gap is the only thing left
+  between "owed" and "paid". **Priority:** P3
+
 Full analysis and decision rules in `docs/axis-proposals.md`.
 
 - **gstack's `/review` and forgeward defer the quality axis to each other, and it runs
