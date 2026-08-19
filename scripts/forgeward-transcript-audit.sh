@@ -110,6 +110,20 @@ PATTERNS=(
 # documentation. Reported as a count always, listed only under --urls.
 URL_PATTERN='://[^:/@[:space:]]+:[^@/[:space:]]+@'
 
+# Printed after EVERY filename list this script emits, which is the whole reason it is a
+# function: the first version of this warning sat under the prefixed-shape list only, and
+# `--urls` printed a second list of the same slug-bearing paths with no warning at all.
+# One list warned and one not is worse than neither, because it reads as a considered
+# distinction. Raised by the privacy review of the commit that added the warning.
+redact_note() {
+  printf '\n  REDACT BEFORE PASTING. These paths are not the credential, but they are not\n'
+  printf '  nothing either: a project slug is a directory path with the punctuation\n'
+  printf '  flattened, so it carries your home-directory name and your repo or client\n'
+  printf '  names. The likely next step after a hit is pasting this list into an issue,\n'
+  printf '  a chat, or a prompt -- all of which publish that to someone who was not\n'
+  printf '  going to see it.\n'
+}
+
 usage() {
   cat >&2 <<'EOF'
 usage: forgeward-transcript-audit.sh [--root DIR] [--project SLUG] [--urls] [--patterns]
@@ -178,6 +192,7 @@ n_url=0;      [ -n "$url_hits" ] && n_url="$(printf '%s\n' "$url_hits" | wc -l |
 printf '\nPREFIXED CREDENTIAL SHAPES (%d patterns): %s file(s)\n' "${#PATTERNS[@]}" "$n_hits"
 if [ "$n_hits" -gt 0 ]; then
   printf '%s\n' "$hits" | sed 's/^/  /'
+  redact_note
   # Which SHAPE matched is metadata, and it is the difference between "go look at this
   # today" and "skim it". Re-grepped over the hit list only -- a handful of files, not
   # the whole tree -- so this costs nothing next to the sweep that produced the list.
@@ -189,17 +204,12 @@ if [ "$n_hits" -gt 0 ]; then
   printf '\n  Filenames and shapes only -- open them yourself. Some will be documentation\n'
   printf '  quoting a pattern; that is not filtered, because filtering by content is what\n'
   printf '  caused the defect this tool audits.\n'
-  printf '\n  REDACT BEFORE PASTING. These paths are not the credential, but they are not\n'
-  printf '  nothing either: a project slug is a directory path with the punctuation\n'
-  printf '  flattened, so it carries your home-directory name and your repo or client\n'
-  printf '  names. The likely next step after a hit is pasting this list into an issue,\n'
-  printf '  a chat, or a prompt -- all of which publish that to someone who was not\n'
-  printf '  going to see it.\n'
 fi
 
 printf '\nPASSWORD IN A CONNECTION URL: %s file(s)\n' "$n_url"
 if [ "$n_url" -gt 0 ] && [ "$SHOW_URLS" -eq 1 ]; then
   printf '%s\n' "$url_hits" | sed 's/^/  /'
+  redact_note
 elif [ "$n_url" -gt 0 ]; then
   printf '  Count only -- this pattern is noisy by design (measured 201 files against 15\n'
   printf '  for all ten prefixed shapes combined). Re-run with --urls to list them.\n'

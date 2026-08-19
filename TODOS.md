@@ -161,7 +161,7 @@ write-once and effectively gone after merge, which is why they live here now.
 ## Reviewers
 
 - **Nothing pins the reviewer prompts, so a rubric can be reverted or corrupted and all
-  334 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19; count
+  336 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19; count
   re-measured at 0.16.0, which added a fifth suite) The five suites cover scripts, hooks,
   the version check, the rules pack and the transcript audit; `agents/*.md` is
   read by no test at all — `grep -rln accessibility-reviewer test/ ci/ scripts/` returns
@@ -820,7 +820,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   suite (`transcript-audit-test.sh`, 31), so "four suites" is now wrong in exactly the way
   the totals were — the difference is that `package.json`'s `test` script moved in the same
   commit, which is the whole reason it is the authority. Live `npm test` on the 0.16.0
-  branch: gate 194, pre-push 15, version-check 51, rules 39, transcript-audit 35 — **334
+  branch: gate 194, pre-push 15, version-check 51, rules 39, transcript-audit 37 — **336
   assertions, zero failures, exit 0**. README's Validation section was updated to match and
   now names `package.json` as the roster in the same breath as the numbers.
   **The sweep has now been run** — `workflow_dispatch` run `31970233140` on `master`,
@@ -1112,7 +1112,7 @@ shipped on its own branch instead.
 - **`forgeward-transcript-audit.sh`: the P2 filed with the gitleaks fix is now shipped, and
   its first real run corrected the README that specified it.** Shipped 2026-08-19 as
   **0.16.0** — `scripts/forgeward-transcript-audit.sh` (755) plus
-  `test/transcript-audit-test.sh` (35 assertions), registered in `package.json`'s roster,
+  `test/transcript-audit-test.sh` (37 assertions), registered in `package.json`'s roster,
   which is the single source of truth for the suite list.
 
   **THE FINDING THAT CHANGED THE DESIGN.** README 0.10.1 settled that the audit surface is
@@ -1153,8 +1153,9 @@ shipped on its own branch instead.
   the reason the README already gives for the search. The suite's first assertion is a trust
   check that proves the leak assertion can fail.
 
-  **THE GATE FOUND TWO THINGS AND BOTH ARE FIXED IN THE SAME PR**, which is the shape a
-  read-only gate is for. Privacy (Medium): the printed filename list is itself identifying —
+  **THE GATE FOUND THREE THINGS ACROSS TWO ROUNDS AND ALL THREE ARE FIXED IN THE SAME
+  PR**, which is the shape a read-only gate is for — and the third is the interesting one,
+  because it was a gap in the fix for the first. Privacy (Medium): the printed filename list is itself identifying —
   a slug is a flattened directory path, so it carries a home-directory name and repo/client
   names, and the natural next move after a hit is pasting it into an issue. The script now
   says REDACT BEFORE PASTING beside the list, and two assertions pin that it fires on a run
@@ -1163,6 +1164,15 @@ shipped on its own branch instead.
   files — a false clean produced by the very script that argues against false cleans. It now
   probes once and prints `UNAVAILABLE`, tested with a deliberately broken `stat` on `PATH`.
   Supply-chain self-skipped: no dependency moved.
+
+  Round two, privacy (Medium): the warning had been added under the prefixed-shape list
+  only, while `--urls` printed a **second** list of the same slug-bearing paths with no
+  warning at all. One list warned and one not is worse than neither, because it reads as a
+  considered distinction. The note is now a function called after every filename list, and
+  two more assertions pin it on the `--urls` path in both directions. This is the
+  own-fix-undershoots-own-evidence shape from CLAUDE.md, caught by a reviewer rather than by
+  me: the evidence was "printed paths are identifying" and the remedy covered one of the two
+  places paths are printed.
 
   Deferred, both filed above: `test/` is still outside CI's shellcheck, and the pattern list
   is duplicated between script and README with nothing checking they agree.

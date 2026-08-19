@@ -331,7 +331,7 @@ see limits.
 **Automated suites — `npm test`.** Five suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
 repos: `gate-test.sh` (194), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`rules-test.sh` (39), `transcript-audit-test.sh` (35) — 334 assertions. Every suite prints
+`rules-test.sh` (39), `transcript-audit-test.sh` (37) — 336 assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
 numbers here were last re-measured against a full run at 0.16.0, and `package.json`'s `test`
 script, not this paragraph, is the roster.
@@ -408,7 +408,7 @@ silent). Fixtures are generated into a scratch directory at run time and never w
 the repo: the plugin's own artifact contract applies to its own tests, and a committed `.ts`
 fixture would be scanned by forgeward's gate on every subsequent PR.
 
-`test/transcript-audit-test.sh` (35 assertions) — `scripts/forgeward-transcript-audit.sh`,
+`test/transcript-audit-test.sh` (37 assertions) — `scripts/forgeward-transcript-audit.sh`,
 whose property under test is unusual: it must FIND credential shapes and then NOT show them.
 Nearly every failure mode is an assertion about absence, and an absence assertion passes for
 free on a script that crashed, printed nothing, or searched the wrong directory — so the
@@ -562,8 +562,8 @@ block naming what the run did **not** establish. Exit `1` means a prefixed shape
 means none did, `2` means there was nothing to search. Read its header before trusting a
 clean run — the limits are the point of it.
 
-**The filename list it prints is itself worth redacting**, and the script says so next to the
-list. The paths are not the credential, but a project slug is a directory path with the
+**Every filename list it prints is itself worth redacting**, and the script says so next to
+each one — both the prefixed-shape list and the `--urls` list, which carry the same paths. The paths are not the credential, but a project slug is a directory path with the
 punctuation flattened, so it carries a home-directory name and repo or client names — and the
 natural next move after a hit is pasting the output into an issue, a chat, or a prompt, each
 of which publishes that to someone who was not going to see it.

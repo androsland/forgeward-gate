@@ -273,6 +273,22 @@ if printf '%s' "$o6" | grep -qF 'REDACT BEFORE PASTING'; then
 else
   ok "the redact warning does not fire on a run with no filenames to redact"
 fi
+# --urls prints a SECOND list of the same slug-bearing paths. The first version of the
+# warning covered only the prefixed-shape list, which is worse than covering neither --
+# one list warned and one not reads as a considered distinction. Pinned in both
+# directions so the warning cannot drift back to a single call site.
+o5u2="$("$AUDIT" --root "$R5" --urls 2>&1)"
+if printf '%s' "$o5u2" | grep -qF 'REDACT BEFORE PASTING'; then
+  ok "--urls warns about its own filename list too"
+else
+  nok "--urls warns about its own filename list too" "the second list carries the same slugs"
+fi
+o5c="$("$AUDIT" --root "$R5" 2>&1)"
+if printf '%s' "$o5c" | grep -qF 'REDACT BEFORE PASTING'; then
+  nok "a count-only URL run prints no redact warning" "nothing was listed to redact"
+else
+  ok "a count-only URL run prints no redact warning"
+fi
 
 # ---------------------------------------------------------------------------
 # 12. `stat -c` IS GNU-ONLY. On BSD and macOS every call fails and a naive
