@@ -301,6 +301,16 @@ commit that was fixing it — a line number cannot survive its own fix.
   reviewer rule. (A repo-local hook is the right layer for a personal policy; this is about
   what ships to installers.)
 
+- **A count or warning the gate PRINTS must not fire on a configuration the docs endorse.**
+  `config_warnings` counts settings `.forgeward/config.yml` was addressed by and could not
+  use, and it skips `seo.routes` and its whole subtree by indent because README,
+  `skills/gate/SKILL.md` and `agents/seo-reviewer.md` all document that key as unhonoured —
+  a count that fires on a config which followed the docs trains the reader to ignore the
+  count. **Carried with its exception:** `0` from that field is not a clean bill, because a
+  config the probe could not open at all also reports `0`, and only the separate `config`
+  field distinguishes them. That trap is written into three shipped files and is what the
+  live-test's symlink step exists to exercise.
+
 ## Tests
 
 - **A rulepack's fixtures are generated into a scratch dir and NEVER committed.** A `.ts` or
@@ -378,6 +388,18 @@ commit that was fixing it — a line number cannot survive its own fix.
   attempt to check a real finding appeared to refute it because the ad-hoc check and the
   code under test were different programs. Use `type -a` and an absolute path.
 
+- **A tool whose absence turns a suite GREEN is still a dependency.** `test/rules-test.sh`
+  needs `semgrep` and degrades to a loud `1..0 # SKIP` without it — which is precisely why
+  it read as not-a-dependency in an entry that called `python3` "the only external tool any
+  script in this repo needs". README names both now, with the distinction most likely to
+  mislead: the hooks read JSON with `jq` *or* `python3` and fail open, while
+  `ci/check-version-monotonic.sh` requires it and fails closed.
+- **An automation nobody has watched run is a claim, not a control.** Dependabot was
+  configured, unobserved, and read as coverage until #32 actually arrived — service
+  enabled, schedule firing, `actions` group name resolving, all of it unverified until
+  then. The check that settles it costs one glance at the PR list, and it binds any
+  scheduled workflow this repo adds later, not just that one.
+
 ## Docs
 
 - **A doc that describes gate behaviour is part of the gate's surface — change it in
@@ -417,6 +439,22 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **A filing-only PR still gets a `## Completed` entry.** It leaves nothing in the tree,
   so the measurement it was built on is the only durable thing it produced — and the next
   pass will re-derive it from scratch if the entry is missing. #28 is the worked example.
+
+- **Prefer DELETING a weightless detail to correcting it.** Each amend adds prose about the
+  last correction, and that new prose is the next round's failure surface — so correcting
+  sustains the loop rather than ending it. The move that terminates is subtractive: the
+  itemized list of which `exit`s a `sed` range swallows was deleted, not completed, and
+  replaced with the non-exhaustive phrasing the line above it already used. Which ones was
+  never load-bearing; that the range reaches EOF at all is the mechanism. A completed
+  enumeration is still an enumeration, and it rots the moment either file changes.
+- **A number in a doc is re-derived from what MERGED, and quoted against a FIXED range.**
+  Two shapes of one defect. A count written before the branch finished is a claim about a
+  draft — pass 3's squash title said seven rules, its body said six, and the merged diff
+  added eight, none of them a move. And a hash quoted against `origin/master...HEAD` is a
+  hash of the branch's own diff, so every amend invalidates it: use
+  `origin/master~1..origin/master` or another range the act of committing cannot move.
+  **A number that committing invalidates is worse than no number, because it looks
+  verifiable** — and the only moment either can be true is after the last commit.
 
 ## Non-goals of this file
 
