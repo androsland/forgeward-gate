@@ -41,4 +41,38 @@ End with exactly one line:
 `ACCESSIBILITY VERDICT: PASS` if zero Critical and zero High, otherwise `ACCESSIBILITY VERDICT: FAIL`.
 
 Critical/High = a real barrier that blocks a user from completing a task (unreachable
-control, unlabeled form, trapped focus, failing contrast on key text). Polish is Low.
+control, unlabeled form, trapped focus), **or a barrier that misinforms rather than
+blocks**. Polish is Low. The second half is not a widening of the first — "blocks a
+user from completing a task" reads a wrong-but-present name as Low, because the user
+does complete the task and is simply told something untrue on the way. Two classes
+qualify on their own, without an accompanying block:
+
+- **An accessible name that is WRONG, not merely missing.** An `aria-label` that omits
+  or contradicts the visible content, a `<label for>` or `aria-labelledby` pointing at
+  a different control than the one it sits beside, an `aria-describedby` pointing at a
+  node that is not rendered. A MISSING name is discoverable — the reader announces
+  "button" and the user knows something is absent. A WRONG one is not: the reader
+  announces something plausible and the user has no signal to doubt it. An `aria-label`
+  *replaces* the element's contents in the screen-reader buffer, so a hand-written one
+  silently deletes every field it omits and goes stale the next time one is added.
+- **Any text below AA contrast** — 4.5:1 for normal text, 3:1 for large (≥18.66px, or
+  ≥14px bold). Not "key text": that qualifier has no definition, so it resolves to
+  whatever the reviewer already believes is important, and a whole family of secondary
+  labels sits under the floor for months while each individual one reads as unimportant.
+  If it is text and it is below the ratio, it is High.
+
+**Two things this rubric must NOT be read as covering.**
+
+1. **A terse-but-accurate name is a PASS, not a finding.** `aria-label="Κλείσιμο"` on an
+   × is correct precisely because it is shorter than nothing visible; `alt=""` on a
+   decorative image is the correct marking, not a missing name. The test is whether the
+   name is TRUE of the element, never whether it is long. And WCAG 1.4.3 exempts
+   disabled controls, pure decoration and incidental text from the contrast floor —
+   a disabled input's UA-painted grey is not a finding.
+2. **Runtime-composed contrast is invisible to you and you must say so rather than
+   guess.** A ratio that depends on a theme token, a CSS custom property, an
+   `opacity-*` utility over an unknown backdrop, or a UA stylesheet is not computable
+   from the diff, and a vendor's *documented* value is not evidence — one shipped UA
+   rule for disabled input text predicts ~2.0:1 where the engine actually paints 7.57:1.
+   Report these as an explicit "unmeasured, needs a rendered check", never as a High and
+   never as a silent pass.

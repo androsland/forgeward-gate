@@ -260,6 +260,21 @@ commit that was fixing it — a line number cannot survive its own fix.
   `metadata.forgeward-report-severity`, the pack header, and the Step 2 instruction to report
   at that severity **regardless of what the JSON says**, with an explicit "do not promote one
   because the consequence sounds severe".
+- **A11y's blocking surface was widened DELIBERATELY at 0.14.0, and it is the one place
+  this repo has done that.** Two classes now qualify as High on their own: an accessible
+  name that is WRONG rather than missing, and any text below AA contrast. The old rubric
+  said "a real barrier that blocks a user from completing a task", which reads a
+  wrong-but-present name as Low — the user does complete the task, they are simply told
+  something untrue on the way — and it qualified contrast as "on key text", a phrase with
+  no definition that resolves to whatever the reviewer already thinks is important. Per
+  the rule above, this is a change to what the gate BLOCKS, not to what it prints, and it
+  is meant to be. **The two non-goals are written into the reviewer prompt itself, not
+  left implied**: a terse-but-accurate name is a pass (the test is whether the name is
+  TRUE, never whether it is long), and runtime-composed contrast — a theme token, an
+  `opacity-*` over an unknown backdrop, a UA stylesheet — is not computable from a diff
+  and must be reported as "unmeasured, needs a rendered check" rather than as a High. A
+  vendor's documented value is not evidence for that third case: one shipped UA rule for
+  disabled input text predicts ~2.0:1 where the engine paints 7.57:1.
 - **Do not disclose an axis as unowned in the same run that just scanned for it.** The
   rejected alternative to the Low pin was announcing `build-config` as covered by nothing
   while the reviewer was finding instances of it — a worse lie than the silence it replaces.
