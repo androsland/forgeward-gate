@@ -364,11 +364,12 @@ fi
 # against its complete literal shape, anchored at both ends. Adding, removing or
 # reordering a field here without editing `_env_ok` in the same commit makes every marker
 # record `environment: {"probe":"unavailable"}` — safe, but provenance is lost silently
-# except for E10 going red. Adding `config_warnings` in 0.13.0 was the second time this
-# obligation was exercised and it is now known to be a THREE-file edit, not two: E17's
-# hardcoded payload in test/gate-test.sh pins the shape match's trailing anchor by feeding
-# it the probe's genuine output plus an appendix, so a stale payload is rejected on its
-# prefix instead and quietly stops testing the anchor. That third one reddens nothing.
+# except for E10 going red. Adding a field here is a TWO-file edit: this `printf` and
+# `_env_ok`. It was a three-file edit through 0.13.0 — E17 in test/gate-test.sh carried a
+# hand-copied duplicate of this line, and a copy left stale was refused on its prefix and
+# silently stopped testing the anchor it exists for, reddening nothing. That leg is closed
+# by construction rather than by warning: E17 now derives its prefix from the live probe,
+# so it cannot fall behind. Do not reintroduce a literal copy of this line anywhere.
 #
 # `config_warnings` is the only UNQUOTED value here, and the asymmetry is deliberate: it is
 # a count, JSON has numbers, and `[0-9]` is a strictly narrower vocabulary than any quoted

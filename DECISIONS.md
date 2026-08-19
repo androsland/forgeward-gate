@@ -5,6 +5,61 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## RESOLVED — a security assertion was pinned by a hand-copied literal that nothing kept current
+
+**Date:** 2026-08-19 · **Version:** 0.13.1
+
+**Symptom.** None visible. That is the entire finding: E17 in `test/gate-test.sh` asserts that
+the marker's environment shape match is anchored at **both** ends, and it does so by feeding
+`forgeward-write-marker.sh` the probe's genuine output plus an appended forgery. For that to
+test anything, the genuine part has to *be* genuine. It was a hand-typed copy of the probe's
+`printf` line, and nothing compared the two. When the probe gained a field and the copy was not
+updated, the payload stopped matching `_env_ok` on its **prefix** — so the marker was refused
+for the wrong reason, `notforged` still passed, and E17 went green while no longer testing the
+anchor at all. Dropping the trailing `$` from `_env_ok`, the exact regression E17 exists to
+catch, then reddened nothing.
+
+**Why it survived two field additions.** The copy had to move twice — `seo_posture` in 0.9.0
+and `config_warnings` in 0.13.0 — and both times it was moved, correctly, by hand. The
+obligation was written down in three places and honoured on both occasions, which is precisely
+why it read as handled. It was not: the mechanism keeping E17 honest was a person remembering,
+and the failure mode of forgetting was **silent**. Of the three files a new probe field
+touched, the other two announce a mistake — omitting `_env_ok` reddens E10 and degrades every
+marker to `{"probe":"unavailable"}` — and this one did not.
+
+**Fix.** Delete the copy rather than warn about it harder. E17 derives its prefix from `$E1J`,
+the live probe output captured at E1 with all three roots neutralised, so a new field appears
+in the payload the same moment the probe emits it. A probe field is a **two**-file edit again
+(the `printf` and `_env_ok`), and that is stated at the `printf` itself. The suite now holds no
+literal copy of the probe's output line anywhere.
+
+**Non-goals, so the derivation is not read as covering more than it does.**
+- It **cannot see `_env_ok` falling behind the probe.** In that direction the derived prefix is
+  refused, the marker degrades to `{"probe":"unavailable"}`, and E17 goes green for the wrong
+  reason. **E10 is the assertion that reddens there** — it runs the real probe through the real
+  writer and requires the marker's `environment` to carry probe keys. The two cover opposite
+  directions and neither is sufficient alone; do not collapse either into the other.
+- It does **not** decouple the probe from the marker writer. `_env_ok` is still a literal shape
+  match that has to move when the probe's line moves. That coupling is a separate open P2, and
+  0.13.1 only lowered its price from three files to two.
+- The emptiness floor is a `case` guard, not a validator: it checks that `$E1J` looks like a
+  probe line, so a broken probe reddens E17 instead of splicing a nonsense payload past it. It
+  does not check that the line is *correct* — E1, E2 and E9 own that.
+
+**Mutation evidence, both directions, and the decisive leg is the pair.** Each mutated leg
+printed a verification line proving its mutation was actually present before the suite ran; a
+green from a mutation that silently failed to apply proves nothing. Base 194/0 with E17 `ok`.
+Dropping the `$` from `_env_ok` and changing nothing else: 193/1, the sole failure `env E17` —
+so the assertion is not vacuous today. Adding an 8th probe field and updating `_env_ok` to
+match, with no test edit at all: 194/0 — the derivation keeps up by itself. Then that field
+addition **plus** the dropped `$`, run twice against byte-identical scripts and differing only
+in which `test/gate-test.sh` executes: with this version's E17, 193/1 and E17 red; with the
+hand-copied payload, **194/0 and E17 green**, printing its own unchanged claim that "the shape
+match is anchored at BOTH ends" while the anchor was gone. Isolated outside the harness, the
+mechanism is visible directly: under the dropped anchor the derived payload yields a marker
+carrying `diff_hash=TAILFORGE` — the forgery lands and `notforged` fails — while the stale
+7-field payload yields a marker carrying the real diff hash, refused on its prefix.
+
 ## RESOLVED — a typo'd config key was byte-identical to no config at all
 
 **Date:** 2026-08-18 · **Version:** 0.13.0
@@ -1163,8 +1218,10 @@ anchored at *both* ends, by feeding it the probe's genuine output plus an append
 field to the probe silently invalidates its hardcoded prefix — the payload then fails on the
 prefix instead, and dropping the trailing `$` no longer turns it red. Verified in both
 directions: with the field added to E17's string, dropping `$` reddens E17; with the stale
-string, the whole suite stays green. **Any future probe field must be added to E17's payload as
-well as to `_env_ok`**, or a security assertion silently stops asserting. Noted in the test.
+string, the whole suite stays green. That is what made a probe field a **three**-file edit
+whose third leg reddened nothing at all. **Superseded at 0.13.1**, which deleted the hand-copy
+rather than restating the warning: E17 derives its prefix from the live probe, so it cannot go
+stale and the edit is two files again. See the RESOLVED entry at the top of this file.
 
 **Not fixed, stated so the limit is not mistaken for coverage.** Nothing validates the config or
 warns on unknown keys, so a typo'd `substitutes:` or an invalid posture is indistinguishable
@@ -1314,7 +1371,10 @@ E1–E11 were all passing when both were found, so "the tests pass" was never ev
   E16 is the reviewer's proof-of-concept verbatim. E17 pins the same attack from the other end —
   a payload that *opens* with genuine, fully-conformant probe output and appends the forgery,
   which survives any check anchored only at the start. Confirmed by mutation: deleting the single
-  trailing `$` from the regex reds E17 and nothing else, and is invisible to E16.
+  trailing `$` from the regex reds E17 and nothing else, and is invisible to E16. E17's prefix
+  was a hand-copied literal until 0.13.1 and is now derived from the live probe, which is what
+  keeps that mutation detectable after a field is added; E10 remains the assertion that reddens
+  in the opposite direction, when `_env_ok` is what fell behind.
 
 ## RESOLVED — the error-path class was fixed one branch at a time, so the fixes cancelled each other out
 

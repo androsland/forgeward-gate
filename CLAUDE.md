@@ -311,6 +311,16 @@ commit that was fixing it — a line number cannot survive its own fix.
   machine.** E2 exists because gstack IS installed here and the probe is not a PATH
   lookup, so an assertion that forgets one of its three roots finds the real gstack and
   greens vacuously.
+- **An assertion that pins another file's output must DERIVE that output, never copy it.**
+  E17 fed the marker writer a hand-typed duplicate of the probe's `printf` line, and nothing
+  compared the two. A field added to the probe without updating the copy made the payload fail
+  on its **prefix**, so the assertion still printed `ok` while no longer testing the trailing
+  anchor it exists for — and the regression it guards reddened nothing. It had been copied
+  correctly twice, which is why it read as handled: the control was a person remembering. The
+  remedy is to delete the copy (E17 now derives from `$E1J`), not to document the obligation in
+  more places. Pair it with a floor — a derived value that can be empty asserts a property of
+  nothing — and know which assertion covers the opposite direction: **E10 is what reddens when
+  `_env_ok` is the side that fell behind**, and neither is sufficient alone.
 - **Assert on the MESSAGE, not the exit status.** From round 3 of the version-check review
   on, every new assertion reads the message, because two inputs failed closed for an
   *unrelated* reason and would have passed an exit-status check while the guard they were
