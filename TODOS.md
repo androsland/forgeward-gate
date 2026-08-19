@@ -628,8 +628,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   **#32 merged 2026-08-17** (`11af421`), so the first Dependabot bump this repo has ever
   received is in `master` and the three server-side workflows passed on it. The loop is
   closed end to end: configured → fired → reviewed on the merits → merged.
-  (CI version check, 2026-08-06; decided and configured 0.12.0, 2026-08-16; observed
-  running via PR #32, 2026-08-16; merged 2026-08-17) **Priority:** P4
+  **Re-verified 2026-08-19: the revisit condition is still unmet, so nothing to do.** Across
+  all four workflow files there are exactly four `uses:` lines, every one of them
+  `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1` — one third-party
+  action, one SHA, no second ecosystem member. The trigger is *a second unrelated action
+  being added*, not the passage of time; re-checking costs one `grep -r uses: .github/`, so
+  do that rather than re-reading this entry. (CI version check, 2026-08-06; decided and
+  configured 0.12.0, 2026-08-16; observed running via PR #32, 2026-08-16; merged 2026-08-17;
+  trigger re-checked 2026-08-19) **Priority:** P4
 - **Manifest *validity* is now covered as a side effect, and nothing covers manifest
   *meaning*.** This entry was opened at P3 when the reader was textual; round 4 replaced it with
   `python3`'s stdlib `json`, so a manifest that is not well-formed JSON or not valid UTF-8 is
@@ -643,49 +649,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   is wanted at all; the argument against is that these three files change perhaps twice a
   release and a bad one is caught the first time the plugin is installed.
   (security review round 3, 2026-08-07; re-scoped after round 4, 2026-08-07) **Priority:** P3
-- **The `python3` obligation is in README now; what is still unwritten is the rule behind
-  it.** `ci/check-version-monotonic.sh` reads the three manifests with the stdlib `json`
-  module and has no `jq` fallback, deliberately (see `DECISIONS.md`: one arm, because two
-  readers of the same JSON that can disagree is the diff-hash divergence bug rebuilt on
-  purpose). It fails closed with a named message when python3 is absent, so nothing silently
-  skips.
-  **The docs half is done** (2026-08-16). README's Validation section states the requirement,
-  and states it against the thing most likely to be confused with it: the *hooks* read JSON
-  with `jq` **or** `python3` and fail open when neither exists, so README previously mentioned
-  python3 only in its optional role — which for a reader working out whether they need it is
-  worse than saying nothing.
-  **A second overreach was corrected on the way out.** This entry used to claim python3 was
-  "the only external tool any script in this repo needs". `test/rules-test.sh` needs
-  `semgrep`; it degrades to a loud `1..0 # SKIP` rather than failing, which is precisely why
-  it read as "not a dependency". A tool whose absence turns a suite green is still a
-  dependency, and README now names it as one.
-  **The rule is now written down too (2026-08-17) — and enumerating the call sites to write
-  it showed the framing in this entry was wrong in two ways.** It said the split is *posture,
-  not location*: user-machine optional/fail-open, CI-only required/fail-closed. That is a
-  two-way split, and there are **three** postures.
-  1. **CI-only, required, fail-CLOSED** — `ci/check-version-monotonic.sh` dies by name.
-  2. **User-machine hook, optional, fail-OPEN** — `forgeward-gate-check.sh` and
-     `forgeward-pre-push.sh` both `exit 0` when neither `jq` nor `python3` is present.
-  3. **Helper on the gating path, optional, fails toward RE-GATING** —
-     `forgeward-diff-hash.sh`'s `normalize_manifest` falls through to `cat`, so the version
-     field is never neutralized, the hash differs, and the marker reads stale. The missing
-     one from the old framing, and the one that matters most, because it is the arm sitting
-     on the authorization path rather than beside it.
-
-  **And the surface is smaller than a grep says.** `git grep -l python3` returns **six**
-  tracked scripts; only **four** call it. `forgeward-detect-environment.sh` and
-  `forgeward-write-marker.sh` mention it purely in comments explaining why they deliberately
-  do *not* take the dependency — so the text match overcounts by 50%, which is the same
-  *text tools do not parse structure* class already in `CLAUDE.md`, arrived at from the
-  outside this time. Posture 3 also has a narrower reach than it first appears: `cat` is
-  reached only when `jq` **and** `python3` are both absent, which is exactly the condition
-  under which the two hooks have already exited 0. Both limits are written into the rule as
-  stated non-goals rather than left for the next reader to rediscover.
-  Round 6 narrowed the dependency: the call is `python3 -I`, so the floor is Python 3.4
-  (2014). An interpreter too old to accept the flag fails closed with its own error plus
-  `returned no usable answer` — verified against a PATH shim that rejects `-I`, not assumed.
-  (CI version check rounds 4 and 6, 2026-08-07; README half done 2026-08-16; rule written
-  down and the split corrected 2026-08-17) **Priority:** — done
 - **`grep` in this repo can return nothing for two unrelated reasons, and both have now cost an
   investigation.** (1) At an interactive prompt `grep` here is a **shell function shimming to
   ugrep 7.5.0**; a script gets `/usr/bin/grep`, GNU grep 3.7 — different programs with different
@@ -695,18 +658,31 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   "no matches", which is exactly how a grep of `test/version-check-test.sh` came back empty and
   produced a wrong conclusion about its own contents.
   **Half of this is closed and half is not, and the split matters.** The NUL half is pinned:
-  R21 sweeps **every tracked file** via `git ls-files` (41 files, no binary member) and asserts
+  R21 sweeps **every tracked file** via `git ls-files` (no binary member) and asserts
   the enumeration is live before trusting the sweep. It was scoped to two files first, then
   five, and a new NUL landed outside the list *both* times -- the trigger is "someone is writing
   about control bytes", not "someone is editing the check", so any narrower scope is the wrong
   shape. A repo that later adds a real binary asset needs an allowlist there.
-  **What is still open:** R21 runs only inside `test/version-check-test.sh`, which runs only
-  when someone runs `npm test` by hand -- see the CI item below, which is the real dependency.
+  **The by-hand dependency this entry named was closed by 0.12.0, and the entry did not
+  notice — corrected by the 2026-08-19 triage.** It said R21 "runs only when someone runs
+  `npm test` by hand -- see the CI item below, which is the real dependency".
+  `.github/workflows/test.yml` has run `npm test` — all four suites, R21 among them — on
+  every PR and every push to `master` since 0.12.0 (2026-08-16). This entry was written
+  2026-08-07 and the dependency it pointed at was satisfied nine days later; nothing
+  connected the two, and the pointer went on reading as a live blocker. That is the
+  concrete form of the structural problem the triage entry in `## Docs hygiene` names, with
+  one addition worth keeping: **a cross-reference to another ENTRY rots exactly the way a
+  reference to code does, and there is even less to date it by** — no file changed, so no
+  staleness sweep that works from paths can see it.
+  **What is genuinely still open is one step further down, and it is not filed here.**
+  `test.yml` is deliberately not a required check, so a red R21 is visible and non-blocking.
+  That is the same question as the suites-in-CI entry below, tracked there and deliberately
+  not duplicated into this one.
   And nothing pins the *shim* half at all: a script and a prompt resolving `grep` to different
   binaries is a property of this machine that no assertion in this repo can see. The habits that
   prevent both are spelling a control byte as `\u0000` and never as itself, and reaching for
   `/usr/bin/grep` explicitly when the answer matters. (security review rounds 3 and 5,
-  2026-08-07) **Priority:** P3
+  2026-08-07; by-hand claim corrected by triage 2026-08-19) **Priority:** P3
 - **Nothing else in this repo that reads a repo-relative path has been audited for symlink
   following, and round 7 says that is the wrong state to leave it in.** The CI check now reads
   manifests out of the object store; `scripts/forgeward-gate-check.sh`,
@@ -822,9 +798,17 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   exist because that sensitivity was measured, not guessed) and a flaky *required* check is
   worse than no check — the first red teaches everyone to re-run rather than to read.
   0.12.0 added `.github/workflows/test.yml`, which runs all four suites on every PR and on
-  `master`. The roster this entry carried was also wrong and is corrected here: **four**
-  suites, not three — gate **182** (not 171), pre-push 15, version-check 51, rules 39,
-  re-counted 2026-08-16 from a live `npm test`.
+  `master`. The roster this entry carried was also wrong and was corrected at the 0.12.0
+  triage: **four** suites, not three — gate **182** (not 171), pre-push 15, version-check 51,
+  rules 39, re-counted 2026-08-16 from a live `npm test`.
+  **And it went stale again within three days.** Re-counted 2026-08-19 on `067673e` from a
+  live `npm test`: gate **194**, pre-push 15, version-check 51, rules 39 — **299 assertions,
+  zero failures**. Gate moved 182 → 194 across 0.13.0–0.15.0; the other three did not move at
+  all. Wrong at two consecutive triages is the shape rather than the incident: **a per-suite
+  count written into prose is a snapshot of the release that wrote it**, and the only figure
+  here that has survived both corrections is the one naming a property instead of a total —
+  "four suites", which `package.json` is authoritative for. Re-derive it when you need it;
+  do not read it as something this file keeps current.
   **The sweep has now been run** — `workflow_dispatch` run `31970233140` on `master`,
   2026-08-16: **25 runs, clean=25, `s7_fail_open=0`, `other_failures=0`, `harness_rc=0`**, at
   `FORGEWARD_S7_LOAD=4` on a runner reporting a 1-minute load average of 0.24 at start, ~24s
@@ -844,8 +828,32 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   every push to `master`, so its own history accrues the same evidence for nothing. Revisit
   when that history reaches **n≥100 with zero flakes**, or dispatch `flake-sweep.yml` with a
   larger run count if the answer is wanted sooner. Until then `test.yml` stays advisory and
-  its header keeps saying why. (CI version check, 2026-08-06; suites wired in 0.12.0,
-  2026-08-16; swept clean at n=25, 2026-08-16) **Priority:** P3
+  its header keeps saying why.
+  **The passive route was wrong, and the repo already held the evidence against it —
+  corrected by the 2026-08-19 triage.** Two things measured on 2026-08-19. (1) `test.yml` is
+  at **24 runs, all success** (4 when this was written), so the passive counter is real and
+  climbing. (2) It is not "the same evidence". `FORGEWARD_S7_LOAD` is set in exactly one
+  place in this repo — `flake-sweep.yml:75`, defaulting to `4` — and `test.yml` sets nothing,
+  so its 24 runs are **quiet-box samples** while the sweep's 25 are loaded ones. They answer
+  different questions and must not be pooled into an n=49. The assertion under investigation
+  (`gate-test.sh:978`, `dep add re-gate denied`) does run once per `npm test`, so a passive
+  run is a genuine sample — just of the weaker condition.
+  **And the weaker condition is already known not to settle it.** `test/s7-flake-loop.sh`
+  records in its own header that *"the first 200-run sweep was clean on a quiet box and the
+  one failure it did catch (run 19) landed while the machine was independently at load 15 —
+  so a quiet loop is the weaker experiment."* A clean quiet n=200 is on record and the
+  failure class survived it. **So `n≥100` passive cannot be the trigger** — reaching it would
+  buy a quiet-box bound that a larger quiet sample has already failed to convert into an
+  answer. The trigger is replaced: **n≈300 at `FORGEWARD_S7_LOAD≥4`, via `flake-sweep.yml`**,
+  which is the ~2 hours of free runner time costed above. Passive history stays worth
+  watching as a regression tripwire — a red `test.yml` is still a real signal — but it is not
+  a path to required-check status and no count of it will be.
+  *Why this went unnoticed for three days: the sentence was written while looking at the
+  sweep's result, and the load flag is not visible from either workflow's summary — it lives
+  in one `env:` line and one shell comment. Nothing cross-checks a trigger against the
+  harness it names.* (CI version check, 2026-08-06; suites wired in 0.12.0, 2026-08-16; swept
+  clean at n=25, 2026-08-16; passive trigger corrected by triage 2026-08-19)
+  **Priority:** P3
 - **The three PR bodies are stripped; the git history is not, and it was never counted.**
   PR bodies #1, #2 and #3 carried a `🤖 Generated with Claude Code` byline; all three were
   edited on 2026-08-16 and re-read back from GitHub to confirm zero matches. The diffs were
@@ -909,8 +917,58 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a subject described in prose, so the triage still has to read the file. This pass
   deliberately does not do the triage: it is a different theme from an archive cut, and a
   title needing an "and" is two PRs.
+  **Second triage ran 2026-08-19. One entry deleted, four corrected in place, and the
+  headline is what the tool's own buckets were worth.**
+
+  **REFERENT MISSING was 11 of 11 false alarms — no residue, and the taxonomy is the
+  point.** Every one of the 11 entries was read and dismissed with a named reason, and the
+  14 distinct missing referents fall into five kinds: **not a path at all** (a regex literal
+  `[A-Za-z]:[/\\]*`; the JS token `process.env`; the action reference `actions/checkout`,
+  twice; the branch name `dependabot/github_actions/actions-7a5a078ad4`) — 5 entries; **a
+  real path in another repo** (trivy's `pkg/commands/app.go`; gstack's `review/SKILL.md`
+  twice, `ship/sections/review-army.md`, `bin/gstack-next-version`; todokeeper's own
+  `stale.mjs`) — 4 entries; **out-of-repo runtime artefacts** (`subagents/*.jsonl`,
+  `tool-results/*.txt`, which exist on a machine and never in a tree) — 1; **a user config
+  that is deliberately absent** (`.forgeward/config.yml`; the environment probe reports
+  `config: absent`, which is the correct state for a repo pinning nothing) — 1; and **an
+  entry naming its FIX rather than its problem** (`.forgeward/rules`, a directory `ci-gate`
+  creates at run time — "missing" is precisely what *not vendored* means) — 1. That last one
+  is the inversion todokeeper's own non-goals warn about, found in the wild on the first
+  run. **This is the tool behaving as documented, not failing:** its stated residue is
+  one-directional — a false alarm a human dismisses, never a missing referent reported as
+  present — and at n=11 that held exactly. Budget the bucket as reading time, not as a
+  defect list.
+  **SUSPECT produced the two real finds, and gap size did not predict them.** Both
+  corrections that needed re-measurement came from SUSPECT entries: the `grep`/NUL entry's
+  "R21 runs only by hand" dependency (**gap 12 days**), closed by 0.12.0's `test.yml` nine
+  days after the entry was written with nothing connecting the two; and the suites-in-CI
+  entry, which was wrong twice over (**gap 1 day**) — a suite roster stale for the second
+  consecutive triage, and a revisit trigger that pooled quiet-box runs with loaded ones. The
+  entry with the *smallest* gap carried the *most* wrong claims. Four data points is not a
+  law, but do not rank the bucket by `gapDays` on the strength of the name.
+  **The most damning find needed no tool at all.** The `python3` entry was sitting in the
+  open half already stamped `**Priority:** — done`, and had been for two releases. An entry
+  that has announced its own completion and stayed in the swept read path is this entry's
+  thesis in its purest form; it was deleted after grepping `CLAUDE.md` to confirm all six of
+  its rules had genuinely been lifted. **Nothing here — no bucket, no gap, no heading —
+  distinguishes a done entry from a live one.** The marker is in the text.
+  **Corrected in place, not deleted:** the `grep`/NUL entry (stale dependency rewritten); the
+  suites-in-CI entry (roster re-derived, passive trigger replaced); the Dependabot entry
+  (revisit condition re-checked, still unmet); the rule-extraction entry (passes 4 and 5
+  folded in). The R21 file count in the `grep` entry was **deleted rather than corrected** —
+  first use of the "prefer deleting a weightless detail" rule pass 5 lifted three days
+  earlier, and the right call: `git ls-files` had gone 41 → 49 and would go stale again.
+  **What this pass did NOT do, so the next one does not read it as finished.** The **21
+  no-path-referent entries are untouched** — the tool cannot see them and this pass did not
+  systematically sweep them by hand either. Nor did every one of the 24 SUSPECT entries get
+  a written verdict: 4 were acted on, and **the remainder is unadjudicated, not cleared**.
+  Absence of a correction here is absence of a *check*, not evidence of currency. Same
+  trigger as before for pass 3 — a batch of merged work large enough that several entries
+  are plausibly stale — with one addition: **start from the 21 blind entries.** This pass
+  worked the buckets the tool handed it, which is the path of least resistance and leaves
+  the unbucketable half exactly as untouched as having no tool at all would have.
   (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16; trigger re-checked 2026-08-17,
-  re-checked and MET 2026-08-19)
+  re-checked and MET 2026-08-19; second triage 2026-08-19)
   **Priority:** P3
 - **Nothing verifies the rule-extraction step that `CLAUDE.md` depends on.** The archive
   convention says a constraint is lifted into `CLAUDE.md` as its entry moves to
@@ -979,7 +1037,41 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cannot produce a false PASS, for a stronger reason than the prose gave: `cat` is the
   identity on the manifest bytes, so it partitions manifest states more finely than the
   `jq` arm and cannot conflate two the canonical path would separate.
-  (todos archive, 2026-08-14; second pass 2026-08-16; third pass 2026-08-17) **Priority:** P3
+
+  **Fourth and fifth passes, and the gap this entry names now has a measured recurrence
+  rather than a prediction.** Pass 4 (2026-08-17) lifted **three** rules; pass 5
+  (2026-08-19) lifted **five**. Two things follow.
+  **(1) The currency-check tally is no longer two for two.** It has now caught staleness in
+  **three of the four passes known to have run it** — 2 (stale by three), 3 (stale by two),
+  5 (stale by two: #39 and #41, merged under three minutes apart and neither carrying an
+  entry) — with **pass 4 clean**. The "two for two is not a coincidence" above should be
+  read as 3-of-4: the mechanism it names is unchanged and still the right explanation, but
+  one clean run in four is now on the record and the ratio is not a certainty.
+  **(2) The extraction verifier was demonstrated once and has not run since.** Pass 3's
+  docs-accuracy pass — fire `security-reviewer` on a docs-only diff and ask it to check the
+  new `CLAUDE.md` claims against the code — is the cheapest known answer to this entry's
+  whole finding, and it worked: five of six rules verified against four files, three real
+  defects caught in freshly-authored prose. **Neither pass 4 nor pass 5 used it, and nothing
+  noticed either time.** Pass 5's gate fired **zero** reviewers, correctly: the diff was
+  three markdown files, no reviewer's surface was present, and conditional firing is working
+  as designed. So the gate will not supply this verifier by accident — someone has to ask
+  for it.
+  **And there is nothing to ask for.** Checked 2026-08-19: the string `docs-accuracy`
+  appears in no shipped file — not `CLAUDE.md`, not `skills/gate/SKILL.md`, not
+  `agents/security-reviewer.md`. The technique exists only as narrative inside this entry,
+  in a file the gate never reads. That is the concrete shape of "nothing verifies the
+  extraction step": not that the check is hard, but that the one time it was done well it
+  was done ad hoc, written up as a story, and left with no handle to invoke it by.
+  **The fix is not obviously worth its cost, which is why this stays open rather than
+  becoming a rule.** A standing "fire `security-reviewer` on every docs diff" would fire on
+  every typo fix, and this repo ships markdown as product — the reviewer prompts themselves
+  are `.md` — so a path- or extension-based trigger cannot separate a README correction from
+  a rule that changes what the security reviewer looks for. The narrower shape worth
+  considering triggers on **the archive pass itself** rather than on the diff: a pass is a
+  named, deliberate act that already runs a currency check, so one more step costs nothing
+  on any other PR. Not built; recorded so pass 6 does not re-derive it.
+  (todos archive, 2026-08-14; second pass 2026-08-16; third pass 2026-08-17; fourth and
+  fifth passes folded in by triage 2026-08-19) **Priority:** P3
 - **`CLAUDE.md` at the repo root ships to anyone who installs the plugin from this
   marketplace.** The plugin cache copies the repo, so the file lands beside
   `.claude-plugin/`. It is inert there — Claude Code loads `CLAUDE.md` from the cwd and
