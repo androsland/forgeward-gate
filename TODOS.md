@@ -897,7 +897,20 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   measure the triage, not the file. Recorded so the next pass can tell "not due" from
   "forgotten" — the failure mode this entry exists to name is silence, and a trigger that is
   checked and not met is only visible if the check is written down.
-  (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16; trigger re-checked 2026-08-17)
+  **Trigger re-evaluated 2026-08-19 by archive pass 5 and MET.** Seven PRs and five releases
+  have merged since the not-met check — #34, #35, #36, #37, #38, #39, #41 — and five of them
+  changed shipped behaviour, which is the batch the trigger describes. `todokeeper`'s
+  `stale.mjs` now supplies the evidence the first triage had to assemble by hand: of 61
+  entries scanned, **24 SUSPECT** (a referent changed after the entry last did), **11
+  REFERENT MISSING**, **21 naming no path at all** and **5 cold**. **None of those is a
+  verdict** — a note about a permanent constraint survives every refactor of the file it
+  names, and an entry that names its FIX rather than its problem reports REFERENT MISSING
+  precisely *while* it is open and correct. The 21 are the blind half: the tool cannot date
+  a subject described in prose, so the triage still has to read the file. This pass
+  deliberately does not do the triage: it is a different theme from an archive cut, and a
+  title needing an "and" is two PRs.
+  (todos archive, 2026-08-14; first triage 0.12.0, 2026-08-16; trigger re-checked 2026-08-17,
+  re-checked and MET 2026-08-19)
   **Priority:** P3
 - **Nothing verifies the rule-extraction step that `CLAUDE.md` depends on.** The archive
   convention says a constraint is lifted into `CLAUDE.md` as its entry moves to
@@ -981,18 +994,162 @@ already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), incl
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
 
-Back to five as of archive pass 4 (2026-08-18), which cleared the deferral the 0.13.0
-entry recorded: the split was held back deliberately so a four-figure prose diff would not
-bury a script change, and it shipped on its own branch instead.
+Back to five as of archive pass 5 (2026-08-19), which found the section at **nine** —
+six standing, plus the three entries the pass wrote itself, two of them for work that had
+merged with no entry at all. The section drifts above five between archive passes and is
+cut back at the next one; it is not trimmed entry-by-entry.
 
-At **six** since 0.13.1 (2026-08-19) — the section drifts above five between archive
-passes and is cut back at the next one; it is not trimmed entry-by-entry.
+Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
+back deliberately so a four-figure prose diff would not bury a script change, and it
+shipped on its own branch instead.
+
+- **Archive pass 5: the currency check caught the section stale by two again, and a tool
+  did the measuring for the first time.** Shipped 2026-08-19, docs only — no code, no
+  version bump (0.15.0 unchanged).
+
+  **CURRENCY — stale by two, and the check has now caught staleness in three of the four
+  passes known to have run it** (2, 3 and 5; pass 4 came back clean). `## Completed`
+  stopped at #38. **#39** (`032e8df`, 0.14.0) and **#41** (`4c7207b`, 0.15.0) merged under
+  three minutes apart on 2026-08-19 and neither carried an entry; both are written up from
+  their commit bodies, before anything was moved. Pass 4's clean result reads differently
+  in that light — one clean run in four, not a change of regime — and the mechanism pass 3
+  named is unchanged: the entry describing a PR can only be written once that PR merges, by
+  which time the branch that would have carried it is gone.
+
+  **#40 is not a hole in the numbering, and that was checked rather than assumed.** It was
+  the same change as #41, opened against `fix/a11y-severity-wrong-name-and-contrast`
+  because 0.15.0 was stacked on 0.14.0 and the monotonic rule forbids merging them in the
+  other order. Squash-merging #39 rewrote that base out of existence, so #40 was closed and
+  the work re-opened against `master` as #41. Nothing merged as #40 and nothing is owed an
+  entry for it. **A gap in the PR numbers is evidence of nothing until you look** — the
+  currency check enumerates merged PRs, and a closed one has to be read to be dismissed.
+
+  **MEASURED BY A TOOL for the first time, and it changed no decision here.** `todokeeper`'s
+  `measure.mjs` read `TODOS.md` at **112,018 B, completed mass 33,302 B = 29.7% of the file
+  across 6 entries, 61 live entries, over the 50,000 B threshold**. That is the first pass
+  where the numbers came from a command rather than from a reading. The file was obviously
+  over the threshold and the cut size is arithmetic — nine entries back to five — so the
+  tool confirmed rather than decided. The reason to run it anyway is the one its own docs
+  give: a maintainer eyeballed another repo's completed mass at 1.6% when it was 12.4%, and
+  that estimate was the argument for leaving the file alone.
+
+  **MERGE ORDER — checked, and the one inversion in range does not touch the cut.**
+  `git log --first-parent` puts #33 < #32 < #34 < #35 < #36 < #37 < #38 < #39 < #41. The
+  inversion is #32 merging 19 seconds *behind* #33 despite the higher number, and it is
+  inert here because #32 never had an entry of its own — it is folded into #33's. Among the
+  four entries being cut, number order and merge order agree.
+
+  **CUT — four entries, `24,149` bytes, to `TODOS-DONE.md` newest-first at the top, in the
+  same commit that removed them:** #36 (`e250ec8`, 0.13.0), #35 (`840d936`, 0.12.1), #34
+  (`f0ac18e`, archive pass 3) and #33 (`8baee22`). Nine entries back to five — six standing,
+  three written by this pass, four out.
+
+  **EXTRACTION — five rules lifted, against pass 4's three.** Most of what these four
+  entries produced was already in `CLAUDE.md` — the whole substitution-swallowed-`exit`
+  property, its five mechanisms and its non-goals shipped with `0.12.1` itself. What was
+  not yet written down, and is now:
+
+  - **Prefer deleting a weightless detail to correcting it** — from `0.12.1`, where each
+    amend's prose about the last correction became the next round's failure surface.
+  - **A number in a doc is re-derived from what merged, against a FIXED range** — from
+    `0.12.1`'s branch-diff hash and pass 3's headline count, two shapes of the same defect.
+  - **A tool whose absence turns a suite green is still a dependency** — from #33's
+    `semgrep`/`1..0 # SKIP` finding.
+  - **An automation nobody has watched run is a claim, not a control** — from #33's
+    Dependabot close.
+  - **A count the gate prints must not fire on a configuration the docs endorse** — from
+    0.13.0's `seo.routes` non-fire, carried with its `0`-is-not-a-clean-bill exception.
+
+  **MEASURED, because pass 3's entry says to.** `TODOS.md` went **112,018 → 99,410
+  bytes**, a net **−12,608** after writing three entries back — against pass 4's −15,032 on
+  117,273 and pass 3's −1,392 on 85,990. Still **just under 2×** the ~50KB threshold, and
+  the reason is the one every pass has recorded: the open half is **79,316 bytes, 80% of
+  the file** (`awk '/^## Gate — publish matcher/{f=1} /^## Completed/{exit} f' TODOS.md |
+  wc -c`), up from 72% at pass 4 — it rises as a share every time only the completed half
+  is cut, and this pass does not touch it.
+
+  **What this pass did NOT do, and the difference from pass 4 is that it is now due.** It
+  expired nothing in the open half. Pass 4 recorded that triage as a different job with a
+  different risk; its own entry sets the trigger as a batch of merged work large enough that
+  several entries are plausibly stale, and that trigger was **checked and not met on
+  2026-08-17**. Seven PRs and five releases later it **is** met, `stale.mjs` puts **24 of 61
+  entries in SUSPECT** against **5 cold**, and the entry now says so with the full
+  distribution and what each bucket is not. The triage itself is the next unit of work,
+  not this one — a title needing an "and" is two PRs.
+
+- **The `quality` axis was disclosed as owned by reading whether `/review` is INSTALLED,
+  which is not what runs it.** Shipped on `feat/gate-quality-axis-keys-on-handoff` as
+  **PR #41, merged `4c7207b`, 2026-08-19** (0.15.0), +75/−13 across 6 files. Written up by
+  archive pass 5 from the commit body, because the entry did not ship with the work.
+
+  **The failing configuration is `/review` present, `/ship` absent.** The gate never invokes
+  `/review`; the axis is run only by the Step 3 handoff, through `/ship` Step 9. So a
+  `gstack_review`-keyed table reported the axis as covered in the exact configuration where
+  nothing will ever run it, and said nothing at all, because the variable it read was
+  satisfied. `docs/axis-proposals.md` had recorded, under the quality-axis question and
+  since before the table said otherwise, that the handoff to `/ship` is the only thing that
+  runs quality — **the repo contradicted its own doc, and the doc was right.**
+
+  **Four cases, including the one that cannot be detected.** `/ship` present → the axis is
+  deferred to Step 9, said plainly so nobody runs `/review` a second time by hand. `/ship`
+  absent, `/review` present → NOT COVERED this pass, naming the command. `/ship` present but
+  the handoff not taken → undetectable, and stated to be — **it is the common path, not an
+  edge**, since forgeward's own workflow is gate → push-and-PR by hand precisely because
+  `/ship` would re-bump the version. Both absent → unchanged. The first bullet is therefore
+  worded as where the axis is *owed*, never as a claim it was paid.
+
+  **Why the gate must not simply invoke `/review`, pinned so it does not read as a gap
+  waiting to be filled.** `/review`'s `allowed-tools` include `Edit` and `Write`, and Step 2
+  snapshots the tree and diffs it afterwards to prove the gate is read-only — a reviewer that
+  may legitimately edit code cannot run inside that envelope without either firing the
+  workspace guard on correct behaviour or gutting the guarantee. The scopes differ too:
+  `/review` resolves its own base branch, Step 0 resolves the publish boundary.
+
+  **Residue filed, not waved off:** nothing observes whether the offered handoff was taken.
+  `axis-proposals` already specced that check — match a dashboard entry on `skill:"review"` +
+  `commit` + specialists-dispatched, a missing `via` meaning standalone — and shelved it. It
+  is now the only thing standing between "owed" and "paid".
+
+- **A11y read a WRONG accessible name, and text below AA, as polish.** Shipped on
+  `fix/a11y-severity-wrong-name-and-contrast` as **PR #39, merged `032e8df`, 2026-08-19**
+  (0.14.0), +79/−4 across 6 files. Written up by archive pass 5 from the commit body.
+
+  **A wrong name blocks nobody, which is exactly why the old rubric got it wrong.** The bar
+  was "a real barrier that blocks a user from completing a task… polish is Low". A
+  screen-reader user given a wrong name completes the task and is told something untrue on
+  the way, so it landed at Low and the gate passed — backwards from the missing-name case
+  sitting beside it. A missing name is discoverable: the reader announces "button" and the
+  user knows something is absent. A wrong one announces something plausible and gives no
+  signal to doubt it. `aria-label` REPLACES the element's contents in the buffer, so a
+  hand-written one silently deletes every field it omits and goes stale the next time one is
+  added.
+
+  **"Failing contrast on key text" had the same shape.** "Key" has no definition, so it
+  resolves to whatever the reviewer already believes is important, and a whole family of
+  secondary labels sits under the floor for months while each one individually reads as
+  unimportant. Any text below 4.5:1 normal / 3:1 large is now High, unqualified.
+
+  **This widens what the gate BLOCKS, not what it prints, and it is the one place this repo
+  has done that deliberately** — recorded as an exception in `CLAUDE.md` beside the rule it
+  is an exception to. Both non-goals are written into the reviewer prompt rather than left
+  implied: a terse-but-accurate name is a pass (`aria-label="Κλείσιμο"` on an `×` is correct,
+  because the test is whether the name is TRUE, never whether it is long, and `alt=""` is the
+  correct marking for decoration), and runtime-composed contrast — a theme token, an
+  `opacity-*` utility over an unknown backdrop, a UA stylesheet — is not computable from a
+  diff and must be reported as "unmeasured, needs a rendered check". **A vendor's documented
+  value is not evidence there:** one shipped UA rule for disabled input text predicts ~2.0:1
+  where the engine paints 7.57:1.
+
+  **Two gaps filed rather than closed.** No test reads `agents/*.md` at all, so every
+  reviewer's blocking surface is prose no CI job checks — 299 assertions stay green through
+  any rubric edit. And an "unmeasured" report still returns PASS, so a known-unknown is
+  indistinguishable from a clean run in the marker.
 
 - **A security assertion was pinned by a hand-copied literal, and forgetting to update it
   was the one failure in this repo with no red anywhere.** Shipped on
-  `fix/e17-derive-payload` as **PR #TBD, merged `TBD`, 2026-08-19** (0.13.1). Written in the same commit as the
-  work, so the PR was current the moment it opened and the number was not knowable then —
-  *next sweep: stamp the PR number and merge SHA here.*
+  `fix/e17-derive-payload` as **PR #38, merged `678a4fc`, 2026-08-19** (0.13.1). Written in
+  the same commit as the work, so the PR was current the moment it opened and the number was
+  not knowable then; stamped by archive pass 5, as the placeholder that stood here asked for.
 
   **The defect is the absence of a signal, not a wrong answer.** E17 asserts that
   `_env_ok` is anchored at *both* ends by handing `forgeward-write-marker.sh` the probe's
@@ -1108,329 +1265,3 @@ passes and is cut back at the next one; it is not trimmed entry-by-entry.
   and the open half grew as a share of the file (63% → 72%) precisely because only the
   completed half was cut. Triaging the open half is a different job with a different risk —
   archiving is reversible and pruning is not — and it remains undone.
-
-- **P2: `.forgeward/config.yml` said nothing when it was read and discarded.** Shipped on
-  `feat/config-warnings` as **PR #36, merged `e250ec8`, 2026-08-18** (0.13.0). Stamped by
-  this sweep; the entry was written in the same commit as the work, so the PR was current
-  the moment it opened and the number was not knowable then.
-
-  The probe gained `config_warnings`, an integer count of settings it was addressed by and
-  could not use, and the gate renders one line when it is non-zero. **Visibility only — every
-  rule in the reader accepts and rejects exactly what it did before**, verified by the whole
-  pre-existing E1–E27 block staying green unchanged. The counters are appended after every
-  existing rule precisely so they cannot shadow one.
-
-  **Two deliberate non-fires, and the second is the load-bearing one.** An empty item
-  (`substitutes: []`, a trailing comma) names nothing, so nothing was discarded. And
-  `seo.routes` plus its whole subtree is skipped by indent, because it is documented as
-  unhonoured in README, `skills/gate/SKILL.md` and `agents/seo-reviewer.md` — a count that
-  fires on a configuration that followed the docs trains the reader to ignore the count.
-  That is the one place this reader treats indentation as structure.
-
-  **`0` is not a clean bill, and this is now written in three shipped files** because it is
-  the trap the field creates: a config the probe could not open at all also reports `0`, and
-  only the separate `config` field distinguishes them. The live-test's symlink step is
-  written as exactly that trap.
-
-  **The vacuity direction here is the reverse of E1/E2's.** Nine of the ten new assertions
-  want a non-zero count, so a counter stuck on `1` would green all nine while being useless;
-  E28 (a fully-honoured config) and E34 (`seo.routes` plus subtree) are the only two
-  asserting `0` and exist as that control. Confirmed by mutation: `warn()` as a no-op reddens
-  exactly E29–E33 and E35–E37, flooring the count at `1` reddens exactly E28 and E34, and
-  neither touches anything outside the block.
-
-  **The three-file obligation was exercised for the second time and both failure modes
-  re-measured rather than quoted** — see the entry under `## Standalone posture`. Suites at
-  HEAD: gate 194/0, pre-push 15/0, rules 39/0, version-check 51/0.
-
-- **P3: the two-arm unknown-mode divergence closed, and the fix's own guard turned out not
-  to halt.** Shipped on `fix/normalize-manifest-mode-divergence` as **PR #35, merged
-  `840d936`, 2026-08-18** — stamped by this sweep, as the placeholder that stood here asked
-  for.
-
-  **The fix is structural, not behavioural, and that was the choice.** The entry named
-  aligning the two arms as the remedy; aligning them leaves two implementations that can
-  drift again, which is precisely how this bug was born from the `top`/`plugins` alignment
-  that preceded it. Instead the unknown-mode question is now asked **once, above the
-  interpreter split**, and the `jq` arm's `*) cat ;;` — the arm that used to answer it —
-  was deleted rather than mirrored. A second answer sitting beside the first is what
-  invites someone to "fix" one branch to match the other. Raw passthrough is the answer
-  because it matches the no-tool `else` arm: an unhandled manifest is hashed whole, so a
-  version bump re-gates.
-
-  **`exit 1` inside `$( )` kills the subshell, not the script — and this was found by
-  running the fix, not by reading it.** `snapshot_manifest` gained a mode guard ending in
-  `exit 1`; every call site is a command substitution, so the first version printed the
-  guard's message to stderr, assigned an empty part, and emitted **a perfectly ordinary
-  hash with status 0** — a louder version of the silence the guard was added to break.
-  Fixed with `|| exit 1` on all three calls. `set -uo pipefail` does not catch it — there
-  is no `-e`.
-
-  **`-e` is not the reason, and three separate drafts of that claim were wrong — the
-  errors are the part worth keeping.** Draft one asserted, without measuring, that `-e`
-  "does not, reliably, across shells" catch an assignment from a substitution; measured,
-  it **does** halt this exact shape on bash 5.1.16 and bash 5.3.15, and the `&&`-guarded
-  appends survive it because a failing left operand is exempt. Draft two added dash to
-  that list on the strength of a non-zero exit; that exit was `rc=2` from `Illegal option
-  -o pipefail` at the `set` line, so the script never ran — **a non-zero exit is not
-  evidence of the mechanism you are testing for.** Draft three, written *inside* the
-  correction to draft one, said `-e` "changes the error semantics of every other command
-  in the file"; enumerated, the only statement that changes is the unguarded
-  `diff_part="$(git diff …)"` assignment. The real argument for `|| exit 1` is scope and
-  locality over **one** line, not correctness over a file. That last claim is a universal
-  in a bullet already wrong three times, so it is measured twice: `grep` finds exactly one
-  unguarded assignment-from-substitution in the file, and an eight-case failure battery
-  (bad base, bad tip, dash-led base, non-repo cwd, no jq, no python3, empty base,
-  baseline) halts at that same statement in every divergent case and is byte-identical in
-  the other four.
-
-  **The repo sweep that shipped with this was wrong three times, and the method matters
-  more than the list.** It filed `check_root` as exit-bearing — it is not; it returns 0/1
-  and the `exit 0` sits at its *call site*. It missed `deny` entirely, because the `sed`
-  range used to read function bodies ends at `/^}/` and `deny` emits a JSON heredoc whose
-  closing brace is in column 0, so the range stopped short of its `exit`. And it had **no
-  transitive tier at all**, so it read as complete while omitting three functions that
-  exit by calling one that does — caught in round 3, where the reviewer flagged
-  `_gl_target_guard` and re-enumerating turned up `require_blob` as well.
-
-  Corrected and verified both directions: **direct** exits are `die`, `reject`, `deny`,
-  `snapshot_manifest`; **transitive** are `out_reject` and `_gl_target_guard` (→ `reject`)
-  and `require_blob` (→ `die`); and among the functions invoked inside a command
-  substitution, `snapshot_manifest` is the only one that can exit. The rest return — and
-  where one sits near an `exit`, that `exit` is at top level, after the body. That is
-  precisely the trap `check_root` fell into.
-
-  **Then a fourth draft was wrong too, and that is what settled the shape of the fix.**
-  Round 4 caught the replacement asserting "thirteen functions are invoked inside a
-  substitution" when a pattern that also matches pipe tails finds fifteen — and fifteen is
-  not asserted as final either, it is just what the better method saw. Matching `$(fn`
-  catches only a substitution's *first* stage, so `normalize_manifest` and `read_version`,
-  both at the tail of a pipe inside `$( )`, were invisible. Four drafts, five distinct
-  mechanisms once they were separated properly, one shape:
-
-  | mechanism | effect | victim |
-  |---|---|---|
-  | `sed` range ends at `/^}/` | truncates at a heredoc's column-0 brace | `deny` |
-  | same range vs. a one-liner def | overruns into a genuinely later function | `warn` (span 146) |
-  | last def in file — no terminator | body runs to EOF, swallowing the call site | `check_root`, `snap` (×2) |
-  | pattern anchored to `$(fn` | misses a pipe's tail stage | `normalize_manifest`, `read_version` |
-  | `grep exit` counts comments | false positive | `read_version` |
-
-  All five fail silently. **So the count was removed rather than corrected to fifteen** —
-  a closed census that has been wrong every time it was asserted is the wrong shape for a
-  shipped doc, and the safety property never depended on it. `CLAUDE.md` now states the
-  property and the method, plus explicit non-goals. The property itself survived every one
-  of these errors untouched; only the prose around it kept breaking.
-
-  **And then the table above was wrong twice, which is the fifth iteration and the one
-  that justifies the whole approach.** Round 5's reviewer caught the first: the one-liner
-  row cited `honor_cd`, which is a four-line function at `forgeward-gate-check.sh:186-189`
-  and has never been one line. Pushing on its second note — that it could not verify
-  `check_root` as the one-liner-overrun victim — found the other, and the reviewer was
-  right to doubt it: `check_root` closes at a column-0 `}` at
-  `forgeward-detect-gstack-skill.sh:127` like any ordinary block, so that mechanism cannot
-  be what misfiled it. The real one is that it is the **last** definition in its file, so
-  an attributor with no closing-brace tracking runs its body to EOF and charges it with
-  `check_root … && exit 0` at `:146` — its own call site — and `exit 1` at `:149`. Both
-  rows are now corrected above. **A table explaining four bad scans was itself a bad scan**;
-  prose describing a sweep is a sweep, and nothing re-runs it.
-
-  **And then it was wrong a third time, in the same row, caught by round 7.** The
-  one-liner-overrun row also cited `snap` in `forgeward-scan.sh` and
-  `forgeward-workspace-guard.sh`. It is not that mechanism either: `snap` is the **last**
-  definition in both files (`:321` of 358, `:48` of 71) and neither file has a later
-  column-0 `}` at all, so the range runs to true EOF — the same mechanism as `check_root`,
-  one row down. Moving it leaves `warn` as the overrun row's only instance in `scripts/`,
-  and `warn` genuinely is one: defined at `forgeward-detect-base.sh:97`, next column-0 `}`
-  at `:242`, so the range crosses into a later function's body. **Three corrections, two
-  of them in the same row, all found by a reviewer rather than by me.** The row that keeps
-  breaking is always the one asserting *which function* illustrates a mechanism — never
-  the mechanism itself, never the safety property.
-
-  **And the correction to that row introduced the next error, which is what finally
-  identified the generator.** The rewritten text listed which `exit`s each `snap` range
-  swallows, joining an exhaustive list for one file to an incomplete one for the other
-  with "respectively" — so the incomplete half read as complete. It was caught in the very
-  next round, in text written by the round before it. The verification pattern I used is
-  what produced it: anchored to `exit` at a line start or right after a separator, it
-  silently skipped the indented ones. **Each amend adds prose about the last correction,
-  and that new prose is the next round's failure surface — so correcting sustains the
-  loop rather than ending it.** The move that actually terminates is a **subtractive**
-  edit: the itemized list was deleted, not completed, and replaced with the
-  non-exhaustive phrasing the row above already used. Which `exit`s get swallowed was
-  never load-bearing; the mechanism is that the range reaches EOF at all. **Prefer
-  deleting a detail to correcting it, whenever the detail carries no weight** — a
-  completed enumeration is still an enumeration, and it can rot the moment either file
-  changes.
-
-  **The units were inconsistent too, and that is the smaller finding with the longer
-  reach.** "Up to 145 lines" for `warn` counted the span minus the definition line, while
-  63/384/179 for the `test/` trio counted the raw span — two conventions in one document,
-  presented as directly comparable. Both are now the raw span that
-  `sed -n '/^fn()/,/^}/p' FILE | wc -l` returns, and `CLAUDE.md` now quotes that command
-  next to the numbers. A figure without the command that produced it is not checkable, and
-  an uncheckable figure in a doc about verification is the thing this entry is about.
-
-  **Non-goals, now quantified rather than directional.** The sweep covers **12 of the 21
-  tracked shell files**: 11 in `scripts/`, 1 in `ci/`. The 9 in `test/` and `live-test/`
-  are excluded on purpose — a substitution-swallowed `exit` in a harness corrupts a test
-  result, not a marker, so it cannot produce a false PASS. That is a blast-radius
-  judgement, not a claim they are clean, and spot-checking proves the distinction matters:
-  **three of the five mechanisms reproduce** in files no sweep has ever read, with one
-  example each rather than three of one —
-
-  | mechanism | reproduced in `test/` |
-  |---|---|
-  | one-liner overrun | `denies`, `gl`, `_hook_path` in `gate-test.sh` — spans 63, 384, 179 |
-  | comment/string false positive | `expansion:26`, `det:2169` — both `-> exit code` in the def-line comment; `pre-push-test.sh` past `:144` — one comment, two message strings |
-  | last def → body runs to EOF | `rules-test.sh:204` last def, top-level `exit 1` at `:257` |
-
-  The first draft of this paragraph cited only the three one-liners and still said "three
-  of the five mechanisms" — a true claim carrying evidence for a third of itself, which is
-  the same shape as everything else in this entry. Verified the population is complete
-  rather than sampled: no tracked file carries a shell shebang without a `.sh` extension,
-  and `hooks/` holds only `hooks.json`.
-
-  **Row 3 lost half its evidence in round 7, and the way it lost it is the entry's thesis
-  in miniature.** It originally read `pre-push-test.sh:144`, `rules-test.sh:204`, "each
-  with a top-level `exit` after". True of `rules-test.sh`. False of `pre-push-test.sh`:
-  `ppjq()` at `:144` is genuinely its last definition, but **no executed `exit` follows it
-  at all** — the file terminates on the bare status of `[ "$FAIL" -eq 0 ]`, and the three
-  lines after `:144` carrying the word are the comment at `:148` and the `ok`/`nok`
-  strings at `:154`/`:155`. So it was never an EOF instance; it is a **fourth instance of
-  the comment/string false positive**, and it has been moved to row 2. A citation for the
-  comment-false-positive mechanism was itself produced by the comment false positive.
-
-  **Both new assertions were proven red on the old code before being wired in.** V9 (the
-  two arms agree on an unrecognised mode) fails on `origin/master` with
-  `jq='{"b":2,"a":1,…}'` against `py='{"a":1,"b":2,…}'` — the divergence itself, visible in
-  the key order. V10 (a bad mode at a call site halts with no hash) fails on old code with
-  `rc=0` and a legitimate-looking hash. A test that has never been observed to fail is a
-  claim about the code, not evidence about it. Suites after: gate-test 184/0, pre-push
-  15/0, rules 39/0, version-check 51/0.
-
-  **No marker churn, and this was checked rather than assumed.** Running the old and the
-  new script over the same input gives identical canonical bytes on both the `jq` path and
-  the python3-only path, so no repo takes a re-gate for this. That mattered enough to verify
-  because the script header records a prior alignment whose byte change cost a release of
-  its own — the one-time cost is paid when the *reachable* modes move, and these did not.
-
-  Quoted against a **fixed** range, `origin/master~1..origin/master`: all four combinations
-  — {old script, new script} × {jq, no jq} — give `33751462a160ba83df171dfe`. **The fixed
-  range is load-bearing.** This paragraph previously quoted the hash of
-  `origin/master...HEAD`, which is a hash of the branch's *own diff* and so changes with
-  every amend; it was stale before anyone could read it. A number that the act of committing
-  invalidates is worse than no number, because it looks verifiable. It also survived one
-  round longer than the same error in the commit message and the PR body, both of which were
-  corrected while this file was not — two tracked files disagreeing inside one commit, which
-  is a failure this very entry records happening earlier on the same branch.
-
-  The first attempt at the no-jq arm compared two **empty** strings and reported a match:
-  the shim `PATH` was hand-listed and missing tools the script needs, so both sides failed
-  identically. That is the green-on-an-empty-set failure the `nok` arms added to V9/V10 in
-  this same commit exist to prevent, committed while verifying the commit that argues for
-  them. Redone by mirroring the whole real `PATH` minus `jq` and asserting non-emptiness
-  before comparing.
-
-  **The residue is filed, not waved off:** both guards sit on paths no call site reaches,
-  so V9/V10 are the entire detection surface and both are text-coupled to the script. That
-  is an open P4 under `## Gate — base detection and freshness`, not a closed question.
-
-- **Archive pass 3: the currency check caught staleness for the second consecutive pass, and
-  the PR's own headline count was wrong.** Shipped 2026-08-17 as #34 (`f0ac18e`), docs only —
-  `CLAUDE.md`, `TODOS.md`, `TODOS-DONE.md`, +385/−100. No version bump (0.12.0 unchanged).
-
-  **CURRENCY.** `## Completed` was stale by two merged PRs — #33 (`8baee22`) and #32
-  (`11af421`), nineteen seconds apart — both written up from their commit bodies before
-  anything moved. Pass 2 found it stale by three, pass 3 by two. **Two for two is the
-  mechanism, not luck:** the entry describing a PR can only be written after that PR
-  merges, and by then the branch that would have carried it is gone. The convention's
-  *cut* step is still unverified by anything; only the extraction was ever named.
-
-  **CUT.** One entry archived: #26 (`41324b0`, 0.10.0). Inserted at the TOP of
-  `TODOS-DONE.md` rather than below #27, because #26 merged 39 minutes *after* #27 despite
-  the lower number — established with `git log --first-parent`, not from the number or the
-  date, which is what that file's header tells the next reader to do.
-
-  **EXTRACTION — and the count in the title is wrong.** The squash title says seven rules,
-  the commit body says six, and the merged diff adds **eight** bullets to `CLAUDE.md`
-  (`git show f0ac18e -- CLAUDE.md | grep -c '^+- \*\*'`), none of them a move: zero bullets
-  were removed, and neither `An interpreter dependency's posture…` nor `Pin a blind spot as
-  expected-silent…` existed at `f0ac18e^`. The body's six was true when the first commit was
-  written; two more landed in later commits on the same branch and neither the body nor the
-  title was re-derived. **A count written before the branch finished is a claim about a
-  draft, not about what merged** — the only moment it can be true is after the last commit.
-  Recorded rather than silently corrected because the drift is the finding: the same PR that
-  lifted "state only what you actually checked" into `CLAUDE.md` shipped a headline number
-  that had gone stale inside its own branch.
-
-- **P3 ×4 + P4: four entries were closed by going and measuring them, and three of the four
-  measurements contradicted the entry.** Shipped 2026-08-17 as #33 (`8baee22`), docs and CI
-  config only — no executable code, no version bump (0.12.0 unchanged; the monotonic rule is
-  never-backward, not always-bump). `#32` (`11af421`, `actions/checkout` 4.4.0 → 7.0.1)
-  merged 19 seconds behind it.
-
-  **Dependabot stopped being an unverified automation.** The entry led with "configured but
-  has never been observed to run, and an unverified automation reads as coverage", and that
-  closed the same day it was written: #32 opened at 20:14 UTC, ~4 hours after
-  `.github/dependabot.yml` merged, and merged 2026-08-17. Service enabled, schedule fires
-  with nothing switched on in Settings, `actions` group name resolves. **The prediction the
-  entry recorded held exactly** — it said to expect a *major* bump needing reading rather
-  than merging on the tick, and a three-major jump arrived. The bounded-not-open claim was
-  confirmed from #32's own rollup rather than assumed: `suites`, `shell`, `monotonic` all
-  SUCCESS, four `sweep` entries correctly SKIPPED. **The lesson that outlives it: an
-  automation nobody has watched run is a claim, not a control**, and the check that settles
-  it is one glance at the PR list.
-
-  **The flake sweep ran clean and still does not settle its question.** `workflow_dispatch`
-  run `31970233140` on `master`: 25 runs, clean=25, `s7_fail_open=0`, `other_failures=0`,
-  `harness_rc=0`, at `FORGEWARD_S7_LOAD=4`. First in-CI measurement of the load-sensitivity
-  claim. Zero failures in 25 runs puts the 95% one-sided upper bound on the per-run flake
-  rate at **11.3%** — and an 11% flake on a required check is precisely the failure the entry
-  was opened to avoid, so **a clean sweep at n=25 is consistent with the outcome it was meant
-  to rule out**. 25 is the harness default, not the number that answers the question. Costed
-  the decisive version (n≈300 → 1.0%, ~2h of free runner time) and set the revisit trigger at
-  n≥100 with zero flakes, which `test.yml` accrues passively for nothing.
-
-  **The attribution entry undercounted its own scope, and sweeping is what showed it.** It
-  named "the three merged PR bodies", which reads as the complete set; the bylines were
-  stripped from #1/#2/#3 and re-read back from GitHub to confirm. Sweeping *every* PR, issue
-  and commit then found **14 commits on `master` carrying an AI co-author trailer and one
-  carrying a session permalink, out of 47** — invisible to an entry that only looked at PR
-  bodies. Deliberately not actioned: it means rewriting 15 commits and force-pushing a
-  **public** `master`, which is the owner's call. One apparent hit (#26) is a false positive —
-  prose *about* a rejected attribution check — and **that got demonstrated live**: the global
-  pre-PR hook blocked #33's own body, because the body quoted the byline while explaining it
-  had been removed. A substring match cannot distinguish the check from the thing checked
-  for. The prediction was paid within the hour of being written.
-
-  **The python3 entry overstated its own scope.** It called python3 "the only external tool
-  any script in this repo needs"; `test/rules-test.sh` needs `semgrep`, which degrades to a
-  loud `1..0 # SKIP` rather than failing — precisely why it read as not-a-dependency. **A
-  tool whose absence turns a suite green is still a dependency.** README now names both and
-  states the distinction most likely to mislead: hooks read JSON with `jq` *or* `python3` and
-  fail open, while `ci/check-version-monotonic.sh` requires it and fails closed.
-
-  **Two shipped files disagreed about a fact they shipped together.** `.github/dependabot.yml`
-  non-goal 3 said a version pinned inside a script does not exist here "today";
-  `.github/workflows/shellcheck.yml`, same release, pins `SHELLCHECK_VERSION` in `env:` and
-  downloads it in `run:` — and its own header states that limit from the other side. Also
-  "across three workflows" where four carry a `uses:` site. Both corrected with the original
-  wording quoted, so the correction is legible rather than silent.
-
-  **README's Validation section was stale in three places**, all found by re-running rather
-  than re-reading: "**Both** are framework-free" over **four** suites; `gate-test.sh` "(173
-  assertions)" against a measured **182**; and a sentence whose entire job was to say the
-  suite is "unchanged" carrying a count of 24. Counts now live in one place and the two
-  previously undocumented suites (version-check 51, rules 39) are described. **A number
-  nobody re-measures is a number that rots** — the one that existed only to say "unchanged"
-  is gone.
-
-  **Two cross-repo line citations into gstack became symbol references** and are labelled as
-  pointers into a repo this one neither controls nor can keep current. Both were verified
-  correct first: the claim was right, the citation *form* is what `CLAUDE.md` forbids. A
-  third apparent stale citation was deliberately left alone — it sits inside a `## Completed`
-  entry that is itself narrating that citation going stale, so it is quoted provenance, not a
-  live reference. And the wip-tag decision got the fact it turns on: `item2-wip-quote-stripping`
-  is local-only and `c7e56d0b` is not an ancestor of `origin/master`, so "keep it as an
-  archaeological record" was never the status quo — the status quo is *ephemeral*.
