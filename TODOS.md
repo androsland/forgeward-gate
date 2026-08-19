@@ -160,6 +160,32 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Reviewers
 
+- **Nothing pins the reviewer prompts, so a rubric can be reverted or corrupted and all
+  299 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19) The
+  four suites cover scripts, hooks, the version check and the rules pack; `agents/*.md` is
+  read by no test at all — `grep -rln accessibility-reviewer test/ ci/ scripts/` returns
+  nothing, and the only reference anywhere is `skills/gate/SKILL.md`. The blocking surface
+  of every reviewer is therefore prose that no CI job reads. **Not proposing a prose diff
+  test** — pinning wording makes every legitimate edit a two-file change and trains people
+  to update the fixture without reading it. The tractable shape is an assertion on the
+  STRUCTURE a reviewer must have: frontmatter with `name`/`description`/`tools`, exactly
+  one `VERDICT:` line, and the PASS condition naming Critical and High. That would have
+  caught a truncated file, which is the failure mode that actually happens.
+  **Priority:** P3
+
+- **A reviewer that reports "unmeasured, needs a rendered check" still returns PASS, and
+  the gate has no slot for that answer.** (filed with the 0.14.0 a11y severity widening,
+  2026-08-19) The new contrast non-goal instructs the a11y reviewer to report
+  runtime-composed ratios as unmeasured rather than guessing a High — correct, because a
+  static diff cannot compute a painted colour. But PASS/FAIL is the whole contract: an
+  unmeasured item is indistinguishable from a clean one in the marker, so a PR can go
+  green carrying a known-unknown that nobody records. **Not proposing a third verdict** —
+  that changes the gate's core predicate and every caller of it. The cheap version is for
+  the gate to surface unmeasured items in the report it writes for the user, separately
+  from findings, so the operator sees what was skipped and can choose to check it. Until
+  then the answer lives only in the reviewer's returned text, which is discarded once the
+  verdict is read. **Priority:** P3
+
 - **Semgrep 1.169 silently does not scan `.mts`/`.cts`.** Measured with byte-identical
   content across extensions: `.js .mjs .cjs .jsx .ts .tsx` all produce findings; `.mts`
   and `.cts` produce **zero findings and zero errors**, so the miss is indistinguishable
