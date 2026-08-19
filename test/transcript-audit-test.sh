@@ -256,6 +256,44 @@ else
   nok "by-shape breakdown attributes the hits to a named pattern"
 fi
 
+# ---------------------------------------------------------------------------
+# 11. THE OUTPUT IS ITSELF IDENTIFYING, and the person about to paste it into
+#     an issue is the one who needs telling. A project slug is a directory
+#     path with the punctuation flattened, so the filename list carries a home
+#     directory name and repo/client names. Raised by the privacy review of
+#     the commit that shipped this script.
+# ---------------------------------------------------------------------------
+if printf '%s' "$out" | grep -qF 'REDACT BEFORE PASTING'; then
+  ok "a run with hits warns that the printed paths are identifying"
+else
+  nok "a run with hits warns that the printed paths are identifying"
+fi
+if printf '%s' "$o6" | grep -qF 'REDACT BEFORE PASTING'; then
+  nok "the redact warning does not fire on a run with no filenames to redact"
+else
+  ok "the redact warning does not fire on a run with no filenames to redact"
+fi
+
+# ---------------------------------------------------------------------------
+# 12. `stat -c` IS GNU-ONLY. On BSD and macOS every call fails and a naive
+#     loop reports a confident 0 world-readable files -- the exact false-clean
+#     shape this script exists to argue against. Simulated with a stat on PATH
+#     that always fails, because the alternative is not testing it at all.
+# ---------------------------------------------------------------------------
+FAKEBIN="$TMP/fakebin"; mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexit 1\n' > "$FAKEBIN/stat"; chmod 755 "$FAKEBIN/stat"
+o7="$(PATH="$FAKEBIN:$PATH" "$AUDIT" --root "$R6" 2>&1)"
+if printf '%s' "$o7" | grep -qF 'tool-results files: UNAVAILABLE'; then
+  ok "an unusable stat reports UNAVAILABLE, not a confident 0"
+else
+  nok "an unusable stat reports UNAVAILABLE, not a confident 0" "a silent 0 is a false clean"
+fi
+if printf '%s' "$o6" | grep -qE 'tool-results files: [0-9]+'; then
+  ok "a working stat still reports a number"
+else
+  nok "a working stat still reports a number" "the probe must not disable the real check"
+fi
+
 printf '\n1..%d\n' "$((PASS+FAIL))"
 printf '# pass %d, fail %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

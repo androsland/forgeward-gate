@@ -331,7 +331,7 @@ see limits.
 **Automated suites — `npm test`.** Five suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
 repos: `gate-test.sh` (194), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`rules-test.sh` (39), `transcript-audit-test.sh` (31) — 330 assertions. Every suite prints
+`rules-test.sh` (39), `transcript-audit-test.sh` (35) — 334 assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
 numbers here were last re-measured against a full run at 0.16.0, and `package.json`'s `test`
 script, not this paragraph, is the roster.
@@ -408,7 +408,7 @@ silent). Fixtures are generated into a scratch directory at run time and never w
 the repo: the plugin's own artifact contract applies to its own tests, and a committed `.ts`
 fixture would be scanned by forgeward's gate on every subsequent PR.
 
-`test/transcript-audit-test.sh` (31 assertions) — `scripts/forgeward-transcript-audit.sh`,
+`test/transcript-audit-test.sh` (35 assertions) — `scripts/forgeward-transcript-audit.sh`,
 whose property under test is unusual: it must FIND credential shapes and then NOT show them.
 Nearly every failure mode is an assertion about absence, and an absence assertion passes for
 free on a script that crashed, printed nothing, or searched the wrong directory — so the
@@ -416,8 +416,10 @@ suite opens with a **trust check** that proves the leak assertion can fail, and 
 check is paired with a positive control. Fixtures plant one needle in all three known
 persistence channels plus an undocumented fourth, so a refactor that reintroduces a channel
 list fails here rather than in someone's transcripts. It also pins the precision boundary
-(`AKIA` + 15 characters must *not* match), the four exit codes, and the presence of the
-words UNVERIFIABLE and "rotate regardless" in a run that found nothing.
+(`AKIA` + 15 characters must *not* match), the four exit codes, the presence of the words
+UNVERIFIABLE and "rotate regardless" in a run that found nothing, and — with a deliberately
+broken `stat` on `PATH` — that a platform without GNU `stat` reports its permissions count as
+`UNAVAILABLE` rather than as a confident `0`.
 
 **Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
 session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
@@ -559,6 +561,12 @@ and session directories it searched, so an empty result has a denominator; and i
 block naming what the run did **not** establish. Exit `1` means a prefixed shape matched, `0`
 means none did, `2` means there was nothing to search. Read its header before trusting a
 clean run — the limits are the point of it.
+
+**The filename list it prints is itself worth redacting**, and the script says so next to the
+list. The paths are not the credential, but a project slug is a directory path with the
+punctuation flattened, so it carries a home-directory name and repo or client names — and the
+natural next move after a hit is pasting the output into an issue, a chat, or a prompt, each
+of which publishes that to someone who was not going to see it.
 
 What follows is the same procedure by hand, kept because a security notice whose only remedy
 is "run our script" is not much of a notice, and because the script is one more thing that

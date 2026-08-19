@@ -189,6 +189,12 @@ if [ "$n_hits" -gt 0 ]; then
   printf '\n  Filenames and shapes only -- open them yourself. Some will be documentation\n'
   printf '  quoting a pattern; that is not filtered, because filtering by content is what\n'
   printf '  caused the defect this tool audits.\n'
+  printf '\n  REDACT BEFORE PASTING. These paths are not the credential, but they are not\n'
+  printf '  nothing either: a project slug is a directory path with the punctuation\n'
+  printf '  flattened, so it carries your home-directory name and your repo or client\n'
+  printf '  names. The likely next step after a hit is pasting this list into an issue,\n'
+  printf '  a chat, or a prompt -- all of which publish that to someone who was not\n'
+  printf '  going to see it.\n'
 fi
 
 printf '\nPASSWORD IN A CONNECTION URL: %s file(s)\n' "$n_url"
@@ -204,13 +210,28 @@ fi
 # against 1878 of 1879 transcripts at 0600 -- so the copy easiest to MISS is also, as a
 # rule, the copy any other local account can read. A count, not a verdict: a single-user
 # machine may not care, and this script does not chmod anything it did not create.
+#
+# `stat -c` is GNU-specific. On BSD and macOS the flag does not exist, every call fails,
+# and the loop would report a confident 0 -- which is the exact false-clean shape this
+# whole script exists to argue against. So the mode is probed once and an unusable stat
+# is reported as UNAVAILABLE rather than as a count.
 world=0
-while IFS= read -r f; do
-  m="$(stat -c '%a' "$f" 2>/dev/null || true)"
-  case "$m" in ''|*[!0-9]*) continue ;; esac
-  [ "$(( 8#$m & 8#077 ))" -ne 0 ] && world=$((world + 1))
-done < <(find "$TARGET" -type f -path '*/tool-results/*' 2>/dev/null)
-printf '\nGROUP/OTHER-READABLE tool-results files: %s\n' "$world"
+stat_ok=0
+probe="$(find "$TARGET" -type f -print -quit 2>/dev/null)"
+if [ -n "$probe" ] && stat -c '%a' "$probe" >/dev/null 2>&1; then stat_ok=1; fi
+
+if [ "$stat_ok" -eq 1 ]; then
+  while IFS= read -r f; do
+    m="$(stat -c '%a' "$f" 2>/dev/null || true)"
+    case "$m" in ''|*[!0-9]*) continue ;; esac
+    [ "$(( 8#$m & 8#077 ))" -ne 0 ] && world=$((world + 1))
+  done < <(find "$TARGET" -type f -path '*/tool-results/*' 2>/dev/null)
+  printf '\nGROUP/OTHER-READABLE tool-results files: %s\n' "$world"
+else
+  printf '\nGROUP/OTHER-READABLE tool-results files: UNAVAILABLE\n'
+  printf '  stat -c is GNU-only and this platform does not have it (BSD, macOS). Not\n'
+  printf '  zero -- unmeasured. The BSD equivalent is: stat -f %%Lp <file>\n'
+fi
 
 printf '\nWHAT THIS RUN DID NOT ESTABLISH\n'
 printf '  - A zero above means "none of these ten shapes", never "nothing was exposed".\n'
@@ -221,6 +242,8 @@ printf '    and reaps the whole session directory, aged by the parent, so a shor
 printf '    is gone inside the month. An empty result is UNVERIFIABLE, not safe.\n'
 printf '  - If you ran forgeward 0.2.0 through 0.9.1 in a repo holding an untracked\n'
 printf '    credential file, ROTATE regardless of what this printed.\n'
+printf '  - The permissions count needs GNU stat. Where it reads UNAVAILABLE above,\n'
+printf '    nothing about file modes was checked at all.\n'
 
 [ "$n_hits" -gt 0 ] && exit 1
 exit 0
