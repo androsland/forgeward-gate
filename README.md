@@ -562,15 +562,18 @@ block naming what the run did **not** establish. Exit `1` means a prefixed shape
 means none did, `2` means there was nothing to search. Read its header before trusting a
 clean run — the limits are the point of it.
 
-**Every filename list it prints is itself worth redacting**, and the script says so next to
-each one — both the prefixed-shape list and the `--urls` list, which carry the same paths. The paths are not the credential, but a project slug is a directory path with the
-punctuation flattened, so it carries a home-directory name and repo or client names — and the
-natural next move after a hit is pasting the output into an issue, a chat, or a prompt, each
-of which publishes that to someone who was not going to see it.
-
 What follows is the same procedure by hand, kept because a security notice whose only remedy
 is "run our script" is not much of a notice, and because the script is one more thing that
 can be wrong.
+
+**Redact the filenames before you paste them anywhere** — this applies to every command
+below just as much as to the script, because they print the same paths. They are not the
+credential, but a project slug is a directory path with the punctuation flattened, so it
+carries a home-directory name and repo or client names; and the natural next move after a hit
+is pasting the list into an issue, a chat, or a prompt, each of which publishes that to
+someone who was not going to see it. The script prints this reminder next to each list it
+emits. A command you paste into your own terminal cannot, so it is said once here, before any
+of them.
 
 (On Windows: `%USERPROFILE%\.claude\projects\…`.) `-l` prints filenames only, so this does
 not put a value back on your screen:
@@ -588,6 +591,9 @@ grep -rlE \
   -e 'xox[baprs]-[A-Za-z0-9-]{10,}' \
   ~/.claude/projects/ 2>/dev/null
 ```
+
+That output is a list of paths carrying your directory names — see the redaction note above
+before it leaves your terminal. The same goes for each command that follows.
 
 Then, **separately**, credentials with no distinctive prefix — a password inside a
 connection URL. This is kept out of the command above on purpose: on the machine this

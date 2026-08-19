@@ -1174,6 +1174,14 @@ shipped on its own branch instead.
   me: the evidence was "printed paths are identifying" and the remedy covered one of the two
   places paths are printed.
 
+  Round three, privacy (Low): the same reasoning applied to the README. The redaction note
+  was written next to the *script's* paragraph, while the four hand-run `grep` blocks below
+  it print the identical slug-bearing lists and the README explicitly anticipates people
+  jumping straight to a command block. Moved so it sits between the shared explanation and
+  the first command, reworded to cover both routes, with a pointer after the first block.
+  Three rounds, and each round's finding was that the previous round's remedy stopped one
+  printer short of its own evidence.
+
   Deferred, both filed above: `test/` is still outside CI's shellcheck, and the pattern list
   is duplicated between script and README with nothing checking they agree.
 
