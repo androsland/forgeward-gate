@@ -55,6 +55,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## gstack — `/cso` audit phases
+
+**Upstream:** <https://github.com/garrytan/gstack>
+**Ported at commit:** `ad8400543cd9ce8d07641362db48d44a95417e33`
+
+| File in this repo | Upstream path |
+|---|---|
+| `skills/audit/SKILL.md` | `cso/sections/audit-phases.md`, and parts of `cso/SKILL.md` |
+
+**This one is adapted, not copied verbatim, and the difference matters for what you are
+reading.** Phases 2-11 of `skills/audit/SKILL.md` follow the upstream file's structure,
+its severity assignments, its false-positive rules and its search patterns closely enough
+to be a derivative of a substantial portion; Phases 0, 1, 12, 13 and 14 draw the same way
+on `cso/SKILL.md`'s mode resolution, hard-exclusion list, precedents, findings table and
+report schema. The prose is rewritten throughout, several decisions are deliberately
+reversed (the report is written outside the repo, scanners route through
+`forgeward-scan.sh`, and forgeward does **not** exempt its own skills from Phase 8), and
+the surrounding contract — the read-only tool set, the non-goals, the gate's relationship
+to it — is forgeward's own. Attribution here is not a claim about which lines are whose;
+it is the notice travelling with the copy, as MIT requires, applied conservatively.
+
+Both sections are covered by the single notice above. There is one upstream, one
+copyright holder and one licence; reproducing the text twice would not add anything.
+
+**Its provenance block is recorded and unchecked.** `forgeward-rubric-drift.sh` iterates
+`agents/*-reviewer.md` and nothing else, so the `source-sha256` in
+`skills/audit/SKILL.md` is a record, not a monitored pin. Extending the drift check to
+`skills/` is filed in `TODOS.md`. And only the Phases 2-11 source is hash-pinned at all:
+`cso/SKILL.md` mixes the audit method with gstack's own preamble, telemetry and learnings
+machinery, so a hash over it would fire on changes that have nothing to do with this port.
+
 ## What this file does not do
 
 It is **not** a dependency manifest. forgeward-gate declares no runtime dependencies —
@@ -63,6 +94,7 @@ generated from a lockfile and nothing scans for it. It lists source that was **c
 this tree**, which is the only category a lockfile cannot see.
 
 Nothing keeps it current automatically. `forgeward-rubric-drift.sh` notices when the
-*content* of a ported rubric moves; it does not notice a new port, a removed port, or an
-upstream **relicensing**. Adding or dropping a ported file means editing this table by
-hand, in the same commit.
+*content* of a ported rubric moves — and only for the five files under `agents/`, never
+for `skills/audit/SKILL.md`. It does not notice a new port, a removed port, or an upstream
+**relicensing**. Adding or dropping a ported file means editing this table by hand, in the
+same commit.

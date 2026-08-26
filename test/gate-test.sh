@@ -3510,6 +3510,68 @@ else
   ok "A29: executable-bit check SKIPPED (not a git checkout — no index mode to compare against)"
 fi
 
+# --- A30/A31: /forgeward:audit's read-only contract is STRUCTURAL, so pin the structure --
+#
+# README, skills/gate/SKILL.md and the audit skill itself all claim the same thing: the
+# audit cannot write, because its frontmatter declares an `allowed-tools` list holding
+# neither `Edit` nor `Write`. That claim is load-bearing in two places at once — it is why
+# the gate says the audit could survive Step 2's workspace guard (unlike `/review`), and it
+# is why the skill can be pointed at someone else's repository at all.
+#
+# THE OBVIOUS TEST IS THE WRONG ONE, and this is the whole reason A30 is shaped as it is.
+# `grep -q Write skills/audit/SKILL.md` returning nothing does NOT establish the property:
+# a skill with NO `allowed-tools` key at all is granted every tool, so deleting the key
+# makes the claim false while making the naive grep greener. The floor is therefore part
+# of the assertion — the key must exist and the list must be non-empty — exactly the
+# "assert the violating form, guard the enumeration against emptiness" rule in CLAUDE.md.
+#
+# Scoped to this one skill on purpose. `skills/ci-gate` legitimately writes workflow files
+# and `skills/gate` declares no tool list, so there is no repo-wide property here to
+# enumerate; a sweep over `skills/*/SKILL.md` would either fail on correct files or be
+# relaxed until it asserted nothing.
+_a30_skill="$PLUGIN/skills/audit/SKILL.md"
+if [ ! -f "$_a30_skill" ]; then
+  nok "A30: skills/audit/SKILL.md is missing — the deep-audit axis has no owner in this tree" \
+      "the gate's Step 1c names /forgeward:audit as the owner of the axis"
+else
+  # Frontmatter only: the body quotes tool names while describing what the phases do.
+  _a30_fm="$(sed -n '2,/^---[[:cntrl:][:space:]]*$/p' "$_a30_skill")"
+  # The list is a YAML block sequence under `allowed-tools:` — take the `- Item` lines
+  # that follow it, stopping at the next unindented key.
+  _a30_tools="$(printf '%s\n' "$_a30_fm" | awk '
+      /^allowed-tools:[[:space:]]*$/ { inlist=1; next }
+      inlist && /^[[:space:]]*-[[:space:]]*[A-Za-z]/ { sub(/^[[:space:]]*-[[:space:]]*/,""); print; next }
+      inlist && /^[^[:space:]-]/ { inlist=0 }
+    ')"
+  _a30_n="$(printf '%s' "$_a30_tools" | grep -c . || true)"
+  _a30_bad="$(printf '%s\n' "$_a30_tools" | grep -xE 'Edit|Write|NotebookEdit|MultiEdit' || true)"
+  if [ "$_a30_n" -ge 3 ] && [ -z "$_a30_bad" ]; then
+    ok "A30: /forgeward:audit declares $_a30_n allowed tools and none of them can write (the read-only claim is structural, and the non-empty floor is what stops a deleted key passing)"
+  else
+    nok "A30: /forgeward:audit's read-only contract does not hold as written" \
+        "writing tools:${_a30_bad:- none} | tools enumerated: $_a30_n (expected >= 3; 0 means the allowed-tools key is absent, which grants EVERY tool)"
+  fi
+
+  # A31: the port records where it came from. Same two fields the five ported reviewers
+  # carry (assertion R6's subject), for the same reason — without both, re-porting after
+  # an upstream change is guesswork.
+  #
+  # NON-GOAL, stated because a green A31 must not be read as drift coverage:
+  # scripts/forgeward-rubric-drift.sh iterates `agents/*-reviewer.md` and nothing else, so
+  # these two fields are RECORDED and UNCHECKED. Extending the drift check to `skills/` is
+  # filed in TODOS.md; this assertion is what makes that extension possible, not a
+  # substitute for it.
+  _a31_path="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_a30_skill" | head -1)"
+  _a31_sha="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_a30_skill" | head -1)"
+  _a31_commit="$(sed -n 's/^ *source-commit: *\([0-9a-f]\{40\}\) *$/\1/p' "$_a30_skill" | head -1)"
+  if [ -n "$_a31_path" ] && [ -n "$_a31_sha" ] && [ -n "$_a31_commit" ]; then
+    ok "A31: /forgeward:audit records source-path, a 40-hex source-commit and a 64-hex source-sha256 (re-porting after an upstream change is not guesswork)"
+  else
+    nok "A31: /forgeward:audit's provenance block is incomplete — the port cannot be re-derived" \
+        "path:${_a31_path:-MISSING} commit:${_a31_commit:-MISSING} sha256:${_a31_sha:+present}${_a31_sha:-MISSING}"
+  fi
+fi
+
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"
 [ "$FAIL" -eq 0 ]
