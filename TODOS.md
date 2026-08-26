@@ -161,8 +161,9 @@ write-once and effectively gone after merge, which is why they live here now.
 ## Reviewers
 
 - **Nothing pins the reviewer prompts, so a rubric can be reverted or corrupted and all
-  299 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19) The
-  four suites cover scripts, hooks, the version check and the rules pack; `agents/*.md` is
+  336 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19; count
+  re-measured at 0.16.0, which added a fifth suite) The five suites cover scripts, hooks,
+  the version check, the rules pack and the transcript audit; `agents/*.md` is
   read by no test at all — `grep -rln accessibility-reviewer test/ ci/ scripts/` returns
   nothing, and the only reference anywhere is `skills/gate/SKILL.md`. The blocking surface
   of every reviewer is therefore prose that no CI job reads. **Not proposing a prose diff
@@ -244,18 +245,6 @@ write-once and effectively gone after merge, which is why they live here now.
   "$BASE...HEAD"` — cheap, but it couples the wrapper to the gate's notion of a base and
   needs a defined behaviour when the var is absent. Deliberately deferred, not forgotten.
   (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
-- **Nothing in forgeward can scrub a subagent transcript.** `~/.claude/projects/<project>/
-  <session>/subagents/agent-*.jsonl` is outside the repo and outside every cleanup this plugin performs,
-  which is why the untracked-`.env` read was durable rather than transient. The gate can
-  prevent a write; it has no remediation path for one that already happened, and the
-  README notice can only tell users to rotate. Worth deciding whether forgeward should
-  ship a `forgeward-transcript-audit.sh` that greps its own project's transcripts for
-  credential-shaped strings by NAME and reports filenames only — never values, since
-  printing them is the exposure. Note two things settled in 0.10.1 that such a script would
-  inherit: the audit surface is **two** channels, not one (`subagents/*.jsonl` plus
-  `tool-results/*.txt`), and Claude Code expires session directories on its own schedule, so
-  an audit that finds nothing has established *unverifiable*, not *clean*. Both are in
-  `## Completed`. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P2
 - **Layer 1 cannot see inside a flag's VALUE, and `--log-opts` is now a recommended flag.**
   Verified against gitleaks 8.30.1: `gitleaks git --log-opts="--output=x"` forwards
   `--output` to `git log` and writes `x`, because layer 1 matches whole tokens and this one
@@ -576,6 +565,24 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
+- **`test/` is not shellchecked, and the transcript-audit suite is the first test file
+  where that cost something.** `.github/workflows/shellcheck.yml` runs `scripts/*.sh
+  ci/*.sh live-test/*.sh`; `test/` is excluded deliberately, since the suites use shapes
+  shellcheck dislikes. But writing `test/transcript-audit-test.sh` turned up SC2318 (a
+  multi-assignment `local` whose later names cannot see the earlier ones — an unbound
+  variable at runtime, not a style nit) and eight SC2015s, all found only because I ran
+  shellcheck by hand. Either add `test/` with a named suppression list, or state in the
+  workflow comment that test suites are hand-checked so the exclusion is a decision rather
+  than an omission. (transcript audit, 2026-08-19) **Priority:** P3
+- **The ten credential patterns exist twice — in `scripts/forgeward-transcript-audit.sh`
+  and in README's 0.9.2 notice — and nothing checks they agree.** `--patterns` is tested
+  for self-consistency against the script's own array, which catches drift *inside* the
+  script and is blind to drift *between* the two files. A shape added to one and not the
+  other leaves a published command weaker than the shipped script, or vice versa, with a
+  green suite either way. The cheap fix is a test that greps the README block and diffs it
+  against `--patterns`; the reason it is not done is that the README block is prose-wrapped
+  and the comparison is fiddlier than it looks. (transcript audit, 2026-08-19)
+  **Priority:** P3
 - **Local tag `item2-wip-quote-stripping` is not an archive, and that is the fact the
   decision turns on.** It preserves the third failed attempt at the publish matcher
   (quote-stripping via bash extglob — correct but superlinear in quote density, 63s on 3KB
@@ -809,6 +816,13 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   here that has survived both corrections is the one naming a property instead of a total —
   "four suites", which `package.json` is authoritative for. Re-derive it when you need it;
   do not read it as something this file keeps current.
+  **And the property-shaped figure went stale too, four days later.** 0.16.0 added a fifth
+  suite (`transcript-audit-test.sh`, 31), so "four suites" is now wrong in exactly the way
+  the totals were — the difference is that `package.json`'s `test` script moved in the same
+  commit, which is the whole reason it is the authority. Live `npm test` on the 0.16.0
+  branch: gate 194, pre-push 15, version-check 51, rules 39, transcript-audit 37 — **336
+  assertions, zero failures, exit 0**. README's Validation section was updated to match and
+  now names `package.json` as the roster in the same breath as the numbers.
   **The sweep has now been run** — `workflow_dispatch` run `31970233140` on `master`,
   2026-08-16: **25 runs, clean=25, `s7_fail_open=0`, `other_failures=0`, `harness_rc=0`**, at
   `FORGEWARD_S7_LOAD=4` on a runner reporting a 1-minute load average of 0.24 at start, ~24s
@@ -1094,6 +1108,82 @@ cut back at the next one; it is not trimmed entry-by-entry.
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
+
+- **`forgeward-transcript-audit.sh`: the P2 filed with the gitleaks fix is now shipped, and
+  its first real run corrected the README that specified it.** Shipped 2026-08-19 as
+  **0.16.0** — `scripts/forgeward-transcript-audit.sh` (755) plus
+  `test/transcript-audit-test.sh` (37 assertions), registered in `package.json`'s roster,
+  which is the single source of truth for the suite list.
+
+  **THE FINDING THAT CHANGED THE DESIGN.** README 0.10.1 settled that the audit surface is
+  "**two** channels" — `subagents/*.jsonl` and `tool-results/*.txt` — and the filed entry
+  said a script would inherit that. The script's first run over the real
+  `~/.claude/projects/` tree (3536 files, 194 session directories, 19.7s) returned **20
+  prefixed hits: 14 under `subagents/`, 1 under `tool-results/`, and 5 at the top level**,
+  `<project-slug>/<session-uuid>.jsonl` — a quarter of the hits outside both documented
+  channels. A `memory/` directory sits beside them too. Three is now written as a **floor**,
+  not a total. The rule extracted to CLAUDE.md is that a channel list is an `--include`
+  filter in different clothes; `grep -r` from `projects/` found all three because it was
+  told about none of them.
+
+  **SCOPE, ALSO CORRECTED BY MEASUREMENT.** The entry specified "its own project's
+  transcripts". A slug is keyed to the session's LAUNCH directory, and **0 of 26** slugs on
+  this machine contain `forgeward` — so the specified design would have reported the repo
+  shipping the script clean, while being the one repo certain to have been discussed.
+  Default scope is every project; `--project SLUG` narrows; nothing derives a slug from a
+  repo path.
+
+  **WHAT IT REPORTS.** Filenames and counts, never a value — the run above deliberately
+  opened none of the 20 matching files, since reading one pulls a live credential into a
+  fresh transcript and re-commits the exposure the audit is about. It prints
+  `files N across M session directories` so a clean result has a denominator, a per-shape
+  breakdown, a count of group/other-readable `tool-results` files (267 here), and a
+  mandatory "WHAT THIS RUN DID NOT ESTABLISH" block carrying UNVERIFIABLE and
+  rotate-regardless. Exit `1` prefixed match, `0` none, `2` nothing to search, `64` usage.
+  The URL pattern stays advisory and never sets `1` — 195 hits against 20, the same
+  signal-to-noise split the README already measured at 201-vs-15.
+
+  **TWO HARNESS TRAPS, BOTH WRITTEN INTO THE SUITE'S HEADER.** (1) `set -o pipefail` plus
+  `CMD | grep -q` is a false-negative generator: `grep -q` exits on first match, `CMD` takes
+  SIGPIPE and dies 141, and pipefail hands the pipeline that 141 — so a *successful* match
+  reads as a failed test. Five assertions failed that way before the cause was found. (2) A
+  bare `grep -qF "$PEM_NEEDLE"` errors "unrecognized option" because the needle starts with
+  `-`, exiting 2 — which is non-zero, so a *silence* assertion passes without ever reading
+  the output. Found while writing the suite; `-e` is load-bearing in the test for exactly
+  the reason the README already gives for the search. The suite's first assertion is a trust
+  check that proves the leak assertion can fail.
+
+  **THE GATE FOUND THREE THINGS ACROSS TWO ROUNDS AND ALL THREE ARE FIXED IN THE SAME
+  PR**, which is the shape a read-only gate is for — and the third is the interesting one,
+  because it was a gap in the fix for the first. Privacy (Medium): the printed filename list is itself identifying —
+  a slug is a flattened directory path, so it carries a home-directory name and repo/client
+  names, and the natural next move after a hit is pasting it into an issue. The script now
+  says REDACT BEFORE PASTING beside the list, and two assertions pin that it fires on a run
+  with hits and stays quiet on one without. Security (Low): `stat -c` is GNU-only, so on BSD
+  and macOS every call fails and the loop would have printed a confident `0` world-readable
+  files — a false clean produced by the very script that argues against false cleans. It now
+  probes once and prints `UNAVAILABLE`, tested with a deliberately broken `stat` on `PATH`.
+  Supply-chain self-skipped: no dependency moved.
+
+  Round two, privacy (Medium): the warning had been added under the prefixed-shape list
+  only, while `--urls` printed a **second** list of the same slug-bearing paths with no
+  warning at all. One list warned and one not is worse than neither, because it reads as a
+  considered distinction. The note is now a function called after every filename list, and
+  two more assertions pin it on the `--urls` path in both directions. This is the
+  own-fix-undershoots-own-evidence shape from CLAUDE.md, caught by a reviewer rather than by
+  me: the evidence was "printed paths are identifying" and the remedy covered one of the two
+  places paths are printed.
+
+  Round three, privacy (Low): the same reasoning applied to the README. The redaction note
+  was written next to the *script's* paragraph, while the four hand-run `grep` blocks below
+  it print the identical slug-bearing lists and the README explicitly anticipates people
+  jumping straight to a command block. Moved so it sits between the shared explanation and
+  the first command, reworded to cover both routes, with a pointer after the first block.
+  Three rounds, and each round's finding was that the previous round's remedy stopped one
+  printer short of its own evidence.
+
+  Deferred, both filed above: `test/` is still outside CI's shellcheck, and the pattern list
+  is duplicated between script and README with nothing checking they agree.
 
 - **Archive pass 5: the currency check caught the section stale by two again, and a tool
   did the measuring for the first time.** Shipped 2026-08-19, docs only — no code, no
