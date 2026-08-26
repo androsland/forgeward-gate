@@ -472,7 +472,8 @@ outlives the run.
 > and which can never block because a real review can legitimately leave no trace, is a
 > check whose input the gate does not control — and that is what made owning the axis the
 > cheaper option. Read the rest of §5 as the post-mortem of a design, not as a spec.
-> Entry: `TODOS.md` → *❌ DROPPED (0.17.0) — The review-ran check*.
+> Entry: `TODOS.md` → *❌ DROPPED (0.17.0, 2026-08-26) — The review-ran check* (quoted so
+> it greps; the date is part of the lead).
 
 Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
 it mechanically possible — but the match key below was written from one sample of that log,
@@ -494,7 +495,13 @@ files under `~/.gstack/projects/`, 122 unique lines, 23 carrying `skill:"review"
   today has no `via` to reject and would read as `reviewed` — the check reporting forgeward's
   gate as the quality pass it exists to disclose the absence of. Reject gate runs on a field
   the current shape carries (`read_only:true`, or a `passes.skipped.*` reason naming
-  forgeward).
+  forgeward). **That replacement key was never given a negative control, and it fails on
+  the census's own sole positive.** The one standalone `/review` record — `fix/gate-findings`
+  under `androsland-claude-video`, the record the next bullet leans on as proof a standalone
+  run exists — carries `read_only: true` *and* a `passes.skipped.security` naming forgeward,
+  so both proposed keys reject it. A later standalone row carries neither and would pass, so
+  the key is not inert; it was simply derived from one positive and zero negatives, which is
+  the error the whole section is a post-mortem of.
 - **`unknown` covers lookup failure, not only parse failure.** With `commit` gone, the
   branch-derived filename is the only key left, and it drifts: 17 branch names on this
   machine resolve to two different files, 4 logs sit under the literal branch name
