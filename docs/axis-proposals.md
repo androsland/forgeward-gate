@@ -96,6 +96,18 @@ a *minimal* counterexample, not a *representative* one.
 
 ## Q2 — A code-quality reviewer
 
+> **SUPERSEDED AGAIN at 0.17.0, on the question this box does NOT answer.** Everything
+> below — the 0.12.0 box included — is about whether forgeward should *write* a
+> code-quality reviewer of its own, and the answer to that is still no. 0.17.0 answered a
+> different question: forgeward **ported** gstack's five specialist checklists
+> (`maintainability`, `testing`, `performance`, `api-contract`, `data-migration`) and now
+> owns the axis with them. So the standing claim in §5 and §7 below that quality is
+> delegated to `/review`, and that `/review` runs only inside `/ship`, is **no longer how
+> the gate behaves** — though the measurement that produced it is unchanged and is exactly
+> why the port happened. The §5 proposal to gate on *whether a quality pass ran* is dead
+> along with it: there is nothing left to check up on. Full entry: `DECISIONS.md` →
+> *forgeward takes the quality axis*.
+
 > **SUPERSEDED at 0.12.0 by the measurement this proposal itself asked for — read this
 > box before the recommendation below.** The decision was conditional from the start
 > (see *Sub-question 2*, "Fallback if the base rate comes back thin"), and the base rate

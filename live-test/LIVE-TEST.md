@@ -404,7 +404,7 @@ a model: whether the gate *acts* on the config it is handed. That is this sectio
 mkdir -p .forgeward
 cat > .forgeward/config.yml <<'YAML'
 standalone:
-  substitutes: ["quality"]
+  substitutes: ["deep-audit"]
 seo:
   posture: private-shareable
   routes: {"/app/*": private-closed}
@@ -412,7 +412,7 @@ YAML
 "$PLUGIN_DIR/scripts/forgeward-detect-environment.sh"
 ```
 
-The probe must print `"substitutes":"quality","seo_posture":"private-shareable"` — note the
+The probe must print `"substitutes":"deep-audit","seo_posture":"private-shareable"` — note the
 flow sequence and the quoted scalar, both of which read as *nothing configured* before 0.9.0.
 It must also print **`"config_warnings":0`**: every key here is either honoured or, in
 `seo.routes`' case, documented as unhonoured, and the count must not fire on a config that
@@ -422,9 +422,21 @@ product.
 
 Now run `/forgeward:gate` on a change that touches a public page. Expected, in the firing
 decision:
-- **No `NOT COVERED: quality` line**, even with gstack absent — the substitute answered it.
-  `deep-audit` is *not* in the list, so its disclosure must still appear. Both halves matter:
-  a gate that silences everything is as wrong as one that silences nothing.
+- **No `NOT COVERED: deep-audit` line**, even with gstack's `/cso` absent — the substitute
+  answered it. This fixture named `quality` until 0.17.0, and that choice is now unusable:
+  `quality` is forgeward's own axis and prints no disclosure whether or not it is
+  substituted, so an assertion built on it would pass with the substitutes reader deleted.
+  `deep-audit` is the only remaining deferred axis and therefore the only one that can carry
+  this test at all.
+- **The one-axis fixture cannot show the other half.** With a single axis in the list, "a
+  gate that silences everything" and "a gate that silences the right thing" look identical.
+  To see both, run the section a second time with an empty `substitutes:` and confirm the
+  `deep-audit` disclosure *does* appear. Until 0.17.0 the two axes covered each other here
+  for free; they no longer do, and nothing about the fixture makes that visible.
+- **No quality disclosure of any kind**, and no instruction to run `/review` — not in the
+  firing decision and not in the PASS report. Five quality reviewers should be *in* the
+  firing list instead. This is the assertion that catches a stale skill file more directly
+  than any probe check can.
 - The posture is reported as pinned, e.g.
   `Postures: all = private-shareable (pinned in .forgeward/config.yml)`, and the
   privacy-reviewer fires on that group even if the diff is only markup.
@@ -462,9 +474,15 @@ Two caveats on how it was run, so the next person does not over-read this:
   has no public page to touch, and this section needs one.
 - **The `substitutes` half was verified against a *simulated* gstack-absent machine**
   (`CLAUDE_CONFIG_DIR` pointed at an empty directory). On a box where gstack is installed,
-  `NOT COVERED: quality` would be absent whether or not the substitute worked, so the
-  assertion is vacuous there. If you re-run this on a genuinely gstack-free machine, that
-  is the stronger test and worth preferring.
+  the disclosure would be absent whether or not the substitute worked, so the assertion is
+  vacuous there. If you re-run this on a genuinely gstack-free machine, that is the stronger
+  test and worth preferring.
+- **The `substitutes` half's stamp does NOT carry to the current fixture.** It was taken on
+  `substitutes: ["quality"]`, and 0.17.0 changed the fixture to `["deep-audit"]` because the
+  old one became unfalsifiable. The reader is identical and E4/E19/E20 pin it on both
+  spellings, so this is very likely fine — but "very likely fine" is what an unstamped
+  assertion is, and the whole point of these stamps is not to launder one into a stamp.
+  Neither the `deep-audit` substitute nor the new quality assertions have been run live.
 - **The `config_warnings` assertions above are NOT covered by that stamp** — they were added
   in 0.13.0, after it. The probe's own numbers were verified directly against these exact
   fixtures and are pinned by E28–E37 in `test/gate-test.sh`; what remains unverified live is

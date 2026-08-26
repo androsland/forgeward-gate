@@ -5,6 +5,94 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — forgeward takes the quality axis, by porting gstack's five specialist checklists
+
+**Date:** 2026-08-26 · **Version:** 0.17.0
+
+**The decision, in one line.** The five Review Army specialist checklists that forgeward has
+no equivalent of — `maintainability`, `testing`, `performance`, `api-contract`,
+`data-migration` — are **ported** into `agents/` as ordinary read-only forgeward reviewers.
+This **reverses** the 0.12.0 entry below it, which reversed only half of the original
+delegation; the other half ("forgeward does not add a code-quality reviewer") is what goes
+now.
+
+**Why the rest of it had to go.** 0.12.0 stopped forgeward *asserting* coverage it could not
+see, which was the honest fix and not a sufficient one. It left the axis genuinely unreviewed
+in the configuration this repo itself runs: gate, then push and open the PR by hand, because
+`/ship` would re-bump `VERSION`. The 0.12.0 entry names that as blind spot 2 — a user may read
+"owner" as "covered" — and the real problem was worse than the wording, because the axis was
+not covered by anybody. The measurement in `docs/axis-proposals.md` Q2 says why structurally:
+`/review` is not a standalone habit, its content is embedded in `/ship` Step 9, and forgeward's
+gate deliberately never reaches `/ship`.
+
+**Why porting, and not reading gstack's copies at runtime.** Runtime reads keep the checklists
+authoritative and auto-updating, which is the one real advantage, and it was rejected on three
+findings:
+
+1. **It puts the axis back behind "is gstack installed"** — the delta-scoping hole that this
+   file has now recorded twice (`/cso`, then `quality`). Trading a maintenance cost for a
+   coverage hole is the trade this repo keeps deciding not to make.
+2. **Auto-update is not what it sounds like.** gstack's `auto_upgrade` config defaults to
+   `false`, and the install on the machine this was decided on was **nine releases stale**
+   (1.60.1.0 against origin/main's 1.69.0.0). A dependency that updates only when someone
+   remembers is the same dependency as a port that is re-ported when someone remembers, minus
+   the guarantee that it is there at all.
+3. **The rubrics are not reachable by the detector.** `forgeward-detect-gstack-skill.sh`
+   resolves `/review` to `~/.claude/skills/review`, which contains `SKILL.md` and nothing
+   else. The specialist checklists live only inside gstack's own checkout, reached by an
+   absolute path hardcoded in gstack's `SKILL.md`. So the fail-closed detector this repo
+   requires for "is this gstack skill installed" would report the skill present and still not
+   be able to find the files.
+
+**Why these five are safe to fork.** They are the stable part of that tool. Each has two
+commits and was last touched 2026-04-04; across v1.60.1.0 → v1.69.0.0, seven of nine releases
+touched `review/` and `git diff --stat HEAD..origin/main -- review/specialists/` is **empty**.
+`review/SKILL.md` itself has 111 commits, but that churn is orchestration — telemetry, plan
+mode, first-run scaffolding, token reduction — not judgment. The judgment is what was taken.
+
+**Why `security` and `red-team` were not ported.** `security` duplicates forgeward's own
+384-line security reviewer, which is the axis this plugin exists for; two rubrics on one axis
+is a worse review, not a longer one. `red-team` depends on orchestration that was not ported.
+
+**Severity had to be re-based, not copied.** gstack's specialists emit
+`CRITICAL|INFORMATIONAL` JSON lines into a review log. forgeward's reviewers emit
+Critical/High/Medium/Low findings and one `<AXIS> VERDICT: PASS|FAIL`, where PASS means zero
+Critical and zero High — and that verdict **blocks a push**. Copying the severity vocabulary
+across would have made a maintainability observation a push-blocker. Per this repo's standing
+rule that what a reviewer BLOCKS is the remit that matters, each ported reviewer got an
+explicit per-axis floor for what reaches High, written into its prompt.
+
+**Drift is reported, not prevented.** `scripts/forgeward-rubric-drift.sh` compares a recorded
+sha256 per reviewer against the installed gstack copy, prints only on news, and always exits
+0. D1–D7 in `test/gate-test.sh` pin it, including D2, which caught D1 passing vacuously
+against a malformed fixture during development — silence is this script's success signal and
+also its failure signal, so it needs a positive control the way E1 needs E2.
+
+**Blind spots of the whole decision, so the entry is not read as more than it is.**
+
+1. **A snapshot is not a subscription.** An improvement gstack ships reaches this gate only
+   when a human re-ports it. The drift check reports that it happened; nothing makes anyone
+   act, and nothing verifies that a re-port updated `source-sha256` honestly.
+2. **The drift check is blind on the machine the port exists to serve.** No gstack means
+   nothing to compare, and it prints nothing — which is byte-identical to "no drift". Its
+   silence there is not a clean bill, and `--verbose` is the only thing that separates them.
+3. **Nothing verifies the ported prompts.** `agents/` is out of scope for `npm test` by
+   design; reviewer prompts are judged by the live-test suite, and the five new ones have not
+   been run live. D6 asserts the provenance blocks are complete, which is a property of the
+   file, not of the review.
+4. **This does not make forgeward gstack-independent**, and the PR that shipped it says so.
+   `deep-audit` still defers to `/cso`; `supply-chain-reviewer` still runtime-probes for it;
+   the `/ship` handoff and its `UserPromptExpansion` enforcement hook still assume gstack; and
+   the plugin's own identity text still describes it as a gate *for* gstack. **Four of five
+   couplings remain open; this closed the fifth.** An earlier draft said "one coupling of
+   four", which cannot be right on its own paragraph: it enumerates four that are still live,
+   so four plus the one just closed is five. Four was the count identified *before* the port,
+   and it was carried into a sentence that had to include the new one.
+5. **The severity floors are judgment, measured against nothing.** They were written to stop
+   the gate becoming annoying, not derived from a base rate the way the `error-path-reviewer`
+   decision below was. If they turn out too loose or too tight, that is a re-tune, and there
+   is no measurement here to re-tune against.
+
 ## RESOLVED — a security assertion was pinned by a hand-copied literal that nothing kept current
 
 **Date:** 2026-08-19 · **Version:** 0.13.1
@@ -126,7 +214,12 @@ Suites: gate 194/194, pre-push 15/15, rules 39/39, version-check 51/51.
 
 ## DECISION — quality stays unowned by forgeward; "`/review` covers it" is withdrawn, and one measured sliver folds into `security-reviewer`
 
-**Date:** 2026-08-16 · **Version:** 0.12.0
+**Date:** 2026-08-16 · **Version:** 0.12.0 · **PARTLY SUPERSEDED by 0.17.0** — forgeward now
+owns the quality axis outright (see the 0.17.0 entry at the top of this file). What that
+reverses is this entry's first clause, "forgeward does not add a code-quality reviewer", and
+its item 1. What still stands, and is now a general rule of this repo, is everything about
+**deferral**: a deferral may name an owner and may never assert coverage. The
+`error-path-reviewer` fold and its base-rate measurement are untouched.
 
 **The decision, in one line.** forgeward does **not** add a code-quality reviewer — that part
 of "delegate quality to `/review`" stands. What is **reversed** is the second half of the

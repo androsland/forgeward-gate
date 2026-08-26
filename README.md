@@ -21,7 +21,7 @@ fired reviewer returns `VERDICT: PASS`.** It touches zero gstack files.
 
 ## What it adds (and what it deliberately doesn't)
 
-Six read-only reviewers, each firing **only** when the diff touches its surface:
+Eleven read-only reviewers, each firing **only** when the diff touches its surface:
 
 | Reviewer | Fires when the diff touches | Why it's here (not redundant with gstack) |
 |----------|------------------------------|-------------------------------------------|
@@ -31,6 +31,11 @@ Six read-only reviewers, each firing **only** when the diff touches its surface:
 | `seo-reviewer` | public, indexable pages | no SEO/crawlability/metadata coverage anywhere in gstack |
 | `supply-chain-reviewer` | a dependency manifest | typosquatted/hallucinated packages and copyleft-license conflicts, which gstack's `/cso` does not cover — **plus** CVEs/install-scripts/lockfiles itself when `/cso` is not installed |
 | `security-reviewer` | executable code (queries, handlers, auth, file/shell/network I/O, `.sql`) | gstack's `/cso` covers this axis but is **opt-in and manual** — see below |
+| `maintainability-reviewer` | any code (always-on) | ported from gstack's Review Army — see below |
+| `testing-reviewer` | any code or test (always-on) | ported from gstack's Review Army — see below |
+| `performance-reviewer` | backend or frontend code | ported from gstack's Review Army — see below |
+| `api-contract-reviewer` | an HTTP/RPC/GraphQL surface | ported from gstack's Review Army — see below |
+| `data-migration-reviewer` | a migration, backfill, or DDL | ported from gstack's Review Army — see below |
 
 **Why a security reviewer now (this reversed a prior decision).** forgeward used to delegate the
 general security axis to gstack's `/cso`, reasoning that `/cso` already covers OWASP + STRIDE +
@@ -41,6 +46,30 @@ on the same diff). `security-reviewer` closes that — it fires automatically in
 diff-scoped, running a bundled framework-aware SAST rulepack plus injection/authz reasoning. It
 does **not** replace `/cso` for a deep whole-repo audit, and one reviewer won't match a commercial
 SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real scanners into CI.
+
+**The five quality reviewers are ports, and the port was the point.** `quality` was
+forgeward's last axis deferred to gstack: the gate disclosed that `/review` owned it and
+moved on, which meant that on a machine without gstack — or, far more often, on the common
+workflow of gate then push-and-PR by hand, where the `/ship` handoff that runs `/review` is
+never taken — nothing reviewed code quality at all. The five checklists are ported from
+gstack's Review Army specialists under MIT, with the source commit and a sha256 recorded in
+each `agents/*-reviewer.md` and gstack's copyright notice reproduced in
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). They were chosen because they are the stable part of that
+tool: gstack cut **17** releases between v1.60.1.0 and v1.69.0.0, **7** of them touched
+`review/`, and across the whole span `review/specialists/` changed by **zero lines**. (An
+earlier draft of this sentence said "seven of those nine". Nine was the count of minor
+*families* less one — there are ten, 1.60 through 1.69 — used as if it were the count of
+releases. The two numbers beside it were right, which is what made it read as checked.)
+
+Reading gstack's copies at runtime instead was considered and rejected. It keeps them
+auto-updating, but it puts the axis straight back behind "is gstack installed", and the
+rubrics turn out to be less reachable than they look: `forgeward-detect-gstack-skill.sh`
+resolves `/review` to `~/.claude/skills/review`, which holds `SKILL.md` and nothing else —
+the checklists live only in gstack's own checkout, reached by an absolute path hardcoded
+in gstack's `SKILL.md`. A port trades that for drift, and drift is *reported*:
+`scripts/forgeward-rubric-drift.sh` compares the recorded hashes against the installed
+gstack copy, prints only when something moved, and always exits 0. On a machine with no
+gstack it prints nothing, which is the whole point.
 
 **Deferrals to gstack are conditional, not assumed.** The table's third column is a *delta* — it
 says what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a
@@ -54,22 +83,23 @@ rather than a skipped one. It sees *presence*, not diligence — it cannot tell 
 never-run from gstack-actively-covering-the-axis, and it cannot see that you cover the axis with
 Dependabot or a CI job instead.
 
-**Still not included on purpose:** a code-quality reviewer. **forgeward does not review code
-quality, and it no longer claims gstack does it for you.** That claim used to read "`/review`
-covers it", and the deferral turned out to run both ways: in one repo's review log `/review`
-skipped its `maintainability` specialist with `reason: "covered-by-forgeward-and-coverage-audit"`
-and `security` with `"covered-by-forgeward"` — while this README pointed back at `/review`. Two
-tools each deferring to the other means the axis runs nowhere, and nothing fires, because both
-are installed. The gate now names `/review` as the axis **owner** in its firing decision rather
-than as evidence of coverage, whether or not it is installed
-(`scripts/forgeward-detect-environment.sh` sees presence, never diligence — it cannot tell
-installed-and-never-run from actively-covering, and it cannot see a skip reason). Fixing gstack's
-half is gstack's job; this side has stopped asserting coverage on another tool's behalf.
-The same applies to a deep whole-repo security audit, which `/cso` owns and `security-reviewer`
-explicitly does not replace. Disclosure, not refusal: forgeward is fully operational standalone,
-and these two are the only axes where a PASS means less without a partner tool. Pin
-`standalone.substitutes` in `.forgeward/config.yml` to silence an axis you cover another way — a
-disclosure that repeats after being answered is nagging, and nagging is how gates get switched off.
+**Code quality used to be on this list and no longer is.** Until 0.17.0 the answer was
+"forgeward does not review code quality" — and the deferral turned out to run both ways: in one
+repo's review log `/review` skipped its `maintainability` specialist with
+`reason: "covered-by-forgeward-and-coverage-audit"` and `security` with `"covered-by-forgeward"`,
+while this README pointed back at `/review`. Two tools each deferring to the other means the axis
+runs nowhere, and nothing fires, because both are installed. Naming an owner instead of claiming
+coverage was the honest version of that, but it was still a hole. The five ported reviewers close
+it: quality is reviewed here, on every machine, whether gstack is installed or not.
+
+**Still not included on purpose:** a deep whole-repo security audit, which gstack's `/cso` owns
+and `security-reviewer` explicitly does not replace — it is diff-scoped by design.
+`/forgeward:ci-gate` is the closest standing substitute. Disclosure, not refusal: forgeward is
+fully operational standalone, and this is now the only axis where a PASS means less without a
+partner tool. Pin `standalone.substitutes` in `.forgeward/config.yml` to silence an axis you
+cover another way — a disclosure that repeats after being answered is nagging, and nagging is how
+gates get switched off. (A stale `quality` entry there is harmless and suppresses nothing, because
+there is no longer a quality disclosure to suppress.)
 
 ### `.forgeward/config.yml`
 
@@ -742,3 +772,12 @@ fires — the line is tracked vs untracked, not the filename.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Five of the quality reviewers embed checklist text copied verbatim from gstack, which
+is separately MIT and separately copyrighted. MIT wants its notice to travel with a
+substantial copy, and a `source-commit` pointer is not a notice, so gstack's is
+reproduced in full in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) alongside the
+list of which files carry it. Nothing generates that file and nothing checks it: it
+covers source copied *into* this tree, which is the one category a lockfile cannot
+see, so adding or dropping a ported rubric means editing it by hand in the same
+commit.

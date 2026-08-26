@@ -99,9 +99,19 @@ ALSO self-skips if its surface turns out absent, so when unsure, fire it.
 | `seo-reviewer` | any publicly reachable page — indexed **or** deliberately unindexed-but-shareable | marketing/landing/public routes, `<head>`/meta, `sitemap`, `robots.txt`, OG/Twitter Card tags — NOT behind-auth app pages. It detects the posture itself and switches ruleset |
 | `supply-chain-reviewer` | a dependency manifest | `package.json`, lockfiles, `*.csproj`/`packages.lock.json`, `composer.json`, `requirements.txt`, `go.mod`, `Cargo.toml` |
 | `security-reviewer` | executable code (the broad surface — fire on any code that could carry a vuln) | DB queries (`$wpdb->`, raw SQL, string-built queries), request/AJAX/route handlers, auth/capability/nonce logic, `exec`/`eval`/shell, deserialization, file paths built from input, network fetch from input, `.sql` files, template/HTML output of dynamic data |
+| `maintainability-reviewer` | **any code at all** (always-on) | dead code, magic numbers, stale comments/docstrings, DRY violations, conditional side effects, module-boundary leaks |
+| `testing-reviewer` | **any code or test at all** (always-on) | negative paths, edge cases, test isolation, flaky patterns, security-enforcement coverage, deleted or assertion-free tests |
+| `performance-reviewer` | backend or frontend code | N+1 queries, missing indexes on new filters/joins, unbounded queries or reads, missing pagination, bundle size, blocking work in async contexts |
+| `api-contract-reviewer` | an HTTP/RPC/GraphQL surface | route definitions, serializers/DTOs, response shapes, status codes, auth requirements on existing endpoints, OpenAPI/Swagger specs |
+| `data-migration-reviewer` | a schema migration, backfill, or DDL | `migrations/`, `db/migrate/`, `*.sql` DDL, Prisma/Alembic/Rails/Laravel migration files, backfill scripts and rake tasks |
 
 Print the firing decision, e.g.:
-`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes → firing: accessibility, privacy, security`.
+`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes, api=no, migrations=no → firing: accessibility, privacy, security, maintainability, testing`.
+
+`maintainability` and `testing` are in that example because they are in **every** example:
+both fire on any diff that changes code, so a firing line that omits them is describing a
+run that did not happen. The example is the thing people copy, and it shipped for one
+version listing only the conditional three.
 
 ### Step 1a — classify posture per route group (it changes which reviewers fire and how)
 
@@ -161,7 +171,8 @@ forgeward's reviewer table is scoped as a **delta against gstack** — its third
 says what each reviewer adds that gstack does not. Scoping by delta means every
 deferral becomes a hole the moment the other side is absent, and one already shipped
 that way (`supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not
-exist; it now detects and self-adjusts). Two axes are still owned by a partner tool:
+exist; it now detects and self-adjusts). `quality` was the second and is now closed —
+forgeward owns it outright, see below. **One axis is still owned by a partner tool:**
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
@@ -169,53 +180,66 @@ exist; it now detects and self-adjusts). Two axes are still owned by a partner t
 
 It prints one line of JSON and always exits 0 — it is informational, and must never
 stop a gate run. It also carries `seo_posture` for Step 1a, so one run serves both
-steps. Read `gstack_review`, `gstack_cso`, `gstack_ship`, and `substitutes`:
+steps. Read `gstack_cso`, `gstack_ship`, and `substitutes`. `gstack_review` is still
+emitted — the marker validates the probe's full JSON shape and would reject a short line
+— but **nothing in this step reads it any more**, and that is the change: quality is no
+longer a question about what is installed.
 
 | axis | owner | run by | when it will not run |
 |------|-------|--------|----------------------|
-| `quality` | gstack `/review` (`gstack_review`) | the Step 3 handoff — `/ship` Step 9 dispatches the pre-landing review and its specialists | Nothing on this machine reviews code quality or design. No forgeward reviewer picks it up. |
 | `deep-audit` | gstack `/cso` (`gstack_cso`) | nothing here; the user runs it | `security-reviewer` still runs, diff-scoped — it does **not** replace a whole-repo audit. `/forgeward:ci-gate` is the closest standing substitute. |
 
-**`quality` keys on `gstack_ship`, NOT on `gstack_review`, and the difference is a real
-hole rather than a nicety.** The gate never invokes `/review` itself (see the box below
-for why it must not), so the axis is covered only when the Step 3 handoff reaches
-`/ship`, whose Step 9 runs it. Four cases, and the second is the one a
-`gstack_review`-keyed check gets wrong:
+### `quality` is forgeward's own axis now — say nothing about it
 
-- **`gstack_ship: present`** — say so, once: `quality — deferred to /ship Step 9, which
-  runs it after this gate passes.` The user needs this to know it is coming and not to
-  run `/review` a second time by hand.
-- **`gstack_ship: absent` and `gstack_review: present`** — the skill exists and nothing
-  will run it, because the handoff that would have is not there. Say:
-  `NOT COVERED this pass: quality — /review is installed but nothing here invokes it; gstack /ship is absent, and the handoff is what runs it. Run /review yourself before merging.`
-  Keying this on `gstack_review` reports the axis as owned while it goes unreviewed.
-- **`gstack_ship: present` but the user does not take the handoff** — you cannot detect
-  this and must not pretend to. It is the *common* case, not an edge one:
-  `docs/axis-proposals.md` records gate → push-and-PR-by-hand as forgeward's own most
-  frequent workflow, chosen deliberately because `/ship` would re-bump the version. The
-  first bullet's wording is therefore "deferred to /ship Step 9, **which runs it after
-  this gate passes**" — a statement about where the axis is owed, not a claim that it
-  was paid.
-- **both absent** — `NOT COVERED: quality — gstack /review is not installed and no forgeward reviewer owns this axis.`
+There is no quality disclosure to print, because there is no quality deferral. Five
+read-only reviewers — `maintainability`, `testing`, `performance`, `api-contract`,
+`data-migration` — fire from the Step 1 table like any other, and their verdicts bind
+the gate like any other. **Do not print a `NOT COVERED: quality` line, do not name
+gstack as the owner of this axis, and do not tell the user to run `/review` before
+merging.** All three were correct until this release and all three are now false.
+
+Their checklists are ports of gstack's Review Army specialists, taken under MIT with the
+source commit and a sha256 recorded in each `agents/*-reviewer.md`. That is a fork, so it
+drifts. Run the drift check — it is five sha256 comparisons against files already on
+disk, it prints nothing when there is no news, and it always exits 0:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-rubric-drift.sh"
+```
+
+If it prints, **relay it verbatim and carry on gating.** Drift means gstack improved a
+checklist we have not re-ported; it does not mean this run's verdicts are wrong, and it
+must never delay a gate. On a machine with no gstack it prints nothing at all, which is
+the whole point of having ported them.
 
 > **Never invoke `/review` from inside this gate, and this is not a gap waiting to be
-> filled.** Its `allowed-tools` include `Edit` and `Write`; forgeward's gate is read-only
-> and proves it in Step 2 by snapshotting the tree and diffing it after. A reviewer that
-> may legitimately edit code cannot run inside that envelope without either making the
-> workspace guard fire on correct behaviour or gutting the guarantee it exists to give.
-> Its scope also differs: `/review` resolves its own base branch, while Step 0 resolves
-> the **publish boundary**, and the two are not the same ref. Running it before the gate
-> (which the handoff effectively does, in the other order) keeps both contracts intact.
+> filled — it is why the rubrics were ported instead.** Its `allowed-tools` include
+> `Edit` and `Write`; forgeward's gate is read-only and proves it in Step 2 by
+> snapshotting the tree and diffing it after. A reviewer that may legitimately edit code
+> cannot run inside that envelope without either making the workspace guard fire on
+> correct behaviour or gutting the guarantee it exists to give. Its scope also differs:
+> `/review` resolves its own base branch, while Step 0 resolves the **publish boundary**,
+> and the two are not the same ref. The checklists carry none of that — they are prose,
+> and prose has no tools — so porting them takes the judgment without the envelope
+> problem. Running `/review` separately, before the gate, remains a perfectly good thing
+> for a user to do; it is simply no longer something this axis depends on.
 
-If an axis's owner is absent AND its name is not in `substitutes`, add the matching line
-above to the firing decision.
+**What the port does not buy.** The reviewers own the axis on every machine, but they are
+a snapshot: an improvement gstack makes tomorrow reaches this gate only when someone
+re-ports it. The drift check tells you that happened; nothing makes it happen. And a
+`quality` entry in `standalone.substitutes` no longer suppresses anything, because there
+is no longer a disclosure to suppress — a stale one in a repo's config is harmless and
+you should not mention it.
+
+If `deep-audit`'s owner is absent AND its name is not in `substitutes`, add the matching
+line above to the firing decision.
 
 Then **carry on and gate normally**. This is disclosure, not refusal, and the
 distinction is the whole design (`docs/axis-proposals.md` §3): forgeward is fully
 operational standalone, and refusing to gate because a *different* tool is missing
 would trade a disclosed gap for a blocked user. Never FAIL, never withhold the marker,
 and never re-fire a reviewer to compensate — a security reviewer asked to also judge
-quality does neither job well.
+deep-audit scope does neither job well.
 
 **Say it once, and only when it is news.** If `substitutes` names the axis, the user
 has already answered and you say nothing at all. A disclosure that repeats after being
@@ -255,31 +279,22 @@ not a YAML parser: on a file using anchors, aliases, multi-document streams or b
 scalars the number is counted over lines that were never keys, and nothing detects that
 case — so treat a large count as "look at your config", never as a defect tally.
 
-**`quality` is the one axis where PRESENT is also a disclosure, and it is a different
-sentence from the absent case.** The deferral is reciprocal, and that was observed rather
-than theorised: in one repo's review log gstack's `/review` skipped its `maintainability`
-specialist with `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
-`"covered-by-forgeward"` — while forgeward defers quality to `/review`. Two tools each
-pointing at the other means nobody reviews quality, and no `NOT COVERED` line fires,
-because `gstack_review` reads `present` and presence is all the probe can see.
-
-So when `gstack_review: present` and `quality` is not in `substitutes`, name the axis in
-the firing decision as an OWNER and never as a coverage claim — one clause on the line
-you already print, not a paragraph:
-`quality: owned by gstack /review (installed; forgeward has no quality reviewer and does not check that /review ran)`
-
-Its limits are the point. Forgeward cannot see whether `/review` ran, cannot read its
-skip reasons, and cannot change what it does; the other half of the loop has to be fixed
-in gstack. What forgeward can stop doing is *asserting coverage on another tool's
-behalf*, and that is all this line is. Silence it like any other axis by putting
-`quality` in `standalone.substitutes`.
-
 **State presence, never diligence.** The probe sees that a skill is *installed*. It
 cannot tell gstack-installed-and-never-run from gstack-actively-covering-the-axis, so
-`gstack_review: present` licenses "the tool is here", never "quality was reviewed".
-If `config` reads `unreadable`, disclose anyway and say the config could not be read —
+`gstack_cso: present` licenses "the tool is here", never "the audit was run". If
+`config` reads `unreadable`, disclose anyway and say the config could not be read —
 being wrong in that direction costs a redundant paragraph; the other direction hides
 a real gap.
+
+That distinction is why `quality` stopped being a disclosure at all. Until 0.17.0 it was
+the one axis where `present` also had to be disclosed, because the deferral turned out to
+run both ways: in one repo's review log gstack's `/review` skipped its `maintainability`
+specialist with `reason: "covered-by-forgeward-and-coverage-audit"` while forgeward
+deferred quality straight back to `/review`. Two tools pointing at each other meant
+nobody reviewed quality, and nothing fired, because presence was all the probe could see.
+Porting the checklists ends that class of bug for this axis rather than describing it
+better — there is no deferral left to be reciprocated. `deep-audit` still has one, which
+is why the caveat above is still written down.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
@@ -295,8 +310,15 @@ For each fired reviewer, spawn it with the **Agent** tool (one message, multiple
 calls, so they run in parallel). Use the matching `subagent_type`
 (`forgeward:privacy-reviewer`, `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
-`forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`). Tell each to review
+`forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`,
+`forgeward:maintainability-reviewer`, `forgeward:testing-reviewer`,
+`forgeward:performance-reviewer`, `forgeward:api-contract-reviewer`,
+`forgeward:data-migration-reviewer`). Tell each to review
 the diff of `<base>...HEAD`, passing `<base>` exactly as Step 0 produced it.
+
+`maintainability` and `testing` are always-on, so on any diff carrying code the parallel
+batch is at least three reviewers wide. That is the intended cost: the quality axis used
+to be free because nothing ran it.
 
 Each reviewer returns findings and ends with one line: `<AXIS> VERDICT: PASS|FAIL`.
 Collect every verdict line. Do not edit any code in response to findings.
@@ -343,9 +365,11 @@ than the one it cleans up. Print the paths and let the user run
 
   - **`gstack_ship: absent`** → **do not attempt the Skill call.** Stop here and report:
     `forgeward gate: PASS (fired: …). Marker written. gstack /ship is not installed — commit, push and open the PR yourself; the marker is already in place, so the push hook will allow it.`
-    If `gstack_review: present`, add the second line, because this is the branch where
-    the quality axis silently goes unrun (Step 1c):
-    `Quality was not reviewed — /ship Step 9 is what runs /review, and /ship is absent. Run /review before merging.`
+    **Add nothing about quality here.** Until 0.17.0 this branch carried a second line
+    telling the user to run `/review` before merging, because taking no handoff meant the
+    quality axis went unrun. It no longer does: the quality reviewers fired in Step 2 and
+    their verdicts are part of the PASS being reported. Repeating the old line would send
+    someone to re-run a review the gate has already done.
 
   The handoff is a **convenience, not part of the gate**. The gate is the review and
   the marker, and both are complete before this branch is reached — so a missing
