@@ -464,6 +464,16 @@ outlives the run.
 
 ### 5. The review-ran check (design, if built)
 
+> **DEAD at 0.17.0 — read the Q2 box before anything below.** The port gave forgeward the
+> quality axis outright, so there is no delegated pass left to check up on and this check
+> will not be built. The corrections in this section were measured *before* that landed and
+> are kept rather than deleted, because they are the argument: a check whose match key was
+> two-thirds wrong against its own log, whose only remaining key is a filename that drifts,
+> and which can never block because a real review can legitimately leave no trace, is a
+> check whose input the gate does not control — and that is what made owning the axis the
+> cheaper option. Read the rest of §5 as the post-mortem of a design, not as a spec.
+> Entry: `TODOS.md` → *❌ DROPPED (0.17.0) — The review-ran check*.
+
 Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
 it mechanically possible — but the match key below was written from one sample of that log,
 and re-measuring it on 2026-08-26 falsified two thirds of it. Census: 85 `*-reviews.jsonl`
@@ -524,6 +534,15 @@ to change.
 Neither fix, nor both together, restores the quality axis for a standalone user. That
 population is left uncovered on this axis by design; see the standalone-posture work in
 `TODOS.md`.
+
+**Overtaken at 0.17.0, and this paragraph is why.** Neither *proposed* fix restored the
+axis for a standalone user — which is what made a third option, not on this list, the one
+that got built: forgeward ported the five checklists and now reviews quality itself, on
+every machine, with no partner tool present. The sentence above is left standing because
+it is the clearest statement of the gap the port closed, and because the reasoning is
+worth keeping intact: a fix scoped to the population that already has gstack was never
+going to be enough, and reading that off this paragraph is what produced the port. What
+does **not** change is the measurement above it, which is dated and still holds.
 
 ## Re-proving the rejected option
 

@@ -1,20 +1,26 @@
 # TODOS
 
 Deferred engineering work for forgeward-gate, grouped by component. Priority tags
-(P0 highest → P4) are advisory and no longer discriminate — 42 of the 63 open entries
-are P3 (43 of 64 at the last count), which `## Execution order` is the response to. `DECISIONS.md` remains the source of truth for *why* a design
-is the way it is; this file tracks what is still owed. Items carry the source
-that raised them and the date.
+(P0 highest → P4) are advisory and no longer discriminate — 44 of the 67 open entries
+are P3, which `## Execution order` is the response to. `DECISIONS.md` remains the source
+of truth for *why* a design is the way it is; this file tracks what is still owed. Items
+carry the source that raised them and the date.
 
 Every item here was raised in a merged PR body or a review round. PR bodies are
 write-once and effectively gone after merge, which is why they live here now.
 
 ## Execution order
 
-Sixty-four open entries **as of 2026-08-26** — too many to sweep and too flat to
-prioritise: 43 P3, 11 P4, 2 P2 and 8 carrying no priority at all, so the priority
-field carries no signal. Every count in this section is a dated measurement rather
-than a live fact, and step 6 is the only thing that refreshes any of them.
+Sixty-seven open entries **as of 2026-08-26, re-measured after the quality-axis port
+merged** — too many to sweep and too flat to prioritise: 44 P3, 11 P4, 4 P2 and 8
+carrying no priority at all, so the priority field carries no signal. Every count in
+this section is a dated measurement rather than a live fact, and step 6 is the only
+thing that refreshes any of them. The re-measurement is why this section reads
+differently from the commit that introduced it: the port struck two of the five
+entries the first goal drew, retired the goal itself, and added seven new Quality-axis
+entries no goal drew — so the ordering was stale before this branch could merge, and
+rebasing it textually would have shipped a dead goal and an arithmetic that no longer
+balanced.
 This section is the ordering layer. It does **not** re-file anything: the sections
 below stay sorted by component, which is how this repo has always sorted them, and
 each goal points at entries where they already live.
@@ -53,20 +59,22 @@ is keyed to HEAD, so an amend invalidates it.
 
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
-| 1 | **A gate run says whether quality was reviewed.** Step 0 prints `reviewed` / `not reviewed` / `unknown` for the branch and never blocks on it; all three states have a test, including a forgeward-gate record in the *current* log shape and a branch whose log filename drifted. | Quality axis ×5 | code |
-| 2 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, and the update path is written down. | Housekeeping ×2 (version drift, `item2-wip` tag) | docs |
-| 3 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
-| 4 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it. | Gate — base detection ×5 | code |
-| 5 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it". | Standalone posture ×6 | code |
-| 6 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured" stops returning PASS, and the two security rules are verified on more than one fixture each. | Reviewers ×5 | prompts |
-| 7 | **`forgeward-scan.sh` stops trusting shape.** Layer 1 reads flag values, layer 4 stops using TRACKED as a proxy, and the `basename` exemption survives three named forgeries under test — a rename, a symlinked path, and a path whose basename collides with an exempt one. Enumerated, because "cannot be forged" is not something a test can show. | Reviewers ×4 | code |
-| 8 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
-| 9 | **Scanner arities are verified against real binaries.** — **BLOCKED**: `trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this machine. Prerequisite is a container or CI job that has them. | Reviewers ×3 | blocked |
-| 10 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
-| 11 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
-| 12 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
-| 13 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has one open question already: PR #43 (second open-half triage, merged 2026-08-19) has no `## Completed` entry, though its findings are written up in full inside the `## Docs hygiene` entry it triaged. Decide whether that counts as recorded or as the gap the check exists to catch — do not cut while it is undecided. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
-| 14 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
+| 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4 | test |
+| 2 | **gstack detection sees a plugin-installed gstack.** `forgeward-detect-gstack-skill.sh`'s cache glob accounts for the version level, and the arm has a positive control built the way R13 builds one — it has none today, because gstack is skills-installed on the only machine that has tested it. Its own PR: it changes what the gate defers and where it hands off. | Quality axis ×1 | code |
+| 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, and the update path is written down. | Housekeeping ×2 (version drift, `item2-wip` tag) | docs |
+| 4 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
+| 5 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it. | Gate — base detection ×5 | code |
+| 6 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it". | Standalone posture ×6 | code |
+| 7 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured" stops returning PASS, and the two security rules are verified on more than one fixture each. | Reviewers ×5 | prompts |
+| 8 | **`forgeward-scan.sh` stops trusting shape.** Layer 1 reads flag values, layer 4 stops using TRACKED as a proxy, and the `basename` exemption survives three named forgeries under test — a rename, a symlinked path, and a path whose basename collides with an exempt one. Enumerated, because "cannot be forged" is not something a test can show. | Reviewers ×4 | code |
+| 9 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
+| 10 | **Scanner arities are verified against real binaries.** — **BLOCKED**: `trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this machine. Prerequisite is a container or CI job that has them. | Reviewers ×3 | blocked |
+| 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
+| 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
+| 13 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
+| 14 | **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; the `deep-audit` deferral is re-disclosed against its own delta-scoping hole or closed; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into — `supply-chain-reviewer`'s runtime probe is the *good* pattern and is explicitly not in scope. | Quality axis ×4 | docs |
+| 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has three open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, merged 2026-08-26, shipped as 0.17.0) and this PR each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged and #46's inside the three Quality-axis entries it struck. `## Completed`'s newest entry is 0.16.0. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
+| 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 
 ### Five entries are not work
 
@@ -88,21 +96,23 @@ expires a goal that stops moving. It does not re-file entries, so an entry that
 belongs to two goals is listed under one and worked from wherever it sits. The
 entry counts are a sizing hint, not the cap: the ~800-line ceiling is what actually
 cuts a branch, and a goal whose entries turn out large gets cut mid-goal and
-resumed. **Goal 9 is blocked by tooling that no ordering can unblock** — it will
+resumed. **Goal 10 is blocked by tooling that no ordering can unblock** — it will
 still be blocked when it comes up, and reaching it is the signal to build the
 container, not to skip it. And the ordering assumes each goal's entries are still
 true: the 2026-08-26 staleness sweep's SUSPECT and REFERENT-MISSING buckets were read
 in full and every one judged a false alarm. The counts and the reasons live beside the
 previous pass in the `## Docs hygiene` triage entry, which is where sweep history
-belongs; that judgement has a shelf life, so re-run it at goal 13. Last, the `Draws
+belongs; that judgement has a shelf life, so re-run it at goal 15. Last, the `Draws
 from` column is checkable and checked by nothing: the per-section counts plus the five
 not-work entries must equal the live entry count, and an edit that unbalances it will
-not announce itself. It balances as written — 58 drawn across the fourteen
-goals, plus the five below, plus one cross-repo entry no goal draws (the `via:"standalone"`
-stamp, which is gstack's to make and is filed here only so it is not lost) — 64 against 64
-live. It did not balance on the first draft: goal 12 claimed four Docs hygiene entries where
-three exist and three Housekeeping where four were needed, two errors that cancelled in the
-total and so hid each other.
+not announce itself. It balances as written — 62 drawn across the sixteen goals plus
+the five below, 67 against 67 live. Two rounds of arithmetic errors are on the record
+here rather than quietly corrected, because both are the same shape and neither
+announced itself: the first draft had goal 13 claiming four Docs hygiene entries where
+three exist and three Housekeeping where four were needed, two errors that cancelled in
+the total and so hid each other; and the rebase onto the quality-axis port left the
+column citing a cross-repo entry that the port had already dropped by name, which would
+have balanced a 67-entry file against a 64-entry count.
 
 ## Gate — publish matcher
 
@@ -635,8 +645,11 @@ did *not* close.
 
 Full analysis and decision rules in `docs/axis-proposals.md`.
 
-- **gstack's `/review` and forgeward defer the quality axis to each other, and it runs
-  nowhere.** On commit `04a04fb` the review log records `maintainability` skipped with
+- **✅ DONE (0.17.0, 2026-08-26) — gstack's `/review` and forgeward defer the quality axis
+  to each other, and it runs nowhere.** Struck on the lead to match the two entries beside
+  it: 0.17.0 wrote the closure into the body of this entry but left the lead in open form,
+  so every count that reads leads — this file's own, and todokeeper's — reported it as
+  live. *Original text follows.* On commit `04a04fb` the review log records `maintainability` skipped with
   `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
   `"covered-by-forgeward"`, while forgeward's README skips code-quality because
   `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
@@ -1291,7 +1304,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   63-entry file returned **23 SUSPECT** and **10 REFERENT MISSING**; each was read and judged
   a false alarm — regex literals, cross-repo paths into gstack and trivy, and a
   `.forgeward/config.yml` this repo does not have. No triage edits followed. Same headline as
-  2026-08-19: the buckets are evidence, not verdicts. Re-run at goal 13.
+  2026-08-19: the buckets are evidence, not verdicts. Re-run at goal 15.
 
   **Second triage ran 2026-08-19. One entry deleted, four corrected in place, and the
   headline is what the tool's own buckets were worth.**
