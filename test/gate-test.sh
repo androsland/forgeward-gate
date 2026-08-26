@@ -3510,13 +3510,21 @@ else
   ok "A29: executable-bit check SKIPPED (not a git checkout — no index mode to compare against)"
 fi
 
-# --- A30/A31: /forgeward:audit's read-only contract is STRUCTURAL, so pin the structure --
+# --- A30/A31: /forgeward:audit declares no code-editing tool, and the port records its source
 #
-# README, skills/gate/SKILL.md and the audit skill itself all claim the same thing: the
-# audit cannot write, because its frontmatter declares an `allowed-tools` list holding
-# neither `Edit` nor `Write`. That claim is load-bearing in two places at once — it is why
-# the gate says the audit could survive Step 2's workspace guard (unlike `/review`), and it
-# is why the skill can be pointed at someone else's repository at all.
+# WHAT THIS PINS, stated narrowly because the wider claim is false. README,
+# skills/gate/SKILL.md and the audit skill each say the audit does not write. The part
+# that is checkable from the file is that its frontmatter declares an `allowed-tools`
+# list holding none of `Edit`/`Write`/`NotebookEdit`/`MultiEdit`, and that is all A30
+# asserts. It is NOT the same as "cannot write": the list also grants `Bash`, which
+# writes arbitrarily and must, since the phases run git and scanners — and `Agent`,
+# whose subagents this list does not constrain at all. Phase 14 is the proof, because it
+# writes the report and no `Write` tool exists to do it with.
+#
+# So the audit's no-write property rests on the prompt plus two external backstops
+# (`/forgeward:gate` Step 2's worktree snapshot, and forgeward-scan.sh bounding what a
+# scanner may touch), and NOT on this assertion. Removing the declared writers narrows
+# the surface; it does not close it, and A30 must not be cited as though it did.
 #
 # THE OBVIOUS TEST IS THE WRONG ONE, and this is the whole reason A30 is shaped as it is.
 # `grep -q Write skills/audit/SKILL.md` returning nothing does NOT establish the property:
@@ -3525,10 +3533,15 @@ fi
 # of the assertion — the key must exist and the list must be non-empty — exactly the
 # "assert the violating form, guard the enumeration against emptiness" rule in CLAUDE.md.
 #
-# Scoped to this one skill on purpose. `skills/ci-gate` legitimately writes workflow files
-# and `skills/gate` declares no tool list, so there is no repo-wide property here to
-# enumerate; a sweep over `skills/*/SKILL.md` would either fail on correct files or be
-# relaxed until it asserted nothing.
+# Scoped to this one skill on purpose — but not for the reason an earlier draft of this
+# comment gave, which was simply wrong about the repo. `skills/gate/SKILL.md` DOES declare
+# a tool list (Bash, Read, Grep, Glob, Agent, Skill), with no writer in it, so it would
+# pass a repo-wide sweep rather than fail one. The real obstacle is `skills/ci-gate`, which
+# legitimately declares `Write` and `Edit` because it writes workflow files: a sweep over
+# `skills/*/SKILL.md` therefore needs a per-skill expectation, not one deny-list, and a
+# single deny-list would have to be relaxed until it asserted nothing. Two of the three
+# shipped skills would pass one today; that is a reason to build the per-skill form later,
+# not a reason to pretend the property does not generalise.
 _a30_skill="$PLUGIN/skills/audit/SKILL.md"
 if [ ! -f "$_a30_skill" ]; then
   nok "A30: skills/audit/SKILL.md is missing — the deep-audit axis has no owner in this tree" \
@@ -3537,19 +3550,41 @@ else
   # Frontmatter only: the body quotes tool names while describing what the phases do.
   _a30_fm="$(sed -n '2,/^---[[:cntrl:][:space:]]*$/p' "$_a30_skill")"
   # The list is a YAML block sequence under `allowed-tools:` — take the `- Item` lines
-  # that follow it, stopping at the next unindented key.
-  _a30_tools="$(printf '%s\n' "$_a30_fm" | awk '
+  # that follow it, stopping at the next unindented key. Each item is NORMALIZED before
+  # it is judged, and that is not tidiness: `- Write ` with one trailing space, `- Write
+  # # needed for the report`, `- "Write"` and `- Write(*)` are four legal spellings that
+  # a whole-line `grep -x` for the bare word does not match, so before this normalization
+  # existed each of them declared a writing tool and left A30 GREEN. Mutation-verified in
+  # both directions: all four now redden it, and the plain `- Write` control still does.
+  _a30_tools="$(printf '%s\n' "$_a30_fm" | awk -v sq="'" '
       /^allowed-tools:[[:space:]]*$/ { inlist=1; next }
-      inlist && /^[[:space:]]*-[[:space:]]*[A-Za-z]/ { sub(/^[[:space:]]*-[[:space:]]*/,""); print; next }
+      inlist && $0 ~ "^[[:space:]]*-[[:space:]]*[\"" sq "]?[A-Za-z]" {
+          sub(/^[[:space:]]*-[[:space:]]*/,"")   # the sequence dash
+          sub(/[[:space:]]+#.*$/,"")             # a trailing YAML comment
+          gsub(/"/,""); gsub(sq,"")              # surrounding quotes, either flavour
+          sub(/[[:space:]]+$/,"")                # trailing whitespace
+          print; next }
       inlist && /^[^[:space:]-]/ { inlist=0 }
     ')"
   _a30_n="$(printf '%s' "$_a30_tools" | grep -c . || true)"
-  _a30_bad="$(printf '%s\n' "$_a30_tools" | grep -xE 'Edit|Write|NotebookEdit|MultiEdit' || true)"
+  # The optional `(...)` suffix is Claude Code's scoped-tool spelling (`Bash(git:*)`).
+  _a30_bad="$(printf '%s\n' "$_a30_tools" | grep -xE '(Edit|Write|NotebookEdit|MultiEdit)(\(.*\))?' || true)"
+  # Told apart in the failure message, because they need opposite fixes: a MISSING key
+  # grants every tool and is the defect; a key written as a flow sequence
+  # (`allowed-tools: [Bash, Read]`) is legal YAML this single block-sequence reader
+  # deliberately does not parse — one reader per shape, per CLAUDE.md — and reddens A30
+  # rather than being read as empty.
+  _a30_key="$(printf '%s\n' "$_a30_fm" | grep -cE '^allowed-tools:' || true)"
   if [ "$_a30_n" -ge 3 ] && [ -z "$_a30_bad" ]; then
-    ok "A30: /forgeward:audit declares $_a30_n allowed tools and none of them can write (the read-only claim is structural, and the non-empty floor is what stops a deleted key passing)"
+    # NON-GOAL, and it is the reason this message no longer says "none of them can
+    # write": `Bash` is on the list and writes arbitrarily, so what is pinned here is
+    # that no tool whose ONLY purpose is writing was declared. That the audit does not
+    # write inside the repo it audits is a prompt-level rule in the skill plus the gate's
+    # own workspace guard, and no assertion in this file covers it.
+    ok "A30: /forgeward:audit declares $_a30_n allowed tools and none of Edit/Write/NotebookEdit/MultiEdit is among them (the non-empty floor is what stops a deleted key passing; Bash remains and is a stated non-goal)"
   else
-    nok "A30: /forgeward:audit's read-only contract does not hold as written" \
-        "writing tools:${_a30_bad:- none} | tools enumerated: $_a30_n (expected >= 3; 0 means the allowed-tools key is absent, which grants EVERY tool)"
+    nok "A30: /forgeward:audit's declared tool list does not hold as written" \
+        "writing tools:${_a30_bad:- none} | tools enumerated: $_a30_n (expected >= 3)$([ "$_a30_n" -eq 0 ] && { [ "$_a30_key" -gt 0 ] && echo ' | the allowed-tools key IS present but not as a block sequence, so this reader saw none of it' || echo ' | the allowed-tools key is ABSENT, which grants EVERY tool'; })"
   fi
 
   # A31: the port records where it came from. Same two fields the five ported reviewers
@@ -3567,8 +3602,13 @@ else
   if [ -n "$_a31_path" ] && [ -n "$_a31_sha" ] && [ -n "$_a31_commit" ]; then
     ok "A31: /forgeward:audit records source-path, a 40-hex source-commit and a 64-hex source-sha256 (re-porting after an upstream change is not guesswork)"
   else
+    # One word per field. `${x:+present}${x:-MISSING}` is NOT that: when x is set the
+    # second expansion yields the value, so the line printed `sha256:present<64 hex>` --
+    # and that is the branch that fires, because A31 only fails when path or commit is
+    # the missing one, which is exactly when the sha is present.
+    _a31_shastate=MISSING; [ -n "$_a31_sha" ] && _a31_shastate=present
     nok "A31: /forgeward:audit's provenance block is incomplete — the port cannot be re-derived" \
-        "path:${_a31_path:-MISSING} commit:${_a31_commit:-MISSING} sha256:${_a31_sha:+present}${_a31_sha:-MISSING}"
+        "path:${_a31_path:-MISSING} commit:${_a31_commit:-MISSING} sha256:$_a31_shastate"
   fi
 fi
 

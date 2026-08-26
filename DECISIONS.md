@@ -59,12 +59,24 @@ by this gate"** instead. That is a fact about this gate's scope, it is true on e
 machine, and it cannot decay into a false claim. The probe still emits `gstack_cso`;
 **nothing in Step 1c reads it any more.**
 
-**Read-only is structural, and the test needed a floor to say so.** The skill declares
-`allowed-tools` without `Edit`, `Write`, `NotebookEdit` or `MultiEdit`. The naive assertion
-— `grep -q Write skills/audit/SKILL.md` returns nothing — passes on the *worst* input,
-because a **missing** `allowed-tools` key grants every tool. A30 therefore requires the
-frontmatter to enumerate at least three tools **and** none of them to be a writing tool.
-Mutation-verified: adding `- Write` reddens it, and so does deleting the key entirely.
+**Read-only is a discipline with a structural floor under it — not a structural property,
+and the first draft of this entry overstated it.** The skill declares `allowed-tools`
+without `Edit`, `Write`, `NotebookEdit` or `MultiEdit`, which removes every code-editing
+tool. It does not remove `Bash`, which writes arbitrarily and has to stay because the
+phases run git and scanners, nor `Agent`, whose subagents the list does not constrain.
+Phase 14 settles it: the audit writes its own report, and Bash is the only thing it could
+be writing it with. So what is enforced is that no *editing* tool was declared; the
+no-write-inside-the-repo rule is prose, backed by `/forgeward:gate` Step 2's worktree
+snapshot and by `forgeward-scan.sh`.
+
+A30 pins the checkable half, with a floor. The naive assertion — `grep -q Write
+skills/audit/SKILL.md` returns nothing — passes on the *worst* input, because a **missing**
+`allowed-tools` key grants every tool, so A30 requires at least three tools enumerated
+**and** no editing tool among them. Each item is normalized before it is judged: review
+found A30 fail-OPEN on `- Write ` (trailing space), `- Write<TAB>`, `- Write  # note`,
+`- "Write"` and `- Write(*)`, every one of them a legal spelling that declares the tool
+while a whole-line `grep -x` for the bare word misses it. Mutation-verified in both
+directions across twelve inputs, and against gawk, mawk and busybox awk.
 
 **Two divergences from the source, both deliberate and both stated in the skill.**
 
@@ -87,13 +99,22 @@ Mutation-verified: adding `- Write` reddens it, and so does deleting the key ent
    `agents/*-reviewer.md` only, so `skills/audit/SKILL.md`'s `source-sha256` is compared to
    nothing. The fix is one glob plus a positive control, and it could not ride along because
    the control's fixture is the file this port creates. Filed as P2.
-3. **Four of the fifteen phases are not hash-pinned.** Ten (Phases 2–11) come from
+3. **Five of the fifteen phases are not hash-pinned.** Ten (Phases 2–11) come from
    `cso/sections/audit-phases.md` and are covered by the recorded `source-sha256`. Phases
-   0, 1, 12 and 13 come from `cso/SKILL.md`, which mixes the ported orchestration with
+   0, 1, 12, 13 and 14 come from `cso/SKILL.md`, which mixes the ported orchestration with
    gstack plumbing, so a whole-file hash would report drift for reasons unrelated to them;
    that is stated in the provenance block rather than papered over with a noisy hash. Phase
-   14 is forgeward's own — it writes the report through `forgeward-artifact-dir.sh` and has
-   no upstream to drift from.
+   14 is in the same unpinned set: an earlier draft of this entry called it forgeward's own
+   because it writes through `forgeward-artifact-dir.sh`, but that is only the destination —
+   the report *schema* it specifies (`fingerprint`, `exploit_scenario`, `playbook`,
+   `filter_stats`, `trend`) is drawn from `cso/SKILL.md`, which is what
+   THIRD-PARTY-LICENSES.md has said all along. The attribution document was right and this
+   entry was wrong. The count and the enumeration at the head of this entry were corrected
+   with it — an earlier draft fixed the tail and left "four of the fifteen" and "0, 1, 12
+   and 13" standing eight lines above, which is the shape a universal quantifier fails in:
+   the sentence asserting the fix was itself the only place the fix had landed. No count of
+   the call sites is claimed here, deliberately; `grep -rn '0, 1, 12' --include='*.md'` is
+   the check, and it is cheaper to re-run than to keep a list current.
 4. **It reads the repository, not the running system.** No requests are made, and a webhook
    or an IAM policy is audited as it is written down, never as it is deployed.
 

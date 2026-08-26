@@ -425,12 +425,22 @@ Nothing invokes gstack; nothing fails without it. Those exclusions stay inert st
 | --- | --- | --- |
 | Core | 6 reviewers, conditional firing, posture classification, workspace guard, marker, pre-push enforcement | Unconditional — zero gstack dependency |
 | Falls back | dependency CVEs / install scripts / lockfile integrity — deferred to `/cso` when present, done by `supply-chain-reviewer` when not | Yes — the point of B |
-| Needs a partner tool | code quality; deep whole-repo audit | **No** — forgeward does not own these |
+| Needs a partner tool | code quality; deep whole-repo audit | **No** — forgeward does not own these ← *empty since 0.19.0, see below* |
 | Needs gstack specifically | the one-motion `/ship` handoff on all-PASS | No — push and PR by hand |
+
+> **Both rows of the "needs a partner tool" tier have since been absorbed, and the table
+> is left as written rather than rewritten because the argument below it is about the
+> tier, not about its contents.** `code quality` moved to forgeward at **0.17.0** (five
+> ported reviewers firing from the Step 1 table), and `deep whole-repo audit` at
+> **0.19.0** (`/forgeward:audit`). The disclosure that replaced the second one is keyed on
+> *this gate does not fire it* rather than on whether a tool is installed — so the axis is
+> owned and still disclosed, which is a case this tier had no row for.
 
 So after B the honest statement is **not** "not fully operational." It is: *the gate is
 fully operational standalone; one axis (quality) and one convenience (the handoff) come
-from a partner tool.* Note the bottom row is already how this repo runs — the standalone
+from a partner tool.* **As of 0.19.0 only the second half of that survives** — quality is
+forgeward's own and so is the deep audit, leaving the `/ship` handoff as the one thing
+gstack still supplies. Note the bottom row is already how this repo runs — the standalone
 experience and the maintainer's own path are the same.
 
 **Two shapes detection must serve:** (a) a plain Claude Code user with no gstack who

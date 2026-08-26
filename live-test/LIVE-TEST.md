@@ -422,17 +422,28 @@ product.
 
 Now run `/forgeward:gate` on a change that touches a public page. Expected, in the firing
 decision:
-- **No `NOT COVERED: deep-audit` line**, even with gstack's `/cso` absent — the substitute
-  answered it. This fixture named `quality` until 0.17.0, and that choice is now unusable:
-  `quality` is forgeward's own axis and prints no disclosure whether or not it is
-  substituted, so an assertion built on it would pass with the substitutes reader deleted.
-  `deep-audit` is the only remaining deferred axis and therefore the only one that can carry
-  this test at all.
+- **No `deep-audit` clause of any kind** — the substitute answered it. Read what this
+  fixture is keyed on now, because it has moved twice and the assertion looks the same
+  after each move while testing something different. Until 0.17.0 it named `quality`,
+  which became unusable when forgeward took that axis over: `quality` prints no
+  disclosure whether or not it is substituted, so an assertion built on it would pass
+  with the substitutes reader deleted. `deep-audit` replaced it as the last
+  gstack-deferred axis — and 0.19.0 ended that too, porting `/cso`'s phases into
+  `/forgeward:audit`. The clause survives the port because it was re-keyed on **"not run
+  by this gate"**, a fact about scope that no install can change, and `substitutes` still
+  silences it. So this step now checks the substitutes reader against a clause that is
+  printed unconditionally — which is a *stronger* fixture than the one it replaced, since
+  `/cso`'s absence can no longer be what produces the silence.
 - **The one-axis fixture cannot show the other half.** With a single axis in the list, "a
   gate that silences everything" and "a gate that silences the right thing" look identical.
   To see both, run the section a second time with an empty `substitutes:` and confirm the
-  `deep-audit` disclosure *does* appear. Until 0.17.0 the two axes covered each other here
+  `deep-audit` clause *does* appear. Until 0.17.0 the two axes covered each other here
   for free; they no longer do, and nothing about the fixture makes that visible.
+- **There is no deferred axis left to substitute, so nothing in this file exercises the
+  absence path any more.** Every axis forgeward discloses is now owned by forgeward. That
+  is the intended end state, and it costs this suite a case: an axis whose disclosure is
+  conditioned on a *missing partner tool* can no longer be tested here, because none
+  exists. Do not read a green §5 as covering that mechanism.
 - **No quality disclosure of any kind**, and no instruction to run `/review` — not in the
   firing decision and not in the PASS report. Five quality reviewers should be *in* the
   firing list instead. This is the assertion that catches a stale skill file more directly

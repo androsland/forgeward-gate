@@ -1,6 +1,6 @@
 ---
 name: gate
-description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests, code security), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker, then invokes gstack's /ship in one motion when /ship is installed or hands back for a manual push when it is not. Discloses any axis no installed tool owns. On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
+description: Run forgeward's enforced, read-only conformance gate before shipping. Detects which surfaces the diff touches (personal data, UI, LLM/paid-AI calls, public pages, dependency manifests, code security), fires only the relevant read-only reviewers, and on all-PASS writes the pass marker, then invokes gstack's /ship in one motion when /ship is installed or hands back for a manual push when it is not. Names the whole-repo deep-audit axis it deliberately does not run (that is /forgeward:audit). On any FAIL it reports findings and ships nothing. Use this instead of calling /ship directly.
 allowed-tools:
   - Bash
   - Read
@@ -207,8 +207,10 @@ repeating, and the limit `scripts/forgeward-detect-gstack-skill.sh` states about
 under *presence, not diligence*. Nothing here can see whether `/forgeward:audit` has run.
 
 **Why not simply fire it here?** Not the `/review` reason — `/forgeward:audit` holds no
-`Edit` and no `Write`, so unlike `/review` it would survive Step 2's workspace guard
-intact. The reason is scope and cost: this gate resolves a publish boundary and reviews a
+`Edit` and no `Write`, so unlike `/review` it has no *sanctioned* reason to touch the
+tree and is far likelier to survive Step 2's workspace guard. Not guaranteed to: it holds
+`Bash`, and a single redirect writes a file, so the guard stays the check rather than a
+formality. The reason it is excluded is scope and cost: this gate resolves a publish boundary and reviews a
 diff, while the audit reads the whole repository and its history, on findings that move
 over months. Wiring it in would make every push pay for it. Do not add it to Step 2.
 

@@ -1,11 +1,21 @@
 # TODOS
 
 Deferred engineering work for forgeward-gate, grouped by component. Priority tags
-(P0 highest → P4) are advisory and no longer discriminate — 45 of the 71 open entries
-are P3 **as of 2026-08-26**, which `## Execution order` is the response to. That pair of
-numbers is a dated copy of the census in that section and nothing refreshes it here:
-step 6 of the loop re-measures the section, so re-read this sentence against it rather
-than trusting it on its own. `DECISIONS.md` remains the source
+(P0 highest → P4) are advisory and no longer discriminate — the large majority of open
+entries are P3, which `## Execution order` is the response to. **The pair of numbers that
+used to sit here has been deleted rather than refreshed.** It said 45 of 71 as of
+2026-08-26 and was already unreconcilable that same day: counting `^- \*\*` above
+`## Completed` gives 78 open and 50 P3, so the frozen pair and the obvious command
+disagreed by seven with no record of which method produced which. A number nothing
+re-runs is a claim that decays into a lie while still reading as measured. Re-derive it
+when you need it —
+
+```bash
+awk '/^## Completed/{exit} /^- \*\*/{e++} /\*\*Priority:\*\* P3/{p++} END{print p"/"e}' TODOS.md
+```
+
+— and note the census in `## Execution order` counts differently on purpose, so quote the
+command beside any figure you write down. `DECISIONS.md` remains the source
 of truth for *why* a design is the way it is; this file tracks what is still owed. Items
 carry the source that raised them and the date.
 
@@ -101,7 +111,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 14 | **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
 | 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has five open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, 0.17.0), PR #45 (execution order), PR #47 (0.18.0's cache-glob fix) and the 0.19.0 audit port each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged, #46's inside the three Quality-axis entries it struck, and #47's and 0.19.0's inside the entries they struck in place. `## Completed`'s newest entry is 0.16.0, which is now **three** shipped versions behind. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
-| 17 | **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13 stay unpinned and the script is blind with no gstack checkout. | Deep-audit axis ×1 | code |
+| 17 | **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13/14 stay unpinned and the script is blind with no gstack checkout. | Deep-audit axis ×1 | code |
 
 ### Five entries are not work
 
@@ -156,26 +166,19 @@ of the five ported reviewers (`maintainability`, `performance`, `api-contract`,
 `live-test/LIVE-TEST.md` among the documents that "described behaviour the code did not
 have", so that clause is the weakest observer available for the goal that most needs a
 strong one — treat it as manual-only and unregressable by CI until goal 1 adds a
-machine-checkable half. It balanced as written at 62 drawn across the sixteen goals plus the five
-below, 67 against 67 live. **0.18.0 moved it and the movement is recorded rather than
-absorbed:** goal 2 is done and the one entry it drew is struck, so 61 are drawn from live
-entries; the same PR filed **two** new entries that no goal draws — the arm's residual
-false positive, and a performance measurement taken while reviewing it. 61 + 5 + 2 = 68,
-against 68 live. The total moved by one and every term in it moved, which is exactly the
-shape that hid the first two errors — and an intermediate draft of this very paragraph
-said `61 + 5 + 1 = 67` because the second entry had not been filed yet when it was
-written, so the arithmetic was correct against a tree that no longer existed by the time
-the branch was ready. Two rounds of arithmetic errors are on the record
-here rather than quietly corrected, because both are the same shape and neither
-announced itself: the first draft had what is now goal 13 — numbered 12 before the
-renumbering, so a reader checking `c392bcd` finds goal 13 is the archive goal — claiming
-four Docs hygiene entries where
-three exist and three Housekeeping where four were needed, two errors that cancelled in
-the total and so hid each other; and the rebase onto the quality-axis port left the
-column citing a cross-repo entry that the port had already dropped by name, which would
-have balanced a 64-entry count against the 68 entries the rebase actually produced — 67
-is the post-correction number, and quoting it here applied the fix to the state before the
-fix, which is a smaller version of the same mistake.
+machine-checkable half. **The running total that used to sit here has been deleted rather than corrected, and
+the deletion is the finding.** It was rewritten at 0.18.0, and by 0.19.0 it was stale
+again — a sum over live entries is invalidated by every commit that files one, so it is
+only ever true between the last edit and the next, and the moment it is wrong it still
+reads as verified. Three rounds of errors are worth keeping in prose because they share
+one shape and none of them announced itself: two miscounts in adjacent sections that
+**cancelled in the total** and so hid each other; a rebase that left the column citing an
+entry the rebase had dropped, so a stale count balanced against a tree that no longer
+existed; and a draft whose arithmetic was correct when written and false by the time the
+branch was ready. Balance is not the check it looks like — the errors above all balanced.
+**Re-derive the column when you strike a goal, and do not write the answer down**: a
+number here is a claim nothing re-runs, which is exactly what `CLAUDE.md` means by
+preferring to delete a weightless detail rather than correct it.
 
 ## Gate — publish matcher
 
@@ -1017,6 +1020,34 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Deep-audit axis
 
+- **`/forgeward:audit`'s report schema is instructed in prose and asserted by nothing.**
+  (0.19.0, 2026-08-26) A30 pins the skill's `allowed-tools` and A31 pins its provenance
+  block; between them they cover the frontmatter and nothing below it. Phase 14 now names
+  a fixed schema — `version` pinned to the literal `"1.0.0"`, `phases_run`, `fingerprint`,
+  `filter_stats`, `trend` and the rest — and every one of those is a promise to a *future
+  run of this same skill*, since `fingerprint` matching across runs is what trend tracking
+  is. A schema whose only enforcement is the sentence describing it drifts silently, and
+  the failure is invisible: the second run simply reports `"direction": "first_run"`
+  forever. **What would settle it** is a fixture report plus a JSON-shape assertion in
+  `test/gate-test.sh` — the schema is written down, so the assertion has something to
+  derive from rather than duplicate. **What it would not buy:** an assertion over a
+  fixture pins the *schema*, never that a real audit run emits it, and no test in this
+  repo executes a skill. That gap is structural and closes only in `live-test/`.
+  **Priority:** P2
+
+- **Phase 12's `filter_stats` and the confidence-band table are instructions with no
+  observer**, which is the same defect as the entry above at a smaller scale and is filed
+  separately because the fix is different. (0.19.0, 2026-08-26) Phase 12 is told to keep a
+  running tally as it filters, because the counts cannot be reconstructed from a filtered
+  list afterwards; nothing checks that it did, and an omitted `filter_stats` reads exactly
+  like a run that filtered nothing. The five confidence bands were similarly display rules
+  without definitions until this pass — 7-8, 5-6, 3-4 and 1-2 had rules for what to do with
+  a score and no statement of what the score *meant*, so the bands were applied by feel.
+  Both are prompt-level and neither is machine-checkable from outside a run; the honest
+  exit is a `live-test/LIVE-TEST.md` section that runs the audit on a seeded repo and reads
+  the emitted report, not a unit test. Filed so the absence is recorded rather than
+  discovered later as a green suite. **Priority:** P3
+
 - **`forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and nothing else, so
   `/forgeward:audit`'s `source-sha256` is recorded and never re-hashed.** (0.19.0,
   2026-08-26) The loop is `for f in "$agents_dir"/*-reviewer.md`. `skills/audit/SKILL.md`
@@ -1029,13 +1060,30 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   whose recorded hash is deliberately wrong, so the assertion fails against the pre-fix
   script. It did not ride along with the port because the positive control's fixture is the
   file the port creates, so the two cannot land in one PR without the test asserting against
-  a file that does not exist on its own base. **What it still would not buy:** the script is
+  a file that does not exist on its own base. **Twelve sites describe the current scope and
+  every one of them is part of the change** — a glob that lands while the prose still says
+  `agents/*-reviewer.md` is the doc-lag failure `CLAUDE.md` records under *a doc that
+  describes gate behaviour is part of the gate's surface*. By symbol, not by line:
+  `scripts/forgeward-rubric-drift.sh` in three places (its header comment, the `for f in
+  "$agents_dir"/*-reviewer.md` loop, and the comment below the loop reasoning from
+  "committed, reviewed files"); `README.md` twice (the provenance paragraph and the
+  no-gstack paragraph); `skills/gate/SKILL.md` twice (the fork paragraph and the 0.19.0
+  drift paragraph); `DECISIONS.md`, `THIRD-PARTY-LICENSES.md` and `skills/audit/SKILL.md`
+  once each; and `test/gate-test.sh` twice (the `agents/*-reviewer.md` provenance loop and
+  the comment stating the script's scope). **This list is a snapshot and nothing keeps it
+  current** — re-run `grep -rn '\*-reviewer\.md'` before starting, because a site added
+  after 2026-08-26 will not be here. **What it still would not buy:** the script is
   blind on a machine with no gstack checkout, which is the machine the port exists to serve,
-  and the audit's Phases 0/1/12/13 are not hash-pinned at all (below), so even a green
+  and the audit's Phases 0/1/12/13/14 are not hash-pinned at all (below), so even a green
   extended run covers less than the skill's provenance block appears to promise.
   **Priority:** P2
-- **Phases 0, 1, 12 and 13 of `/forgeward:audit` are ported from `cso/SKILL.md` and are
-  deliberately NOT hash-pinned.** (0.19.0, 2026-08-26) The other ten phases come from
+- **Phases 0, 1, 12, 13 and 14 of `/forgeward:audit` are ported from `cso/SKILL.md` and
+  are deliberately NOT hash-pinned.** (0.19.0, 2026-08-26) Phase 14 belongs in this set
+  and an earlier draft left it out, on the reasoning that it writes through
+  `forgeward-artifact-dir.sh` and is therefore forgeward's own — but the destination is
+  the only forgeward part of it: the report *schema* it specifies (`fingerprint`,
+  `exploit_scenario`, `playbook`, `filter_stats`, `trend`) is `cso/SKILL.md`'s, which is
+  what `THIRD-PARTY-LICENSES.md` recorded all along. The other ten phases come from
   `cso/sections/audit-phases.md`, a file that holds the phases and nothing else, so a
   whole-file sha256 is a meaningful signal. `cso/SKILL.md` mixes the orchestration these
   four were taken from with preamble, telemetry, config plumbing and gstack's own UX — most

@@ -105,9 +105,11 @@ security audit — secrets archaeology through git history, dependency supply ch
 security, infrastructure and IaC, webhook and integration tracing, LLM/AI security, skill supply
 chain, OWASP Top 10, STRIDE, data classification. It is a port of gstack's `/cso` audit phases
 under MIT (see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)) and it closes the third and
-last axis forgeward deferred to a tool that need not be installed. Read-only in the structural
-sense: it declares no `Edit` and no `Write`, and its report is written outside the repository
-under audit.
+last axis forgeward deferred to a tool that need not be installed. It declares no `Edit` and no `Write`, so no code-editing tool is available to it, and its
+report is written outside the repository under audit. That narrows the write surface rather
+than closing it — `Bash` is on its tool list and must be, since the phases run git and
+scanners — so "read-only" here is a discipline the prompt asserts, backed by the gate's
+worktree snapshot and by `forgeward-scan.sh`, not a capability the tool list forbids.
 
 **The gate does not fire it, and that is not an oversight.** `/forgeward:gate` resolves a publish
 boundary and reviews a diff; the audit reads the whole repository and its history, on findings that
@@ -437,11 +439,16 @@ optional, for the version check it is not.
   workspace guard catches whatever the text-level guards can't see. The live control asks the
   platform whether the contamination is even stageable before asserting — a POSIX-only test would
   pass while the bug remained, because the bug *is* the path translation.
-- **A ported file's provenance and a skill's read-only claim are structural, not prose** —
+- **A ported file's provenance and a skill's declared tool list are checked from the file** —
   `/forgeward:audit` must enumerate at least three `allowed-tools` and none of them may be a
-  writing tool, and it must record a `source-path`, a 40-hex `source-commit` and a 64-hex
+  code-editing tool, and it must record a `source-path`, a 40-hex `source-commit` and a 64-hex
   `source-sha256`. The non-empty floor is the assertion, not decoration: a *missing*
   `allowed-tools` key grants every tool, so `grep -q Write` alone passes on the worst case.
+  Each item is normalized before it is judged, because `- Write `, `- Write  # note`,
+  `- "Write"` and `- Write(*)` are four legal spellings a whole-line match misses — all four
+  are mutation-tested. What this does **not** establish is that the audit cannot write:
+  `Bash` remains on the list, so the no-write property rests on the prompt and on the gate's
+  worktree snapshot, and this assertion must not be cited as covering it.
 
 `test/pre-push-test.sh` (15 assertions) — the enforcement layer, driven exactly as git drives
 it (refs on stdin, so no command parsing):
