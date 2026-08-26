@@ -2878,6 +2878,349 @@ E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/for
   || nok "env E37" "marker '$E37J'"
 
 # =============================================================================
+# R1..R7 — the ported quality rubrics' drift check.
+#
+# forgeward's five quality reviewers are PORTS of gstack's Review Army specialist
+# checklists, not runtime reads of them, so the axis works on a machine with no gstack
+# at all. The cost of a port is drift: gstack can improve a checklist and nothing here
+# would know. `forgeward-rubric-drift.sh` is the cheap closing of that loop — five
+# sha256 comparisons against files already on disk.
+#
+# THE VACUITY TRAP is the mirror image of E2's. This script's failure mode is not
+# "reports drift that is not there", it is "prints nothing", and printing nothing is
+# also what a correct clean run does AND what a machine with no gstack does. So every
+# assertion below drives a SYNTHETIC gstack root through FORGEWARD_GSTACK_ROOT and
+# controls the content on both sides: the real gstack on this machine is deliberately
+# not used as a fixture, because whether it currently matches is upstream's business
+# and a suite that asserted it would go red the day gstack shipped an improvement —
+# which is the event the script exists to REPORT, not to fail on.
+#
+# The script derives its agents directory from its own location, so the fixture is a
+# whole miniature plugin root rather than an env override. R6 is the floor that keeps
+# the synthetic fixtures honest about the real one.
+# =============================================================================
+
+DRIFT_SRC="$PLUGIN/scripts/forgeward-rubric-drift.sh"
+DP="$TMP/driftplugin"
+mkdir -p "$DP/scripts" "$DP/agents"
+cp "$DRIFT_SRC" "$DP/scripts/forgeward-rubric-drift.sh"
+chmod +x "$DP/scripts/forgeward-rubric-drift.sh"
+DGS="$TMP/driftgstack"
+mkdir -p "$DGS/review/specialists"
+printf 'Alpha checklist, v1.\n' > "$DGS/review/specialists/alpha.md"
+ALPHA_SHA="$(sha256sum "$DGS/review/specialists/alpha.md" | cut -d' ' -f1)"
+{ printf -- '---\nname: alpha-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/alpha.md\n'
+  printf '     source-sha256: %s\n-->\n\nBody.\n' "$ALPHA_SHA"
+} > "$DP/agents/alpha-reviewer.md"
+drift() { # drift [--verbose] -> stdout+stderr, with the synthetic gstack root
+  FORGEWARD_GSTACK_ROOT="$DGS" "$DP/scripts/forgeward-rubric-drift.sh" ${1:+"$1"} 2>&1
+}
+
+# R1: THE CLEAN RUN IS SILENT. A gate that already prints a firing decision must not
+# grow a line saying nothing happened — "say it once, and only when it is news" is the
+# same rule the axis disclosures follow, and a check that speaks on every run is a check
+# that gets ignored on the run that matters.
+_r1="$(drift)"; _r1rc=$?
+[ -z "$_r1" ] && [ "$_r1rc" -eq 0 ] \
+  && ok "drift: a matching rubric prints NOTHING and exits 0 (news only)" \
+  || nok "drift R1: the clean path is not silent" "rc=$_r1rc out='$_r1'"
+
+# R2: THE POSITIVE CONTROL for R1, and the reason R1 is not vacuous. Same fixture,
+# --verbose, and it must name the reviewer it checked and count it. Without this, a
+# script that exited before comparing anything would green R1.
+_r2="$(drift --verbose)"
+case "$_r2" in
+  *"ok       alpha-reviewer"*"1 ported rubric(s) checked"*)
+    ok "drift: --verbose names the rubric it compared and counts it (R1 is not vacuous)" ;;
+  *) nok "drift R2: the clean path proves nothing" "out='$_r2'" ;;
+esac
+
+# R3: upstream CHANGED the file -> reported by name, and still exit 0. The exit status
+# is the assertion that matters as much as the message: this is informational, it runs
+# inside a gate, and a non-zero status from an advisory check is how a gate acquires a
+# failure mode nobody asked for.
+printf 'Alpha checklist, v2 — a new category was added.\n' > "$DGS/review/specialists/alpha.md"
+_r3="$(drift)"; _r3rc=$?
+case "$_r3" in
+  *"have drifted"*"alpha-reviewer"*)
+    [ "$_r3rc" -eq 0 ] \
+      && ok "drift: an upstream edit is reported by name and the script still exits 0" \
+      || nok "drift R3: reported the drift but exited $_r3rc" "advisory checks must not fail a gate" ;;
+  *) nok "drift R3: an upstream edit went unreported" "out='$_r3'" ;;
+esac
+
+# R4: upstream REMOVED the file -> a DIFFERENT message from R3, not the same one. The
+# two need distinguishing because the actions differ: drift means read a diff and
+# re-port, missing means upstream renamed or dropped the rubric and drift can no longer
+# be checked for it at all. Collapsing them would send the reader looking for a diff
+# that does not exist.
+rm -f "$DGS/review/specialists/alpha.md"
+_r4="$(drift)"; _r4rc=$?
+case "$_r4" in
+  *"no longer exist"*"alpha-reviewer"*)
+    [ "$_r4rc" -eq 0 ] && case "$_r4" in
+      *"have drifted"*) nok "drift R4: a missing file is also reported as drifted" "out='$_r4'" ;;
+      *) ok "drift: a rubric deleted upstream gets its own message, distinct from drift" ;;
+    esac || nok "drift R4: exited $_r4rc" "out='$_r4'" ;;
+  *) nok "drift R4: a rubric deleted upstream went unreported" "out='$_r4'" ;;
+esac
+
+# R5: NO GSTACK AT ALL -> silent, exit 0, and --verbose says WHY. This is the machine
+# the port exists to serve, and it must not be nagged about a tool it deliberately does
+# not have. It is also the script's one real ambiguity, stated as a LIMITATION in its own
+# header: silence means "no drift" OR "nothing to compare", and only --verbose separates
+# them. Pinned in both directions so a future edit cannot make the quiet path chatty or
+# the verbose path uninformative.
+_r5q="$(FORGEWARD_GSTACK_ROOT="$TMP/no-such-gstack" "$DP/scripts/forgeward-rubric-drift.sh" 2>&1)"; _r5rc=$?
+_r5v="$(FORGEWARD_GSTACK_ROOT="$TMP/no-such-gstack" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r5v" in
+  *"no gstack rubrics at"*"nothing to compare"*)
+    [ -z "$_r5q" ] && [ "$_r5rc" -eq 0 ] \
+      && ok "drift: a machine with no gstack is silent and exits 0, and --verbose says why (silence has two causes)" \
+      || nok "drift R5: the no-gstack path is not silent" "rc=$_r5rc out='$_r5q'" ;;
+  *) nok "drift R5: --verbose cannot distinguish no-gstack from no-drift" "out='$_r5v'" ;;
+esac
+
+# R6: THE FLOOR, and the only assertion here that touches the shipped tree. Everything
+# above runs on a synthetic fixture, so all six would pass unchanged if the real
+# `agents/` directory carried no provenance blocks at all and the drift check covered
+# nothing. This counts the real ported rubrics and requires all five — and it requires
+# BOTH fields, because the script skips any reviewer missing either one and a
+# half-recorded port is silently unchecked rather than loudly broken.
+#
+# The two sed expressions below are a DELIBERATE copy of the script's own, not a call
+# into it, and the duplication is the cost of what R6 is for: every other assertion
+# here drives a synthetic fixture, so R6 has to read the SHIPPED tree with no fixture
+# in the path at all. Running the script over the real agents/ would need a synthetic
+# gstack root holding copies of the five real rubrics, which reintroduces exactly the
+# fixture dependence R6 exists to escape. The exposure is that a future loosening of
+# the script's regex would not show up here -- accepted, and named rather than left
+# for the next reader to discover.
+_r6n=0; _r6bad=""
+for _f in "$PLUGIN"/agents/*-reviewer.md; do
+  [ -f "$_f" ] || continue
+  _has_p="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_f" | head -1)"
+  _has_s="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_f" | head -1)"
+  if [ -n "$_has_p" ] && [ -n "$_has_s" ]; then
+    _r6n=$((_r6n+1))
+  elif [ -n "$_has_p" ] || [ -n "$_has_s" ]; then
+    _r6bad="$_r6bad $(basename "$_f")"
+  fi
+done
+[ "$_r6n" -ge 5 ] && [ -z "$_r6bad" ] \
+  && ok "drift: all $_r6n shipped ported rubrics record BOTH source-path and a 64-hex source-sha256 (the fixtures above are not the only thing covered)" \
+  || nok "drift R6: a ported rubric is not drift-checkable" "complete: $_r6n (expected >= 5) | half-recorded:${_r6bad:- none}"
+
+# R7: the two sha256 arms agree. CLAUDE.md's rule is one reader per shape and this
+# script has two — `sha256sum` and `shasum -a 256` — allowed only because a digest has a
+# single correct answer, and allowed only WITH this assertion, which is the condition
+# that rule states. It skips loudly rather than passing quietly when the machine has
+# only one of the tools, because a skip that reads as a pass is how the `json_get`
+# divergence survived.
+if command -v sha256sum >/dev/null 2>&1 && command -v shasum >/dev/null 2>&1; then
+  _r7f="$TMP/d7-digest-fixture"; printf 'one\ttwo\n\xc3\x28 binary-ish\n' > "$_r7f"
+  _r7a="$(sha256sum -- "$_r7f" | cut -d' ' -f1)"
+  _r7b="$(shasum -a 256 -- "$_r7f" | cut -d' ' -f1)"
+  [ -n "$_r7a" ] && [ "$_r7a" = "$_r7b" ] \
+    && ok "drift: sha256sum and shasum -a 256 agree byte-for-byte (the two-arm exception is verified, not assumed)" \
+    || nok "drift R7: the two digest arms disagree" "sha256sum='$_r7a' shasum='$_r7b'"
+else
+  ok "drift: two-arm digest agreement SKIPPED (this machine has only one of sha256sum/shasum) — the arms are unverified here; R1-R5 still exercise whichever one is present"
+fi
+
+# R8: THE SECOND DIGEST ARM IS ACTUALLY REACHED. R7 proves the two digest PIPELINES
+# agree, but it runs both by hand and never enters the script, so the
+# `elif command -v shasum` branch is dead code on every machine that has sha256sum --
+# every CI runner this repo uses. A typo in it (`-a256`, a dropped `--`) ships green and
+# fails only on the macOS installs the branch exists for. V5's `$NOJQ` already owns this
+# technique: build a PATH that hides the preferred tool so the fallback runs end-to-end.
+#
+# The fixture is restored to its ORIGINAL v1 content and compared against `$ALPHA_SHA`,
+# which was computed with `sha256sum` at fixture time. That is the point: re-deriving
+# the expected digest with `shasum` would make the test self-consistent and vacuous,
+# which is the whole failure mode this block exists to avoid. This way the shasum arm
+# has to reproduce the sha256sum arm's answer THROUGH the script or R8 goes red.
+# Undo R3's edit and R4's deletion here, OUTSIDE the shasum branch below, so R9-R12
+# meet the same fixture on every machine. Inside it, a box without `shasum` would skip
+# the restore and leave R10 asserting against a fixture R4 had already deleted.
+printf 'Alpha checklist, v1.\n' > "$DGS/review/specialists/alpha.md"
+if command -v shasum >/dev/null 2>&1; then
+  SHAONLY="$TMP/shasum-only-bin"; mkdir -p "$SHAONLY"
+  for t in env bash shasum sed cut basename dirname head grep; do
+    p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$SHAONLY/$t"
+  done
+  _r8="$(FORGEWARD_GSTACK_ROOT="$DGS" PATH="$SHAONLY" \
+         "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r8rc=$?
+  case "$_r8" in
+    *"ok       alpha-reviewer"*"1 ported rubric(s) checked"*)
+      [ "$_r8rc" -eq 0 ] \
+        && ok "drift: the shasum arm reproduces the sha256sum digest through the script (the macOS branch is not dead code)" \
+        || nok "drift R8: shasum arm exited $_r8rc" "out='$_r8'" ;;
+    *) nok "drift R8: the shasum-only arm did not reach a clean comparison" "out='$_r8'" ;;
+  esac
+else
+  ok "drift: shasum arm SKIPPED (no shasum on this machine) — R7 also skips here, so the second arm is unverified, not verified"
+fi
+
+# R9: NEITHER DIGEST TOOL. The script's header promises it "says so under --verbose and
+# exits 0 rather than reporting a false all-clear". That is a third cause of the silence
+# R5 covers, and it was asserted nowhere: a machine with no sha256 tool and a machine
+# with no drift printed byte-identical nothing.
+NOSHA="$TMP/no-digest-bin"; mkdir -p "$NOSHA"
+for t in env bash sed cut basename dirname head grep; do
+  p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOSHA/$t"
+done
+_r9q="$(FORGEWARD_GSTACK_ROOT="$DGS" PATH="$NOSHA" "$DP/scripts/forgeward-rubric-drift.sh" 2>&1)"; _r9rc=$?
+_r9v="$(FORGEWARD_GSTACK_ROOT="$DGS" PATH="$NOSHA" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r9v" in
+  *"no sha256sum or shasum on PATH"*)
+    [ -z "$_r9q" ] && [ "$_r9rc" -eq 0 ] \
+      && ok "drift: no digest tool at all is silent, exits 0, and --verbose names the third cause of the silence" \
+      || nok "drift R9: the no-digest-tool path is not silent" "rc=$_r9rc out='$_r9q'" ;;
+  *) nok "drift R9: --verbose does not say the digest tool is missing" "out='$_r9v'" ;;
+esac
+
+# R10: A PROVENANCE BLOCK MISSING EITHER FIELD IS SKIPPED, SILENTLY, AND THAT IS RIGHT.
+# Six shipped reviewers are not ports and carry no provenance at all, so "no block" must
+# never be news. What R6 guarantees is that a HALF-recorded block cannot ship; this pins
+# the runtime half of that split so a future edit cannot start counting one.
+printf 'Half checklist.\n' > "$DGS/review/specialists/half.md"
+{ printf -- '---\nname: half-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/half.md\n-->\n'
+} > "$DP/agents/half-reviewer.md"
+_r10="$(drift --verbose)"
+case "$_r10" in
+  *"half-reviewer"*) nok "drift R10: a reviewer with no source-sha256 was treated as a port" "out='$_r10'" ;;
+  *"1 ported rubric(s) checked"*)
+    ok "drift: a reviewer carrying only one provenance field is skipped and not counted (R6 is what stops it shipping)" ;;
+  *) nok "drift R10: unexpected count with a half-recorded reviewer present" "out='$_r10'" ;;
+esac
+rm -f "$DP/agents/half-reviewer.md" "$DGS/review/specialists/half.md"
+
+# R11: UNSET HOME MUST NOT CRASH THE SCRIPT. `set -u` plus `${VAR:-$HOME/...}` aborts
+# with `HOME: unbound variable` and exit 1 when HOME is unset -- `env -i`, some cron and
+# systemd units, and minimal CI containers all reach it. The script advertises
+# always-exits-0 and skills/gate/SKILL.md calls it from inside a gate run on that basis,
+# so the crash turned an advisory check into a failure mode nobody asked for. The
+# sibling forgeward-detect-gstack-skill.sh already guarded the identical hazard.
+_r11="$(env -u HOME -u FORGEWARD_GSTACK_ROOT bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r11rc=$?
+case "$_r11" in
+  *"unbound variable"*) nok "drift R11: an unset HOME still crashes the script" "rc=$_r11rc out='$_r11'" ;;
+  *) [ "$_r11rc" -eq 0 ] \
+       && ok "drift: an unset HOME degrades to 'nothing to compare' and still exits 0" \
+       || nok "drift R11: unset HOME exited $_r11rc" "out='$_r11'" ;;
+esac
+
+# R12: A `source-path` THAT ESCAPES THE RUBRIC TREE IS REFUSED, LOUDLY. Verified before
+# the guard existed: `source-path: ../secret/private.txt` was joined onto the gstack root
+# and hashed, and the script reported `ok alpha-reviewer` for a file that is not a
+# rubric -- a clean run that means nothing, which is exactly the false all-clear the
+# header refuses. This is NOT a security assertion and must not be cited as one: these
+# files are committed and reviewed, and whoever can edit one can already rewrite the
+# prompt itself. It covers the realistic case, a hand-edited or mis-ported block.
+#
+# THE FIXTURE'S TRAVERSAL DEPTH IS LOAD-BEARING -- ONE `..`, NOT TWO. `$DGS` is
+# `$TMP/driftgstack`, so `../outside/secret.txt` resolves onto the planted file and two
+# `..` segments resolve above `$TMP` onto nothing. This shipped with two, and mutation
+# testing is the only thing that saw it: strip the guard and the two-dot fixture reports
+# `no longer exist` (the missing branch) rather than `ok escape-reviewer`, so R12 went
+# `nok` via its catch-all arm for a path-resolution accident instead of demonstrating the
+# hazard the paragraph above describes. With one `..` the guarded and unguarded runs
+# diverge into `escapes the rubric tree` against `ok       escape-reviewer`, which is the
+# assertion actually claimed. Same class as the R6/R8 note: an assertion written beside a
+# mechanism inherits its blind spot, and only an outside reader or a mutation sees past
+# it. If the fixture nesting is ever moved, re-derive this depth -- do not preserve the
+# literal.
+#
+# AND IT MUST RUN --verbose, FOR THE SAME REASON. The `ok       <name>` line the first
+# case arm keys on is printed ONLY under `--verbose`; the `escapes the rubric tree` NOTE
+# prints either way. Called bare, arm one is unreachable, so a stripped guard fell through
+# to the catch-all and reported "went unreported" -- true, but not the failure that
+# happened, and the arm written to name it never ran. R12b next door was already verbose,
+# which is why it did not have the defect and why the two now match.
+mkdir -p "$TMP/outside"; printf 'not a rubric\n' > "$TMP/outside/secret.txt"
+OUT_SHA="$(sha256sum "$TMP/outside/secret.txt" | cut -d' ' -f1)"
+{ printf -- '---\nname: escape-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   ../outside/secret.txt\n'
+  printf '     source-sha256: %s\n-->\n' "$OUT_SHA"
+} > "$DP/agents/escape-reviewer.md"
+_r12="$(drift --verbose)"; _r12rc=$?
+case "$_r12" in
+  *"ok       escape-reviewer"*) nok "drift R12: a traversing source-path was compared and passed" "out='$_r12'" ;;
+  *"escapes the rubric tree"*"escape-reviewer"*)
+    [ "$_r12rc" -eq 0 ] \
+      && ok "drift: a source-path with a '..' segment is refused by name, not silently skipped, and still exits 0" \
+      || nok "drift R12: reported the escape but exited $_r12rc" "out='$_r12'" ;;
+  *) nok "drift R12: a traversing source-path went unreported" "out='$_r12'" ;;
+esac
+# ...and a '..' that is not a whole segment is a legal filename, not an escape.
+mv "$TMP/outside/secret.txt" "$DGS/review/specialists/od..d.md"
+{ printf -- '---\nname: escape-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/od..d.md\n'
+  printf '     source-sha256: %s\n-->\n' "$OUT_SHA"
+} > "$DP/agents/escape-reviewer.md"
+case "$(drift --verbose)" in
+  *"ok       escape-reviewer"*) ok "drift: '..' inside a filename is not mistaken for a traversal segment" ;;
+  *) nok "drift R12b: a legal filename containing '..' was refused" "out='$(drift --verbose)'" ;;
+esac
+rm -f "$DP/agents/escape-reviewer.md" "$DGS/review/specialists/od..d.md"
+
+# R13: A PLUGIN-INSTALLED GSTACK IS FOUND. Every assertion above drives a synthetic root
+# through FORGEWARD_GSTACK_ROOT, which is deliberate — see the vacuity note at the top of
+# this block — but it means R1-R12 say nothing at all about how the script finds gstack
+# when nobody hands it a path. That was the whole exposure: the lookup was one hardcoded
+# `$HOME/.claude/skills/gstack`, so a gstack installed as a PLUGIN produced silence and
+# exit 0, byte-identical to a clean run and to a machine with no gstack. Nothing red, no
+# drift checked, nobody told. R13 is the only assertion here that exercises the search
+# path, so the two globs below cannot be dropped or re-shallowed without a failing test.
+#
+# Run from "$TMP" rather than the repo, so the project-local `.claude/skills/gstack` root
+# is skipped on a checkout that happens to have one and the plugin-cache arm is what is
+# actually under test.
+DPC="$TMP/driftcfg"
+DPC_R="$DPC/plugins/cache/somemarket/gstack/1.2.3/skills/gstack/review/specialists"
+mkdir -p "$DPC_R"
+printf 'Alpha checklist, v1.\n' > "$DPC_R/alpha.md"
+_r13="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC" \
+        bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r13rc=$?
+case "$_r13" in
+  *"ok       alpha-reviewer"*)
+    [ "$_r13rc" -eq 0 ] \
+      && ok "drift: a gstack under plugins/cache/<market>/<plugin>/<version>/skills is found" \
+      || nok "drift R13: found the plugin-cache root but exited $_r13rc" "out='$_r13'" ;;
+  *"no gstack rubrics"*)
+    nok "drift R13: a plugin-installed gstack went unfound — the false all-clear this script refuses" "out='$_r13'" ;;
+  *) nok "drift R13: unexpected output" "out='$_r13'" ;;
+esac
+
+# ...and the shallower layout too. The sibling detect script globs only `*/*/skills` and
+# that depth matches nothing on the author's machine; both are searched here rather than
+# picking one, and this half is what stops the unused-looking glob being deleted as dead.
+DPC2="$TMP/driftcfg2"
+DPC2_R="$DPC2/plugins/cache/somemarket/gstack/skills/gstack/review/specialists"
+mkdir -p "$DPC2_R"
+printf 'Alpha checklist, v1.\n' > "$DPC2_R/alpha.md"
+_r13b="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC2" \
+         bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r13b" in
+  *"ok       alpha-reviewer"*) ok "drift: the two-level plugin-cache layout is searched as well as the three-level one" ;;
+  *) nok "drift R13b: the two-level plugin-cache layout was not searched" "out='$_r13b'" ;;
+esac
+
+# ...and an empty CLAUDE_CONFIG_DIR with nothing installed under it still degrades to the
+# quiet no-op, rather than to a crash or to a stray unmatched-glob path being hashed.
+_r13c="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$TMP/driftcfg-empty" \
+         bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r13crc=$?
+case "$_r13c" in
+  *"no gstack rubrics at any searched root"*"nothing to compare"*)
+    [ "$_r13crc" -eq 0 ] \
+      && ok "drift: no gstack under any searched root is a quiet no-op that still exits 0" \
+      || nok "drift R13c: reported nothing to compare but exited $_r13crc" "out='$_r13c'" ;;
+  *) nok "drift R13c: an empty config dir did not degrade cleanly" "rc=$_r13crc out='$_r13c'" ;;
+esac
+
+# =============================================================================
 # A25–A29 — the two repo-wide conventions, pinned.
 #
 # `python3 -I` and `export LC_ALL=C` were both filed in TODOS.md for six rounds as

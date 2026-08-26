@@ -279,21 +279,26 @@ commit that was fixing it — a line number cannot survive its own fix.
   rejected alternative to the Low pin was announcing `build-config` as covered by nothing
   while the reviewer was finding instances of it — a worse lie than the silence it replaces.
   A disclosure is for an axis nothing looks at, never for one whose findings you are printing.
-- **The `quality` axis keys on `gstack_ship`, never on `gstack_review` (0.15.0).** The
-  gate does not invoke `/review` and must not: its `allowed-tools` include `Edit` and
-  `Write`, and Step 2 snapshots the tree to prove the gate is read-only, so a reviewer
-  that may legitimately edit code cannot run inside that envelope. `/review` also
-  resolves its own base branch while Step 0 resolves the **publish boundary** — different
-  refs. So the axis is run only by the Step 3 handoff, via `/ship` Step 9. Keying the
-  disclosure on whether `/review` is *installed* reported the axis as owned while it went
-  unreviewed, in the exact configuration where it goes unrun: `/review` present, `/ship`
-  absent, no handoff. `docs/axis-proposals.md:175` had recorded that the handoff is the
-  only thing that runs quality since before the table said otherwise.
-  **What this cannot detect, stated so it is not read as coverage:** a user with `/ship`
-  installed who does not take the handoff. That is the *common* path, not an edge —
-  forgeward's own workflow is gate → push-and-PR by hand, because `/ship` would re-bump
-  the version. The disclosure is therefore worded as where the axis is owed, never as a
-  claim that it was paid.
+- **forgeward owns the `quality` axis outright (0.17.0). Never disclose it, never name
+  gstack as its owner, never tell a user to run `/review` before merging.** Five ported
+  reviewers — `maintainability`, `testing`, `performance`, `api-contract`,
+  `data-migration` — fire from the Step 1 table and bind the gate like any other. This
+  **supersedes the 0.15.0 rule** that the axis keys on `gstack_ship`: there is no longer
+  an axis to key. What 0.15.0 got right and is still load-bearing is *why the gate cannot
+  run `/review` itself* — its `allowed-tools` include `Edit` and `Write`, and Step 2
+  snapshots the tree to prove the gate is read-only, so a reviewer that may legitimately
+  edit code cannot run inside that envelope; and `/review` resolves its own base branch
+  while Step 0 resolves the **publish boundary**, which are different refs. Porting the
+  checklists sidesteps both: prose has no tools, and the gate scopes them itself. What
+  0.15.0 got wrong was treating that as permanent. The configuration it existed to catch
+  (`/review` present, `/ship` absent, no handoff) and the one it admitted it could not
+  see (`/ship` present, handoff not taken — forgeward's *own* workflow, because `/ship`
+  would re-bump the version) are both now simply covered.
+  **What the port does not buy, stated so it is not read as coverage:** the rubrics are a
+  snapshot, not a subscription. An improvement gstack makes reaches this gate only when
+  someone re-ports it. `scripts/forgeward-rubric-drift.sh` detects that gstack moved; it
+  cannot make anyone act, and it is blind on a machine with no gstack — which is exactly
+  the machine the port exists to serve, so its silence there is not a clean bill.
 - **No AI-attribution / co-author-trailer check in the gate.** Considered and rejected at
   0.10.0: `/gate` handing off to `/ship` is structurally a perfect chokepoint, but forgeward
   is a plugin other people install and plenty of them legitimately want that trailer. If it

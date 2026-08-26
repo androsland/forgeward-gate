@@ -35,10 +35,20 @@ export LC_ALL=C
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 detect="$here/forgeward-detect-gstack-skill.sh"
 
-# The gstack skills forgeward's own text names. Kept to the three that are actually
-# referenced: `cso` (supply-chain-reviewer's conditional deferral), `review` (the
-# code-quality claim in README), and `ship` (the Step 3 handoff). Adding a name here
-# without a corresponding claim in the text would produce a disclosure about nothing.
+# The gstack skills forgeward's own text names. `cso` drives supply-chain-reviewer's
+# conditional deferral and `ship` drives the Step 3 handoff. `review` no longer drives
+# anything: 0.17.0 ported the five quality checklists, so forgeward owns that axis outright
+# and nothing reads `gstack_review` any more.
+#
+# It is still probed, and deliberately. The pass marker embeds this probe's full JSON line
+# and `test/gate-test.sh` validates the whole shape, so dropping a field is a change to the
+# marker format, not a tidy-up — see `skills/gate/SKILL.md` under Step 3. Keeping a field
+# whose consumer went away is the cheaper side of that trade; removing it is a separate,
+# deliberate change with its own test updates. **Do not restore a `quality` disclosure on
+# the strength of this field existing** — `CLAUDE.md` forbids it in as many words.
+#
+# Adding a NEW name here without a corresponding claim in the text would produce a
+# disclosure about nothing; that half of the original rule stands.
 probe() { # probe <skill> -> present|absent
   [ -x "$detect" ] || { printf 'absent'; return 0; }
   if "$detect" "$1" >/dev/null 2>&1; then printf 'present'; else printf 'absent'; fi
@@ -54,13 +64,20 @@ gs_cso="$(probe cso)"
 #
 #   standalone:
 #     substitutes:            # block sequence
-#       - quality
+#       - deep-audit
 #       - "deep-audit"        # a simply-quoted scalar is accepted
 #   seo:
 #     posture: private-shareable
 #
 #   standalone:
-#     substitutes: [quality, deep-audit]      # flow sequence, equivalent to the above
+#     substitutes: [deep-audit]               # flow sequence, equivalent to the above
+#
+# These examples used to read `quality` because it was the axis most people silenced. It is
+# not an axis any more — 0.17.0 gave forgeward its own quality reviewers — so a `quality`
+# entry now silences nothing, and an example is the shape people copy. `deep-audit` is the
+# one axis a substitutes list can still legitimately name. The reader itself is unchanged
+# and still accepts any token that survives its charset and caps: it does not know the set
+# of real axis names, and is not being taught it here.
 #
 # HONOURED KEYS ARE EXACTLY `standalone.substitutes` AND `seo.posture`. `seo.routes` is
 # named in `skills/gate/SKILL.md` and `agents/seo-reviewer.md` and is NOT read here — a

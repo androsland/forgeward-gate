@@ -441,9 +441,18 @@ did *not* close.
 
 ## Quality axis
 
-- **The gate cannot tell whether the handoff it offered was actually taken, so the
-  `quality` disclosure is a statement about what is owed, not what ran.** (filed with
-  0.15.0, 2026-08-19) Step 3 invokes `/ship` via the Skill tool and reports
+- **✅ DONE (0.17.0) — The gate cannot tell whether the handoff it offered was actually
+  taken, so the `quality` disclosure is a statement about what is owed, not what ran.**
+  (filed with 0.15.0, 2026-08-19; closed 2026-08-26)
+  **Closed by removing the question, not by answering it.** The five quality reviewers are
+  ported into `agents/` and fire from the Step 1 table, so the axis is reviewed inside the
+  gate on every machine and there is no longer a deferral whose payment needs observing.
+  The `review-ran` check specced below is dead along with it — see that entry. What the
+  original filing got right is preserved in `DECISIONS.md` at 0.17.0: the configuration it
+  named (handoff offered, never taken) is forgeward's own default workflow, which is why
+  "owed but never paid" was the common case rather than an edge one.
+  *Original text follows, unedited, as the reasoning that produced the port.*
+  Step 3 invokes `/ship` via the Skill tool and reports
   `Handing off to /ship`; nothing afterwards observes whether Step 9 reached the review
   army, whether the user interrupted, or whether they took the far more common route of
   gate → push-and-PR by hand (which forgeward itself does, because `/ship` re-bumps the
@@ -478,6 +487,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `maintainability`. Filed against the other repo, not this one; the entry stays because
   the *measurement* lives here and would otherwise be lost.
   (0.8.0, 2026-08-06; forgeward half closed 0.12.0, 2026-08-16)
+  **✅ DONE (0.17.0, 2026-08-26) — the loop is broken from this side, and gstack's half
+  stopped being wrong without gstack changing anything.** `/review` skipping
+  `maintainability` as `covered-by-forgeward-and-coverage-audit` was a false claim when it
+  was logged and is now simply **true**: forgeward has a maintainability reviewer, and it
+  fires. The entry closes because the defect was "the axis runs nowhere", and it now runs
+  here. Two things this does not mean: gstack's skip reason is still model-improvised prose
+  with no code behind it on either side, so it can say anything on any run; and `security`
+  skipped as `covered-by-forgeward` was always true and is untouched by this.
 - **The base-rate measurement structurally under-counts this class, and the 0.7.6 work is
   the proof.** The method was a by-hand pass over merged diffs, and it scored 0 — while the
   same session found two live instances (`json_get`'s python arm, `marker_get` ×2) that a
@@ -490,7 +507,16 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   reason the fold should not be treated as "the class is rare." Weigh it if the axis is ever
   rescored. Carried into `DECISIONS.md` at 0.12.0 as the fold decision's own stated defect,
   so it is no longer only in this file. (2026-08-06) **Priority:** —
-- **The review-ran check — warn-only, never blocking on a first version.** Gate on
+- **❌ DROPPED (0.17.0, 2026-08-26) — The review-ran check — warn-only, never blocking on
+  a first version.** Superseded rather than shipped: it exists to check up on a delegated
+  quality pass, and there is no longer a delegation. Dropping it also retires the two
+  cross-repo dependencies it carried (gstack's two `gstack-review-log` call sites and the
+  `via`-key shape), plus the `"via":"standalone"` change it wanted filed against gstack.
+  **Kept rather than deleted** because its analysis is the strongest single argument for
+  the port: a check that must treat a missing field as "probably ran" and can never block,
+  because a real review can leave no trace, is a check whose input the gate does not
+  control. That is the property that made owning the axis the cheaper option.
+  *Original text follows.* Gate on
   whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
   `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
   standalone `/review` reaches the `gstack-review-log` call in `review/SKILL.md` with no
@@ -508,9 +534,92 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   this repo refuses the `/ship` handoff, and it does not apply to `/review`. Constraint:
   `/review` holds Edit/Write and auto-fixes, so it cannot run inside the read-only gate —
   correct order is `/review` first, then gate. (2026-08-05) **Priority:** P3
+  **Downgraded to P4 at 0.17.0 (2026-08-26).** Every fact in it re-verified and unchanged;
+  what changed is the payoff. A `/review` handoff was worth building when it was the only
+  thing that ran the quality axis. Now the gate runs it, so the handoff buys gstack's
+  orchestration around the same checklists — the Fix-First auto-fix loop most of all — for
+  a user who has gstack. Real, but no longer a coverage question, and it would re-introduce
+  the dependency the port removed. Do not build it as a default; an opt-in at most.
 - **Gate-run logging.** Append the fired reviewer set plus verdict rather than
   overwriting/pruning, so "gate ran, `/ship` didn't" becomes measured instead of inferred
   from marker file counts. **Priority:** P3
+- **The five ported quality reviewers have never been run live.** (0.17.0, 2026-08-26)
+  D1–D7 pin the drift script and D6 pins that every ported file records its provenance, but
+  `agents/` is out of scope for `npm test` by design — reviewer prompts are judged by
+  `live-test/`, and no section covers these five. The specific things a suite cannot see:
+  whether the per-axis severity floors actually hold (a maintainability observation
+  reported as High would start blocking pushes, which is the failure this rebasing exists
+  to prevent), whether `maintainability` and `testing` being always-on makes the parallel
+  batch too expensive on a large diff, and whether five more reviewers produce enough
+  overlapping findings to be worth deduplicating in Step 3. Add a LIVE-TEST section.
+  **Priority:** P2
+- **Nothing schedules a re-port, and nothing verifies one was honest.** (0.17.0,
+  2026-08-26) `scripts/forgeward-rubric-drift.sh` reports that gstack moved; acting on it
+  is a human step with no prompt, no hook and no cadence. Two known holes, both stated as
+  non-goals in the script header rather than fixed: a sha256 says the file changed and
+  never whether the change matters, so a reworded heading and a new category are the same
+  signal; and it is one-directional — it cannot see forgeward's own copy being edited away
+  from its recorded source, because the recorded `source-sha256` is what it compares
+  against and a dishonest re-port updates both at once. A `git log` based check against
+  gstack's `review/specialists/` would be a better instrument than a hash, but it needs a
+  gstack **checkout**, not an install, which most machines will not have. **Priority:** P3
+- **`deep-audit` is now the only axis forgeward defers, and it has the same bug the
+  quality axis had.** (0.17.0, 2026-08-26) Explicitly scoped OUT of the port: `/cso` is a
+  whole-repo audit, not a checklist, so there is nothing to port — it is orchestration, and
+  the delta-scoping hole is therefore real and unfixed. What is worth checking before
+  filing more work against it: unlike `quality`, this deferral is *disclosed* rather than
+  silently assumed, `security-reviewer` still runs diff-scoped so it is not a total gap,
+  and `/forgeward:ci-gate` is a standing substitute. That is a materially better position
+  than quality was in, which is why it did not ride along with this PR. **Priority:** P3
+- **forgeward still describes itself as a gate *for gstack*, and four of five couplings
+  remain.** (0.17.0, 2026-08-26) The port closed exactly one, the fifth. The four
+  enumerated below are the four identified before the port, so the total is five, not
+  four — an earlier draft of this entry said "three of four" and was arithmetically
+  inconsistent with its own list. Still live: `deep-audit`
+  defers to `/cso` (above); `supply-chain-reviewer` runtime-probes for `/cso` and
+  self-adjusts, which is the *good* pattern and should not be "fixed"; the Step 3 `/ship`
+  handoff and its `UserPromptExpansion` hook, whose matcher is
+  `^([A-Za-z0-9_]+-)?ship$` — on a machine with no gstack that hook matches nothing, so a
+  standalone install has no enforcement backstop for someone who skips the gate skill, only
+  the `PreToolUse` push hook; and the identity text itself, `.claude-plugin/plugin.json`
+  and `marketplace.json` both describing a "conformance gate for gstack" while
+  `agents/security-reviewer.md:14` says "You are the axis gstack's /ship structurally
+  lacks". The last one is a positioning decision, not a bug, and should be made
+  deliberately rather than drifted into. **Priority:** P3
+
+- **`forgeward-detect-gstack-skill.sh`'s plugin-cache glob is one directory too shallow,
+  so a plugin-installed gstack has never been detected.** (0.17.0, 2026-08-26) It globs
+  `"$claude_dir"/plugins/cache/*/*/skills`; measured on the author's machine that matches
+  **nothing**, while `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills`
+  exists for both installed plugins — the real layout carries a **version** level the glob
+  does not account for. Found while giving `forgeward-rubric-drift.sh` a multi-root lookup;
+  the drift script searches **both** depths and says in its own comment that it is
+  deliberately not copying this one. **Not fixed here on purpose:** this script answers "is
+  this gstack skill installed", which drives `supply-chain-reviewer`'s `/cso` deferral and
+  the Step 3 `/ship` handoff, so changing it changes what the gate defers and where it hands
+  off — a different blast radius from a drift advisory, and the standing rule is that a
+  change to executable behaviour gets its own PR. **What to check before fixing:** whether
+  the two-level shape is a real layout anywhere (the drift script searches it defensively,
+  not from evidence) — and note that E2's positive control passes today because gstack is
+  **skills**-installed here, so this arm has no positive control at all and a fix needs one
+  built the way R13 builds it. **Priority:** P2
+- **The drift script's remaining unasserted edges.** (0.17.0, 2026-08-26) R1–R13 do not
+  cover: a gstack root that exists but is a *file* rather than a directory; an `agents/`
+  holding zero ported rubrics at all (`checked=0`, which prints a count of nothing under
+  `--verbose` and is silent otherwise — indistinguishable from a clean run, the vacuity trap
+  in its purest form); or a `source-path` containing spaces or a newline. All three are
+  hand-editing accidents rather than adversarial input, and all three fail toward silence,
+  which is the direction this script is least able to notice. **Priority:** P3
+- **R6 duplicates the drift script's two `sed` provenance regexes rather than calling
+  it — accepted, and named in the test.** (0.17.0, 2026-08-26) R6 is the one assertion
+  that reads the **shipped** `agents/` tree with no fixture in the path, which is what makes
+  it the floor keeping the synthetic fixtures honest; driving the real script over the real
+  agents would need a synthetic gstack root holding copies of the five real rubrics, which
+  reintroduces exactly the fixture dependence R6 exists to escape. Exposure: a future
+  loosening of the script's regex would not redden R6. Fixing it properly means factoring
+  the provenance reader into something both can source, which is a bigger change than the
+  exposure justifies today. **Priority:** P3
+
 ## Property-based testing
 
 - **Build `/forgeward:properties` as an on-demand skill, never a 7th reviewer.** Shaped
