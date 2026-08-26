@@ -35,13 +35,11 @@ diffs it afterwards, and `forgeward-scan.sh` bounds what a scanner may be told t
      source-path:   cso/sections/audit-phases.md
      source-commit: ad8400543cd9ce8d07641362db48d44a95417e33
      source-sha256: 1ef1745132afa4d6f13fe3c803fd8a69d658c1d4e5537c46cdb3a89aed27321f
-     NOTHING RE-HASHES THIS BLOCK as of 0.19.0. scripts/forgeward-rubric-drift.sh is
-     the instrument that would, and its loop is `for f in "$agents_dir"/*-reviewer.md`
-     — it never reaches skills/. So the hash above is recorded, not checked, and
-     gstack can rewrite the audit phases with nobody told. Filed in TODOS.md as P2;
-     the fix is one glob plus a positive control. Do not read this block as coverage.
-     When the drift check does cover it and fires, re-port from the source and
-     update source-commit and source-sha256 in the same commit. Phases 0, 1, 12, 13
+     THIS BLOCK IS RE-HASHED as of 0.20.0 by scripts/forgeward-rubric-drift.sh, whose
+     loop reaches skills/*/SKILL.md as well as agents/*-reviewer.md. When it fires,
+     re-port from the source and update source-commit and source-sha256 in the same
+     commit. It is still only an advisory that always exits 0, and it is blind on a
+     machine with no gstack checkout — silence there is not a clean bill. Phases 0, 1, 12, 13
      and 14 are ported from cso/SKILL.md at the same commit and are NOT hash-pinned — that
      file mixes the audit method with gstack's own preamble, telemetry and learnings
      machinery, so a hash over it would drift on changes that have nothing to do with
@@ -834,9 +832,9 @@ not in the room when it runs.
   will not be detected by `scripts/forgeward-rubric-drift.sh`. Phase 14 is in this set
   despite writing through forgeward's own `forgeward-artifact-dir.sh`: the destination is
   forgeward's, the schema it writes is `cso/SKILL.md`'s.
-- **And nothing re-hashes even the ten that ARE pinned, because
-  `forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and does not reach this
-  file at all.** The `source-sha256` above is recorded and never compared. A31 asserts the
-  block is well-formed; it asserts nothing about whether the hash still matches anything.
-  Filed as P2 in `TODOS.md` — until that glob lands, "hash-pinned" here means *a hash was
-  written down*, not *a hash is checked*.
+- **The ten that ARE pinned are compared as of 0.20.0**, when
+  `forgeward-rubric-drift.sh` grew a `skills/*/SKILL.md` glob. A31 still asserts only that
+  the block is well-formed, and it asserts nothing about whether the hash matches — that is
+  R14's job, and R14 runs on a synthetic fixture with R14d as the floor over the shipped
+  tree. The comparison is advisory: it always exits 0, and it is blind on a machine with no
+  gstack checkout, which is exactly the machine the port exists to serve.

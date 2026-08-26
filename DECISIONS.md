@@ -95,10 +95,29 @@ directions across twelve inputs, and against gawk, mawk and busybox awk.
 1. **Nothing verifies it ran.** No marker, no state, no check. That is the same limit the
    gate discloses about `/review`, arrived at from the other side, and it is *better* than
    the deferral it replaces — the owner is always present — without being coverage. Filed.
-2. **Its provenance is recorded and unchecked.** `forgeward-rubric-drift.sh` iterates
-   `agents/*-reviewer.md` only, so `skills/audit/SKILL.md`'s `source-sha256` is compared to
-   nothing. The fix is one glob plus a positive control, and it could not ride along because
-   the control's fixture is the file this port creates. Filed as P2.
+2. **Its provenance was recorded and unchecked; fixed at 0.20.0.** `forgeward-rubric-drift.sh`
+   iterated `agents/*-reviewer.md` only, so `skills/audit/SKILL.md`'s `source-sha256` was
+   compared to nothing. It could not ride along with this port because the positive control's
+   fixture is the file this port creates. It now globs `skills/*/SKILL.md` too, keys a ported
+   skill by its DIRECTORY (the basename is the constant `SKILL.md`, so a basename key reported
+   every skill as `SKILL`), and recognises a gstack checkout by `cso/` as well as by
+   `review/specialists/` — R14/R14b were verified to fail against the pre-fix script, and
+   R14c/R14d against the plausible wrong fix.
+
+   The second landmark then needed a **third** pass of its own, found by review and
+   reproduced before it was fixed. Landmark-major ordering stops a `cso`-only root
+   shadowing a `review/specialists` one, and does nothing in the other direction: the
+   first candidate holding `review/specialists` won outright, so a plugin-cache directory
+   sorting earlier (`1.10.0` sorts before `1.9.0`) that predates `cso/` was selected over
+   a complete checkout on the same machine, and the run printed `no longer exist ...
+   Upstream may have renamed or removed them` for the audit port while the file it names
+   sat one directory over. **A false claim about upstream is worse than the silence this
+   script defaults to**, which is why it was fixed rather than documented: a completeness
+   pass now runs first and takes the first candidate holding every landmark, with the
+   landmark-major scan kept as the fallback for a genuinely partial machine. Pinned by
+   R14e, verified to redden with the completeness pass removed. R14c was reworded in the
+   same commit — it had called one of its two partial fixture roots "complete", which is
+   how the asymmetry read as already covered.
 3. **Five of the fifteen phases are not hash-pinned.** Ten (Phases 2–11) come from
    `cso/sections/audit-phases.md` and are covered by the recorded `source-sha256`. Phases
    0, 1, 12, 13 and 14 come from `cso/SKILL.md`, which mixes the ported orchestration with
@@ -193,6 +212,36 @@ also its failure signal, so it needs a positive control the way E1 needs E2.
 2. **The drift check is blind on the machine the port exists to serve.** No gstack means
    nothing to compare, and it prints nothing — which is byte-identical to "no drift". Its
    silence there is not a clean bill, and `--verbose` is the only thing that separates them.
+
+   **The other silent zero was closed at 0.20.0, and the two are different cases.** When a
+   gstack checkout IS found and the script then reads zero ported rubrics, that used to
+   produce the same empty stdout and the same `exit 0` as a clean run — so "checked six,
+   all clean" and "checked none, because the reader broke" were one output. That is the
+   worst shape an advisory can take: its absence is indistinguishable from its success. A
+   `parsed` counter and an unconditional NOTE now separate them. Two ways to reach zero
+   were reproduced against the shipped script before either was fixed — a **CRLF checkout**,
+   where the trailing `\r` defeated the reader's ` *$` anchor and parsed zero ports out of
+   the whole plugin, and an **uppercase digest**, which PowerShell's `Get-FileHash` and
+   GitHub's blob view both emit on a plugin people install on Windows. Both readers were
+   made tolerant of everything that is not the value. The tolerant regex narrows the class
+   of misses; the counter is the backstop for the ones it does not anticipate, which is why
+   both landed and neither was treated as sufficient. Pinned by R14h (guard fires in quiet
+   mode) and R14i (CRLF plus uppercase parses clean), each verified to redden alone under
+   mutation. It stays silent on the no-gstack machine of the bullet above — deliberately,
+   since that machine is the design target and has nothing to compare.
+
+   Two things it does not do. It is informational and never fails a gate, so a fork that
+   deleted every ported rubric while keeping the script gets a line it cannot silence
+   except by deleting the script, which is the right remedy there. And `parsed` counts
+   files with a **readable provenance block**, not files that were compared: `checked` is
+   the second counter, and they diverge exactly when a port has gone missing upstream.
+
+   A third silent-zero of the same family was fixed alongside them: `here` was resolved
+   with bash's builtin `pwd`, which is **logical**, so invoking the script through a
+   symlinked `scripts/` directory resolved the plugin root to the symlink's parent, every
+   file fell through the `[ -f "$f" ] || continue` guard, and the run was byte-identical to
+   a clean one. `pwd -P` on both resolutions. Symlinking the whole plugin directory was
+   always safe and stays safe. Pinned by R14l.
 3. **Nothing verifies the ported prompts.** `agents/` is out of scope for `npm test` by
    design; reviewer prompts are judged by the live-test suite, and the five new ones have not
    been run live. D6 asserts the provenance blocks are complete, which is a property of the
