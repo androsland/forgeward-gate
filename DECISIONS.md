@@ -5,6 +5,102 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — forgeward takes the deep-audit axis too, as a SKILL rather than a reviewer
+
+**Date:** 2026-08-26 · **Version:** 0.19.0
+
+**The decision, in one line.** gstack's `/cso` audit phases are **ported** into
+`skills/audit/SKILL.md` as `/forgeward:audit`, a whole-repo read-only skill; the gate's
+Step 1c stops deferring `deep-audit` to a tool that may not be installed. This closes the
+last of the three delta-scoping holes this file records — `/cso` for dependency CVEs
+(2026-08-05; that entry carries a date and no version field), `quality` (0.17.0), and now
+`deep-audit`. **No axis on this gate is owned by a
+tool that might not be installed.**
+
+**It reverses a scoping decision this repo's own TODOS.md made the same day** (the 0.17.0
+quality-port entry, 2026-08-26), which said `/cso` is "orchestration, and the delta-scoping hole is therefore real and
+unfixed". That reasoning had one unexamined step: it treated *orchestration* and
+*portable* as opposites. `/cso` is orchestration expressed **entirely in prose** — phase
+order, exclusion rules, severity bars, a findings schema — and prose is exactly what
+forgeward already ports. What is genuinely unportable is the parts of `cso/SKILL.md` that
+are gstack plumbing (telemetry, config, its own UX), and those were not ported.
+
+**Why a skill and not a seventh reviewer, which is the decision that actually matters.**
+The quality port worked because a checklist *is* a reviewer — diff-scoped, fired from the
+Step 1 table, binding the gate. An audit is none of those things:
+
+1. **Scope.** The gate reviews `<base>...HEAD`. The audit reviews the repository, including
+   files no diff has touched in a year — git history, CI config, IaC, the dependency tree.
+   Running it per-gate would review the same 400 files on every three-line PR.
+2. **Cost.** It is fifteen phases with parallel verification. That is a deliberate,
+   occasional act — before a release, after an incident, on a schedule — not a per-push tax.
+3. **Falsifiability.** A gate FAIL must be about the diff in front of the user. A finding
+   in code the PR did not touch is a true finding and an unfair block, and the fastest way
+   to get a gate switched off is to fail it for something the author did not do.
+
+So `/forgeward:audit` carries `disable-model-invocation: true`, is not in the Step 1 table,
+and **is not fired by Step 2**. That is a design decision, not an omission, and the skill
+and `skills/gate/SKILL.md` both say so.
+
+**Why it is NOT the `/review` situation, even though it looks identical.** The gate cannot
+invoke `/review` because `/review` holds `Edit` and `Write`, and Step 2 proves the gate is
+read-only by snapshotting the tree and diffing it afterwards. `/forgeward:audit` holds
+neither, so it *could* run inside that envelope. It is excluded on scope and cost alone.
+Recording the difference matters because the two exclusions look the same from outside and
+have different futures: the `/review` one is structural and permanent, this one is a
+judgement that could be revisited if the audit ever grew a diff mode cheap enough to fire.
+
+**What the disclosure is keyed on, and why the obvious key is wrong.** Step 1c used to read
+the environment probe's `gstack_cso` field and disclose when it was absent. After the port
+that key is useless in the worst direction: the axis has an owner that ships *with
+forgeward*, so a presence check reads `present` on every machine and would license the
+sentence "deep-audit is covered" — which nothing checked. The line is keyed on **"not run
+by this gate"** instead. That is a fact about this gate's scope, it is true on every
+machine, and it cannot decay into a false claim. The probe still emits `gstack_cso`;
+**nothing in Step 1c reads it any more.**
+
+**Read-only is structural, and the test needed a floor to say so.** The skill declares
+`allowed-tools` without `Edit`, `Write`, `NotebookEdit` or `MultiEdit`. The naive assertion
+— `grep -q Write skills/audit/SKILL.md` returns nothing — passes on the *worst* input,
+because a **missing** `allowed-tools` key grants every tool. A30 therefore requires the
+frontmatter to enumerate at least three tools **and** none of them to be a writing tool.
+Mutation-verified: adding `- Write` reddens it, and so does deleting the key entirely.
+
+**Two divergences from the source, both deliberate and both stated in the skill.**
+
+- **It writes its report outside the repository.** `/cso` writes
+  `.gstack/security-reports/{date}.json` into the tree, which is what makes its trend
+  tracking work. forgeward will not write into a repo it is auditing, so it uses
+  `forgeward-artifact-dir.sh` — and that costs the trend feature, because the path carries
+  a per-process `$$` level. The skill says trend tracking is unreliable and names all four
+  reasons rather than promising it.
+- **It does not exempt forgeward from its own skill supply-chain phase.** `/cso` exempts
+  gstack there. A phase that audits installed skills for prompt injection and credential
+  access, and then skips the skill running it, is a check with a hole shaped like itself.
+
+**Blind spots, stated so the port is not read as more than it is.**
+
+1. **Nothing verifies it ran.** No marker, no state, no check. That is the same limit the
+   gate discloses about `/review`, arrived at from the other side, and it is *better* than
+   the deferral it replaces — the owner is always present — without being coverage. Filed.
+2. **Its provenance is recorded and unchecked.** `forgeward-rubric-drift.sh` iterates
+   `agents/*-reviewer.md` only, so `skills/audit/SKILL.md`'s `source-sha256` is compared to
+   nothing. The fix is one glob plus a positive control, and it could not ride along because
+   the control's fixture is the file this port creates. Filed as P2.
+3. **Four of the fifteen phases are not hash-pinned.** Ten (Phases 2–11) come from
+   `cso/sections/audit-phases.md` and are covered by the recorded `source-sha256`. Phases
+   0, 1, 12 and 13 come from `cso/SKILL.md`, which mixes the ported orchestration with
+   gstack plumbing, so a whole-file hash would report drift for reasons unrelated to them;
+   that is stated in the provenance block rather than papered over with a noisy hash. Phase
+   14 is forgeward's own — it writes the report through `forgeward-artifact-dir.sh` and has
+   no upstream to drift from.
+4. **It reads the repository, not the running system.** No requests are made, and a webhook
+   or an IAM policy is audited as it is written down, never as it is deployed.
+
+**MIT attribution.** The port is adapted rather than verbatim, and gstack's notice is
+reproduced anyway — conservatively, in `THIRD-PARTY-LICENSES.md`, with one notice covering
+both port sections and a table naming which forgeward file came from which gstack file.
+
 ## DECISION — forgeward takes the quality axis, by porting gstack's five specialist checklists
 
 **Date:** 2026-08-26 · **Version:** 0.17.0

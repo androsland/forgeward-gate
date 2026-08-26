@@ -1,7 +1,7 @@
 # TODOS
 
 Deferred engineering work for forgeward-gate, grouped by component. Priority tags
-(P0 highest → P4) are advisory and no longer discriminate — 44 of the 68 open entries
+(P0 highest → P4) are advisory and no longer discriminate — 45 of the 71 open entries
 are P3 **as of 2026-08-26**, which `## Execution order` is the response to. That pair of
 numbers is a dated copy of the census in that section and nothing refreshes it here:
 step 6 of the loop re-measures the section, so re-read this sentence against it rather
@@ -14,8 +14,8 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Execution order
 
-Sixty-eight open entries **as of 2026-08-26, re-measured after 0.18.0's cache-glob fix**
-— too many to sweep and too flat to prioritise: 44 P3, 12 P4, 4 P2 and 8 carrying no
+Seventy-one open entries **as of 2026-08-26, re-measured after 0.19.0's audit port**
+— too many to sweep and too flat to prioritise: 45 P3, 13 P4, 5 P2 and 8 carrying no
 priority at all, so the priority field carries no signal. Every count in
 this section is a dated measurement rather than a live fact, and step 6 is the only
 thing that refreshes any of them. The re-measurement is why this section reads
@@ -55,18 +55,21 @@ observable by running something, not when its entries "feel handled."
    ```
 
    The obvious version — a plain `grep -c` over everything above `## Completed` — returns
-   **47** against a census of 44, over by three. There are **four** struck entries above
-   the archive as of 0.18.0 and only three of them are P3; the fourth is P2, so the
-   overcount and the struck count agree by coincidence at this priority and do not agree
-   at P2, where naive and census both read 4 because the struck one is the *only* P2 the
-   naive pass adds and the census subtracts. Do not read "over by the struck entries" as a
-   rule — it is a per-priority accident, and the earlier wording here said "exactly the
-   three struck entries" while there were three, which is how the accident hid. That is this file's own recurring failure arriving in the one instrument
-   offered to a reader without `measure.mjs`: a count that classifies by an entry's lead
-   and a closure that lives in its body. **Neither command produces the live-entry total
-   (67) nor the P4/P2/no-priority split**; those come from `measure.mjs` or from counting
-   by hand, so a fallback re-measure refreshes two of this section's numbers and leaves
-   the rest dated.
+   **49** against a census of 45, over by four. There are **five** struck entries above the
+   archive as of 0.19.0: four P3 and one P2. So the naive pass reads P3 49 against 45, P2 6
+   against 5, and P4 13 against 13 — over by its struck entries at each priority
+   independently, and not at all where there are none.
+   **That is arithmetic, not a rule, and the 0.18.0 wording here proves why.** It recorded a
+   coincidence — naive and census both read 4 at P2, because the single struck P2 was one
+   the naive pass added and the census subtracted — and the coincidence did not survive one
+   more struck P2 arriving. Its predecessor said "exactly the three struck entries" while
+   there happened to be three. Each draft was true when measured and false by the next
+   merge, which is this file's own recurring failure arriving in the one instrument offered
+   to a reader without `measure.mjs`: a count that classifies by an entry's lead and a
+   closure that lives in its body. Run the command, quote the number, date it.
+   **Neither command produces the live-entry total (71) nor the P4/P2/no-priority split**;
+   those come from `measure.mjs` or from counting by hand, so a fallback re-measure
+   refreshes two of this section's numbers and leaves the rest dated.
 
 **Cut a goal early** when it reaches ~800 diff lines or ~6 entries, whichever comes
 first, and open the PR at that point rather than finishing the list. **Do not cut
@@ -95,9 +98,10 @@ is keyed to HEAD, so an amend invalidates it.
 | 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
-| 14 | **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; the `deep-audit` deferral is re-disclosed against its own delta-scoping hole or closed; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into — `supply-chain-reviewer`'s runtime probe is the *good* pattern and is explicitly not in scope. | Quality axis ×4 | docs |
-| 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has three open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, merged 2026-08-26, shipped as 0.17.0) and this PR each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged and #46's inside the three Quality-axis entries it struck. `## Completed`'s newest entry is 0.16.0. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
+| 14 | **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
+| 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has five open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, 0.17.0), PR #45 (execution order), PR #47 (0.18.0's cache-glob fix) and the 0.19.0 audit port each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged, #46's inside the three Quality-axis entries it struck, and #47's and 0.19.0's inside the entries they struck in place. `## Completed`'s newest entry is 0.16.0, which is now **three** shipped versions behind. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
+| 17 | **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13 stay unpinned and the script is blind with no gstack checkout. | Deep-audit axis ×1 | code |
 
 ### Five entries are not work
 
@@ -876,21 +880,39 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   against and a dishonest re-port updates both at once. A `git log` based check against
   gstack's `review/specialists/` would be a better instrument than a hash, but it needs a
   gstack **checkout**, not an install, which most machines will not have. **Priority:** P3
-- **`deep-audit` is now the only axis forgeward defers, and it has the same bug the
-  quality axis had.** (0.17.0, 2026-08-26) Explicitly scoped OUT of the port: `/cso` is a
+- **✅ FIXED (0.19.0, 2026-08-26) — `deep-audit` is forgeward's own axis now.**
+  `/forgeward:audit` ports gstack's `/cso` audit phases as a skill rather than a reviewer,
+  and the gate's Step 1c no longer defers the axis to anything. The entry's premise — that
+  orchestration cannot be ported — turned out to be false in the direction that mattered:
+  `/cso` is orchestration expressed entirely in prose, and prose ports. What it is **not**
+  is a reviewer, so it does not join the Step 1 table and the gate does not fire it; the
+  gate stays diff-scoped and the audit stays whole-repo, which is the distinction that made
+  the deferral look necessary in the first place. The disclosure survives in a smaller and
+  more honest form — keyed on *not run by this gate*, never on whether a tool is installed,
+  because after the port a presence probe reads `present` on every machine and would
+  license a claim nobody checked. Read-only is structural: the skill declares
+  `allowed-tools` without `Edit` or `Write`, and A30 asserts a non-empty floor because a
+  *missing* key grants every tool.
+  *Original text follows, unedited apart from this lead.* Explicitly scoped OUT of the port: `/cso` is a
   whole-repo audit, not a checklist, so there is nothing to port — it is orchestration, and
   the delta-scoping hole is therefore real and unfixed. What is worth checking before
   filing more work against it: unlike `quality`, this deferral is *disclosed* rather than
   silently assumed, `security-reviewer` still runs diff-scoped so it is not a total gap,
   and `/forgeward:ci-gate` is a standing substitute. That is a materially better position
   than quality was in, which is why it did not ride along with this PR. **Priority:** P3
-- **forgeward still describes itself as a gate *for gstack*, and four of five couplings
-  remain.** (0.17.0, 2026-08-26) The port closed exactly one, the fifth. The four
-  enumerated below are the four identified before the port, so the total is five, not
-  four — an earlier draft of this entry said "three of four" and was arithmetically
-  inconsistent with its own list. Still live: `deep-audit`
-  defers to `/cso` (above); `supply-chain-reviewer` runtime-probes for `/cso` and
-  self-adjusts, which is the *good* pattern and should not be "fixed"; the Step 3 `/ship`
+- **forgeward still describes itself as a gate *for gstack*, and three of five couplings
+  remain.** (0.17.0, 2026-08-26; re-counted 0.19.0) The quality port closed one and the
+  audit port closed a second, so two of five are shut. The list below is the five
+  identified before either port — an earlier draft of this entry said "three of four" and
+  was arithmetically inconsistent with its own list, and its successor said "four of five"
+  and was correct until 0.19.0.
+  **Closed:** `quality` defers to `/review` (0.17.0); `deep-audit` defers to `/cso`
+  (0.19.0, struck above). Still live: `supply-chain-reviewer` runtime-probes for `/cso` and
+  self-adjusts — filed as the *good* pattern and, on that reading, not to be "fixed", but
+  **0.19.0 removes its reason to exist**: the reviewer probes so it knows whether to cover
+  dependency CVEs itself or hand them to `/cso`, and forgeward now owns that axis whether or
+  not gstack is installed. The probe is no longer a graceful deferral, it is a branch on an
+  irrelevant fact. That is a change to a reviewer prompt and gets its own PR; the Step 3 `/ship`
   handoff and its `UserPromptExpansion` hook, whose matcher is
   `^([A-Za-z0-9_]+-)?ship$` — on a machine with no gstack that hook matches nothing, so a
   standalone install has no enforcement backstop for someone who skips the gate skill, only
@@ -992,6 +1014,62 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   loosening of the script's regex would not redden R6. Fixing it properly means factoring
   the provenance reader into something both can source, which is a bigger change than the
   exposure justifies today. **Priority:** P3
+
+## Deep-audit axis
+
+- **`forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and nothing else, so
+  `/forgeward:audit`'s `source-sha256` is recorded and never re-hashed.** (0.19.0,
+  2026-08-26) The loop is `for f in "$agents_dir"/*-reviewer.md`. `skills/audit/SKILL.md`
+  carries the same provenance block shape — `source-path`, `source-commit`, `source-sha256`
+  against `cso/sections/audit-phases.md` — and nothing compares it to the live gstack file,
+  so gstack can rewrite the audit phases and this repo is told nothing. A31 asserts the
+  block is *well-formed*; it says nothing about whether the hash still matches anything.
+  **The fix is one glob and its positive control**: extend the loop to `skills/*/SKILL.md`
+  and add an R14 built the way R13 builds one — a synthetic gstack root plus a fixture skill
+  whose recorded hash is deliberately wrong, so the assertion fails against the pre-fix
+  script. It did not ride along with the port because the positive control's fixture is the
+  file the port creates, so the two cannot land in one PR without the test asserting against
+  a file that does not exist on its own base. **What it still would not buy:** the script is
+  blind on a machine with no gstack checkout, which is the machine the port exists to serve,
+  and the audit's Phases 0/1/12/13 are not hash-pinned at all (below), so even a green
+  extended run covers less than the skill's provenance block appears to promise.
+  **Priority:** P2
+- **Phases 0, 1, 12 and 13 of `/forgeward:audit` are ported from `cso/SKILL.md` and are
+  deliberately NOT hash-pinned.** (0.19.0, 2026-08-26) The other ten phases come from
+  `cso/sections/audit-phases.md`, a file that holds the phases and nothing else, so a
+  whole-file sha256 is a meaningful signal. `cso/SKILL.md` mixes the orchestration these
+  four were taken from with preamble, telemetry, config plumbing and gstack's own UX — most
+  of which forgeward deliberately did not port — so pinning it would report drift on every
+  gstack release for reasons that have nothing to do with the four phases. The provenance
+  block says so in as many words rather than recording a hash that would be noise. **What
+  would settle it:** a per-section digest — extract the four spans by heading and hash each
+  — which needs an extractor that agrees with the porter, and that is a bigger change than
+  the exposure justifies today. Until then this is a stated gap, and the entry above must
+  not be read as closing it. **Priority:** P3
+- **Nothing verifies `/forgeward:audit` ran — no marker, no state, no check — and that is
+  the same structural limit the gate discloses about everything else.** (0.19.0,
+  2026-08-26) The gate deliberately does not fire it (diff-scoped versus whole-repo, and
+  cost), so the axis has an owner that is always installed and no evidence it was ever
+  invoked. This is *better* than the deferral it replaced, which had neither, and it is
+  still not coverage. The obvious fix — a marker the audit writes and the gate reads — is
+  the one thing that must not be built casually: it would make a stale audit read as a
+  fresh one, which is the false-PASS direction, and it couples a whole-repo skill to a
+  diff-scoped gate that has good reasons not to know about it. **What would settle whether
+  it is worth anything:** the gate-run logging in goal 14, which is the instrument that
+  would measure how often the audit is actually run, and which is already blocked on the
+  same decision. Decide them together or not at all. **Priority:** P3
+- **`/forgeward:audit`'s trend tracking is a convenience, not a feature, and three separate
+  things break it.** (0.19.0, 2026-08-26) gstack's `/cso` writes
+  `.gstack/security-reports/{date}.json` **into the repo**, which is what makes its Phase 13
+  trend block work. forgeward will not write into the repo it audits, so it uses
+  `forgeward-artifact-dir.sh`, which appends `forgeward-artifacts/$$` — pinning
+  `FORGEWARD_ARTIFACT_ROOT` stabilises the *parent* and every run still gets its own PID
+  directory underneath. So a prior report is a sibling of `"$ART"`, never inside it; PID
+  directories are not ordered by time; `/tmp` is swept by the OS; and nothing reaps an old
+  one. The skill says all four rather than promising a trend. **The shape of a real fix** is
+  a stable per-repo report directory outside the tree, keyed on the repo's toplevel — which
+  is a new path convention, a reaping policy and a collision story, none of which the port
+  needed. Do not fix it by writing into the repo. **Priority:** P4
 
 ## Property-based testing
 
