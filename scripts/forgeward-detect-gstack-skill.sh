@@ -133,10 +133,54 @@ roots=()
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$top" ] && roots+=("$top/.claude/skills")
 
-# gstack can also arrive as a plugin, in which case its skills live one marketplace and
-# one plugin deep under the cache rather than in the skills dir.
+# gstack can also arrive as a plugin, in which case its skills live under the cache rather
+# than in the skills dir.
+#
+# TWO GLOB DEPTHS, and the deeper one is the only one that has ever fired. Until 0.18.0 this
+# globbed `plugins/cache/*/*/skills` alone — one marketplace and one plugin deep — and that
+# depth matched NOTHING: the installed layout carries a version,
+# `cache/<marketplace>/<plugin>/<version>/skills`. Enumerated on the author's machine — 8
+# marketplaces, 8 plugins, 15 version directories, 14 of them holding a `skills/`, and ZERO
+# at the shallow depth. So this arm had never fired and a plugin-installed gstack read as
+# absent on every probe. `scripts/forgeward-rubric-drift.sh` searched both depths from the
+# start and its `gs_roots` loop is the precedent followed here; the two agree as of 0.18.0.
+#
+# The version level is CONSTRAINED to `[0-9]*` rather than left as a bare `*`, and that is a
+# deliberate narrowing of the fix, not an oversight. A bare third `*` also matches
+# `cache/<market>/<plugin>/node_modules/skills` and `.../docs/skills` — both reproduced
+# returning exit 0 — which is detection getting MORE eager, the one direction the FAILS
+# CLOSED paragraph above forbids. Semver cannot begin with a letter, so requiring a
+# digit-first level costs nothing that is known to exist. Two limits, stated rather than
+# implied:
+#   - It does not verify the level IS a version. `2-backup` still matches. It excludes the
+#     realistic accident, never a determined one.
+#   - A non-numeric version scheme (`v1.2.3`, a branch name) now reads as ABSENT. That is
+#     fail-closed and so permitted, but it IS a choice: if such a layout ships, this is the
+#     line to widen, and widening it needs evidence the shallow depth below is still owed.
+#
+# The shallow depth is KEPT rather than replaced, on the same defensive footing the drift
+# script keeps it: no install on this machine uses it, so there is no evidence it is a real
+# layout, and equally none that it never was. It costs one glob. Do not delete it as dead
+# without an installer-side statement that the version level is guaranteed.
+#
+# WHAT THIS STILL CANNOT TELL — a live false positive, which the ordering makes WORSE rather
+# than merely possible. The cache retains every version ever installed (forgeward has 8 here
+# while `~/.claude/plugins/installed_plugins.json` names exactly one as installed), and
+# `check_root` returns the FIRST match. Glob order is lexicographic under this script's own
+# `LC_ALL=C` pin, which is neither version order nor install order: the real cache enumerates
+# `0.1.0 0.10.0 0.13.0 0.16.0 0.5.0 0.9.1 0.9.2 0.9.3`, so the OLDEST directory is tried
+# first and the installed 0.16.0 is fourth. The UPGRADE case is the proven one and needs no
+# uninstall to reach — gstack ships `/cso`, a later version drops it, the old version dir
+# survives the upgrade, and `supply-chain-reviewer` goes on deferring dependency CVEs to a
+# skill the live gstack no longer has, which is the exact hole WHY THIS EXISTS was written to
+# close. A platform sweep is not a mitigation: one ran on 2026-08-26 and left all 7 stale
+# forgeward versions in place. This resolves "a copy is on disk", never "the active version
+# is this". `installed_plugins.json` is the authoritative source and is deliberately not read
+# here; filed in TODOS.md rather than fixed, because reading it changes what the gate defers
+# on every probe.
 if [ -n "$claude_dir" ]; then
-  for cand in "$claude_dir"/plugins/cache/*/*/skills; do
+  for cand in "$claude_dir"/plugins/cache/*/*/skills \
+              "$claude_dir"/plugins/cache/*/*/[0-9]*/skills; do
     [ -d "$cand" ] && roots+=("$cand")
   done
 fi

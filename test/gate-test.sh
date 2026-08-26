@@ -2169,6 +2169,24 @@ DET="$PLUGIN/scripts/forgeward-detect-gstack-skill.sh"
 det() { # det <config-dir> <skill> -> exit code
   ( CLAUDE_CONFIG_DIR="$1" "$DET" "$2" >/dev/null 2>&1 ); echo $?
 }
+
+# detp: like det, but returns `<rc>|<printed path>` AND neutralises the third root.
+#
+# `det` covers roots 1 and 3 through CLAUDE_CONFIG_DIR and leaves root 2 —
+# `<git toplevel>/.claude/skills` — live, because it never leaves the suite's cwd. Today
+# that is inert only because this repo ships no `.claude/skills`; plant one and D8b goes
+# green against the PRE-FIX script, which is D8's original defect recurring inside D8's
+# own fix. `$TMP` is outside any repo, so `git rev-parse --show-toplevel` comes back empty
+# and root 2 drops out entirely — and it holds no `.claude/skills` either way.
+#
+# Returning the PATH is the other half. An exit status cannot say WHICH root matched, so
+# an assertion on rc alone passes when the right answer arrives from the wrong place —
+# CLAUDE.md: "Assert on the MESSAGE, not the exit status."
+detp() { # detp <config-dir> <skill> -> "<rc>|<path>"
+  local o rc
+  o="$( cd "$TMP" && CLAUDE_CONFIG_DIR="$1" "$DET" "$2" 2>/dev/null )"; rc=$?
+  printf '%s|%s' "$rc" "$o"
+}
 mkskill() { # mkskill <dir> <description-line>
   mkdir -p "$1"
   printf -- '---\nname: cso\nversion: 2.0.0\n%s\n---\n\nBody of the skill.\n' "$2" > "$1/SKILL.md"
@@ -2225,11 +2243,77 @@ D7="$TMP/det7"; mkskill "$D7/skills/not-really-cso" "$MARKER"
   && ok "detect: a dir merely ENDING in -cso does not qualify as a prefixed install" \
   || nok "detect D7" "expected 1"
 
-# D8: gstack can arrive as a plugin instead, one marketplace and one plugin deep.
+# D8: a plugin-cache layout one marketplace and one plugin deep — a shape nothing here uses.
+# This shape has NO evidence behind it — enumerated on the author's machine, 0 directories
+# at this depth against 14 at the versioned one (8 marketplaces, 8 plugins, 15 version dirs). It is searched defensively, and this assertion is what stops the glob
+# being deleted as dead. Do not read a pass here as proof the layout exists.
 D8="$TMP/det8"; mkskill "$D8/plugins/cache/some-marketplace/gstack/skills/cso" "$MARKER"
 [ "$(det "$D8" cso)" = 0 ] \
   && ok "detect: plugin-cache install is INSTALLED" \
   || nok "detect D8" "expected 0"
+
+# D8b: the layout that actually ships — a VERSION level between the plugin and `skills`.
+# This is the positive control D8 was mistaken for. Until 0.18.0 the glob stopped one
+# directory short, so this returned "not installed" for every plugin-installed gstack and
+# nothing caught it: D8 passed, and D8 asserts a shape no install on this machine uses.
+# A test that only builds the fixture the code already handles proves the code handles the
+# fixture, which is not the same as proving it handles the world. Mirrors drift's R13.
+D8B="$TMP/det8b"
+mkskill "$D8B/plugins/cache/some-marketplace/gstack/1.2.3/skills/cso" "$MARKER"
+[ "$(detp "$D8B" cso)" = "0|$D8B/plugins/cache/some-marketplace/gstack/1.2.3/skills/cso" ] \
+  && ok "detect: a versioned plugin-cache install (<market>/<plugin>/<version>/skills) is INSTALLED" \
+  || nok "detect D8b: the versioned plugin-cache layout went undetected — the arm that had never fired" \
+         "expected 0|<the versioned path>, got $(detp "$D8B" cso)"
+
+# D8c: direction. The version level must not become a wildcard that swallows depth — a
+# SKILL.md sitting one level deeper still must not qualify, or the glob stops discriminating.
+D8C="$TMP/det8c"
+mkskill "$D8C/plugins/cache/some-marketplace/gstack/1.2.3/extra/skills/cso" "$MARKER"
+[ "$(detp "$D8C" cso)" = "1|" ] \
+  && ok "detect: a FOURTH level under the cache does not qualify" \
+  || nok "detect D8c" "expected 1| (no match, nothing printed), got $(detp "$D8C" cso)"
+
+# D8d: both depths present at once — the only arrangement that occurs on a machine which
+# has genuinely used both. The shallow root is appended to `roots` BEFORE the deep one and
+# carries no marker, so this pins that a non-matching root does not abort the search: the
+# versioned skill must still be found and its path returned. Nothing else covers the
+# ordering the 0.18.0 glob introduced.
+D8D="$TMP/det8d"
+mkdir -p "$D8D/plugins/cache/some-marketplace/gstack/skills/cso"
+printf -- '---\nname: cso\ndescription: Unrelated helper, no marker.\n---\n\nBody.\n' \
+  > "$D8D/plugins/cache/some-marketplace/gstack/skills/cso/SKILL.md"
+mkskill "$D8D/plugins/cache/some-marketplace/gstack/1.2.3/skills/cso" "$MARKER"
+[ "$(detp "$D8D" cso)" = "0|$D8D/plugins/cache/some-marketplace/gstack/1.2.3/skills/cso" ] \
+  && ok "detect: a non-matching SHALLOW root does not abort the search for the versioned one" \
+  || nok "detect D8d: shallow root shadowed the versioned one" "got $(detp "$D8D" cso)"
+
+# D8e: pins a KNOWN FALSE POSITIVE, deliberately. The cache retains every version ever
+# installed, so a plugin that was installed and later removed still answers `present` —
+# stated in the script's own header and filed P3 in TODOS.md rather than fixed, because
+# reading `~/.claude/plugins/installed_plugins.json` changes what the gate defers on every
+# probe. This asserts the CURRENT, WRONG answer so the eventual fix has a red-to-green
+# marker and a partial fix cannot pass as a whole one. It is not an endorsement: if you
+# are here because this went red, that is the fix landing — update it, do not delete it.
+D8E="$TMP/det8e"
+mkskill "$D8E/plugins/cache/some-marketplace/gstack/1.0.0/skills/cso" "$MARKER"
+mkskill "$D8E/plugins/cache/some-marketplace/gstack/2.0.0/skills/cso" "$MARKER"
+case "$(detp "$D8E" cso)" in
+  0\|*/plugins/cache/*) ok "detect: ANY cached version answers present — the documented false positive, pinned" ;;
+  *) nok "detect D8e: the pinned false positive changed" "got $(detp "$D8E" cso)" ;;
+esac
+
+# D8f: the third level must look like a VERSION, not merely be a third directory. D8c pins
+# arity — a fourth level does not qualify — and arity was the only thing pinned until 0.18.0,
+# which left a bare `*` matching `cache/<market>/<plugin>/node_modules/skills`. Reproduced at
+# exit 0 before the `[0-9]*` constraint landed. This is the direction the detector's header
+# calls unaffordable: a false positive is a silently skipped check. Fails closed on a
+# `v`-prefixed scheme too, which is accepted and written into the script's comment.
+D8F="$TMP/det8f"
+mkskill "$D8F/plugins/cache/some-marketplace/gstack/node_modules/skills/cso" "$MARKER"
+[ "$(detp "$D8F" cso)" = "1|" ] \
+  && ok "detect: a NON-VERSION third level (node_modules) does not qualify as a version dir" \
+  || nok "detect D8f: a bare third-level wildcard is back — node_modules/skills matched" \
+         "got $(detp "$D8F" cso)"
 
 # D9: the marker is looked for in the FRONTMATTER only. A body may quote "(gstack)"
 # while describing an integration, and the body is the larger, far more quotable surface.
@@ -2276,7 +2360,8 @@ rm -rf "$R/.claude"
 # THREE roots, and simulating "no gstack" means neutralising all of them:
 #   1. $CLAUDE_CONFIG_DIR/skills  (falls back to $HOME/.claude/skills if unset)
 #   2. <git toplevel>/.claude/skills   <- the one that is easy to forget
-#   3. $CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills
+#   3. $CLAUDE_CONFIG_DIR/plugins/cache/*/*/skills  and  .../*/*/*/skills (the versioned
+#      layout, which is the one every real install actually uses)
 # gstack is very likely installed on the machine running this suite (it is on the
 # author's), so an assertion that forgets root 1 or 3 finds the REAL gstack, and one that
 # forgets root 2 finds whatever the cwd repo ships. Every "absent" assertion below would
@@ -3194,9 +3279,12 @@ case "$_r13" in
   *) nok "drift R13: unexpected output" "out='$_r13'" ;;
 esac
 
-# ...and the shallower layout too. The sibling detect script globs only `*/*/skills` and
-# that depth matches nothing on the author's machine; both are searched here rather than
-# picking one, and this half is what stops the unused-looking glob being deleted as dead.
+# ...and the shallower layout too. Nothing on the author's machine uses it — 0 directories at
+# this depth against 14 at the versioned one — so it is searched defensively, not on evidence. Both this script and
+# `scripts/forgeward-detect-gstack-skill.sh` search both depths as of 0.18.0; before that the
+# sibling searched only the shallow one, which is why a plugin-installed gstack read as absent
+# there while being found here. This half is what stops the unused-looking glob being deleted
+# as dead.
 DPC2="$TMP/driftcfg2"
 DPC2_R="$DPC2/plugins/cache/somemarket/gstack/skills/gstack/review/specialists"
 mkdir -p "$DPC2_R"
@@ -3206,6 +3294,21 @@ _r13b="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC2" \
 case "$_r13b" in
   *"ok       alpha-reviewer"*) ok "drift: the two-level plugin-cache layout is searched as well as the three-level one" ;;
   *) nok "drift R13b: the two-level plugin-cache layout was not searched" "out='$_r13b'" ;;
+esac
+
+# R13c: and the version level must look like a version here too. This script and
+# `scripts/forgeward-detect-gstack-skill.sh` must keep agreeing on the glob — they diverged
+# once and a plugin-installed gstack went undetected for ten versions — so the `[0-9]*`
+# constraint added to the detector at 0.18.0 is pinned on BOTH sides. Mirrors D8f.
+DPC3="$TMP/driftcfg3"
+DPC3_R="$DPC3/plugins/cache/somemarket/gstack/node_modules/skills/gstack/review/specialists"
+mkdir -p "$DPC3_R"
+printf 'Alpha checklist, v1.\n' > "$DPC3_R/alpha.md"
+_r13c="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC3" \
+         bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r13c" in
+  *"no gstack rubrics"*) ok "drift: a NON-VERSION third level (node_modules) is not a rubric root" ;;
+  *) nok "drift R13c: a bare third-level wildcard is back" "out='$_r13c'" ;;
 esac
 
 # ...and an empty CLAUDE_CONFIG_DIR with nothing installed under it still degrades to the

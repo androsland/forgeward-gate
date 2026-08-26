@@ -1425,6 +1425,16 @@ gstack and passes vacuously. E5 pins that a substitute name carrying JSON metach
 *dropped* rather than escaped, since that value is the only marker field originating in a repo
 file. Suites: gate 162/162, pre-push 15/15.
 
+*Corrected at 0.18.0 — the third root above is quoted as it stood in 0.8.0, and as written it
+matched **nothing**. The installed plugin layout carries a version level
+(`plugins/cache/<marketplace>/<plugin>/<version>/skills`), so that glob was one directory short
+and had never fired on any machine. E2's vacuity risk was therefore carried by the first two
+roots alone, and this sentence claimed a third that could not have contributed to it. The glob
+is fixed in `forgeward-detect-gstack-skill.sh` and pinned by D8b in `test/gate-test.sh`. The
+sentence is annotated rather than rewritten because what it says about controls that pass
+vacuously is precisely the defect that kept this one invisible for ten versions — the
+enumeration was itself the thing it warns about.*
+
 **Two findings from the 0.8.0 security review, both Medium, both fixed here.** Worth recording
 because each is an instance of a rule this repo already had and each got past a green suite —
 E1–E11 were all passing when both were found, so "the tests pass" was never evidence about them.
