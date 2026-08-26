@@ -1,12 +1,108 @@
 # TODOS
 
-Deferred engineering work for forgeward-gate, grouped by component then priority
-(P0 highest → P4). `DECISIONS.md` remains the source of truth for *why* a design
+Deferred engineering work for forgeward-gate, grouped by component. Priority tags
+(P0 highest → P4) are advisory and no longer discriminate — 42 of the 63 open entries
+are P3 (43 of 64 at the last count), which `## Execution order` is the response to. `DECISIONS.md` remains the source of truth for *why* a design
 is the way it is; this file tracks what is still owed. Items carry the source
 that raised them and the date.
 
 Every item here was raised in a merged PR body or a review round. PR bodies are
 write-once and effectively gone after merge, which is why they live here now.
+
+## Execution order
+
+Sixty-four open entries **as of 2026-08-26** — too many to sweep and too flat to
+prioritise: 43 P3, 11 P4, 2 P2 and 8 carrying no priority at all, so the priority
+field carries no signal. Every count in this section is a dated measurement rather
+than a live fact, and step 6 is the only thing that refreshes any of them.
+This section is the ordering layer. It does **not** re-file anything: the sections
+below stay sorted by component, which is how this repo has always sorted them, and
+each goal points at entries where they already live.
+
+**A goal is one branch and one PR.** It is done when its exit condition is
+observable by running something, not when its entries "feel handled."
+
+### The loop
+
+1. Take the topmost goal that is not blocked.
+2. Branch from `master`.
+3. Work its entries as separate commits — one coherent unit each, so review stays
+   per-commit legible. Update the entry in place in the same commit; strike it only
+   when its exit condition holds.
+4. **Gate once, at the end.** The marker is HEAD-pinned, so every amend re-gates and
+   per-commit gating is the expensive mistake. Fire only the reviewers whose surface
+   the diff touches, and name the ones you skipped and why.
+5. Open the PR, then stop.
+6. On merge: re-measure, strike the goal, return to 1. The instrument is todokeeper's
+   `measure.mjs` — a separate plugin, installed machine-locally and **not in this repo**.
+   Without it, `wc -c TODOS.md`, `awk '/^## Completed/{f=1} f' TODOS.md | wc -c` and
+   `awk '/^## Completed/{exit} 1' TODOS.md | grep -c '\*\*Priority:\*\* P3'` give the three
+   numbers this section quotes.
+
+**Cut a goal early** when it reaches ~800 diff lines or ~6 entries, whichever comes
+first, and open the PR at that point rather than finishing the list. **Do not cut
+below ~150 lines** — take the next entry from the same goal instead, and cut when
+the goal is genuinely out of entries.
+
+Those two sizes are the maintainer's personal branch-sizing defaults, restated here so
+the loop reads in one place; they are not a forgeward rule and anyone else should retune
+them. **Gate once** is the one step that is repo-owned and not a preference: the marker
+is keyed to HEAD, so an amend invalidates it.
+
+### The goals
+
+| # | Goal — done when… | Draws from | Kind |
+|---|---|---|---|
+| 1 | **A gate run says whether quality was reviewed.** Step 0 prints `reviewed` / `not reviewed` / `unknown` for the branch and never blocks on it; all three states have a test, including a forgeward-gate record in the *current* log shape and a branch whose log filename drifted. | Quality axis ×5 | code |
+| 2 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, and the update path is written down. | Housekeeping ×2 (version drift, `item2-wip` tag) | docs |
+| 3 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
+| 4 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it. | Gate — base detection ×5 | code |
+| 5 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it". | Standalone posture ×6 | code |
+| 6 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured" stops returning PASS, and the two security rules are verified on more than one fixture each. | Reviewers ×5 | prompts |
+| 7 | **`forgeward-scan.sh` stops trusting shape.** Layer 1 reads flag values, layer 4 stops using TRACKED as a proxy, and the `basename` exemption survives three named forgeries under test — a rename, a symlinked path, and a path whose basename collides with an exempt one. Enumerated, because "cannot be forged" is not something a test can show. | Reviewers ×4 | code |
+| 8 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
+| 9 | **Scanner arities are verified against real binaries.** — **BLOCKED**: `trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this machine. Prerequisite is a container or CI job that has them. | Reviewers ×3 | blocked |
+| 10 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
+| 11 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
+| 12 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
+| 13 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has one open question already: PR #43 (second open-half triage, merged 2026-08-19) has no `## Completed` entry, though its findings are written up in full inside the `## Docs hygiene` entry it triaged. Decide whether that counts as recorded or as the gap the check exists to catch — do not cut while it is undecided. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
+| 14 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
+
+### Five entries are not work
+
+Each is quoted by a prefix that is greppable in this file, because a citation nobody
+can resolve is worse than none: `Five disclosed under-matches remain by design`, `The
+base-rate measurement structurally under-counts this class`, `The local gate is strong,
+not indestructible`, `The PreToolUse artifact deny only protects once installed`, and
+`Measured 2026-08-26: for the two months before today`. The first four are standing
+disclosures of accepted limits, here so they are not re-discovered as bugs; nothing
+closes them. The fifth is a dated measurement, kept so it is not re-derived from
+scratch — and **do re-derive it if you are about to rely on it**: the first draft of
+that entry was a forward claim, it was false when it was written, and the entry now
+says how it was caught.
+
+### Non-goals, so this ordering is not read as coverage
+
+It is an **order**, not a schedule — nothing here estimates dates, and nothing
+expires a goal that stops moving. It does not re-file entries, so an entry that
+belongs to two goals is listed under one and worked from wherever it sits. The
+entry counts are a sizing hint, not the cap: the ~800-line ceiling is what actually
+cuts a branch, and a goal whose entries turn out large gets cut mid-goal and
+resumed. **Goal 9 is blocked by tooling that no ordering can unblock** — it will
+still be blocked when it comes up, and reaching it is the signal to build the
+container, not to skip it. And the ordering assumes each goal's entries are still
+true: the 2026-08-26 staleness sweep's SUSPECT and REFERENT-MISSING buckets were read
+in full and every one judged a false alarm. The counts and the reasons live beside the
+previous pass in the `## Docs hygiene` triage entry, which is where sweep history
+belongs; that judgement has a shelf life, so re-run it at goal 13. Last, the `Draws
+from` column is checkable and checked by nothing: the per-section counts plus the five
+not-work entries must equal the live entry count, and an edit that unbalances it will
+not announce itself. It balances as written — 58 drawn across the fourteen
+goals, plus the five below, plus one cross-repo entry no goal draws (the `via:"standalone"`
+stamp, which is gstack's to make and is filed here only so it is not lost) — 64 against 64
+live. It did not balance on the first draft: goal 12 claimed four Docs hygiene entries where
+three exist and three Housekeeping where four were needed, two errors that cancelled in the
+total and so hid each other.
 
 ## Gate — publish matcher
 
@@ -441,6 +537,74 @@ did *not* close.
 
 ## Quality axis
 
+- **Measured 2026-08-26: for the two months before today, every recorded quality pass on
+  this machine came in through `/ship` — not one standalone `/review`.** This is the fact
+  the whole section was reasoning about without having, so every entry below should be read
+  against it. It is a dated measurement and deliberately not a forward claim: two standalone
+  runs exist, both from today, and the first predates this commit by fourteen minutes.
+
+  **What was measured.** Across 85 `*-reviews.jsonl` files under `~/.gstack/projects/`,
+  122 unique lines, 23 carry `skill:"review"` and span 2026-06-22 → 2026-08-26: **21
+  `via:"ship"`**, **one `via:"forgeward-gate"`** (forgeward's own reviewers, not a quality
+  pass), and **one standalone run** — `androsland-claude-video`, branch `fix/gate-findings`,
+  2026-08-26 11:37:33 +0300. gstack's own semantics make that reading unambiguous:
+  `ship/sections/review-army.md` stamps `"via":"ship"` and says in as many words that it
+  "distinguishes from standalone `/review` runs", the standalone template at `review/SKILL.md`
+  Step 5.8 stamps no `via`, and that record's specialists roster and its
+  `SCOPE_MIGRATIONS`/`SCOPE_API`/`SCOPE_FRONTEND` skip reasons are `/review`'s runtime gating
+  verbatim. The session transcript settles it: two `Skill: review` invocations, two
+  `forgeward:gate`, no `/ship`. The second standalone run is the one that reviewed this diff.
+
+  **What the instruments cannot see, stated because a zero was already read as coverage
+  here.** The first draft of this entry said a standalone `/review` had *never* run; it was
+  false fourteen minutes before it was committed, and all three ways it got there are worth
+  writing down. (1) The census glob was one level deep, so it silently skipped the three
+  logs whose branch name contains a slash — `androsland-linkids/fix/auth-error-fallback-reviews.jsonl`
+  and two more — and reported 118 lines where `find` reports 122. Those four rows are all
+  `skill:"ship"`, so the split survived; a total produced by a method that skips a known
+  shape does not. (2) `~/.gstack/analytics/skill-usage.jsonl` is telemetry-gated and
+  telemetry is `off` here: 7 rows, none `review`, last written 2026-07-09. It is a dead
+  file, not a corroborating instrument, and citing it as agreement would be citing silence.
+  (3) `timeline.jsonl` is *not* telemetry-gated, but it is written by a **backgrounded**
+  `gstack-timeline-log … &` in the skill preamble, so a lost race writes nothing. It holds
+  305 entries (`ship` 41, `plan-eng-review` 10, `review` **1** — this run) and has no line
+  at all for the standalone run fourteen minutes earlier, whose project has a
+  `repo-mode.json` from the same morning and no `timeline.jsonl` whatsoever; 8 of the 16
+  projects with a `repo-mode.json` are in that state. **A missing timeline line is not
+  evidence that a skill did not run.** The review logs, not the timeline, carry the weight
+  here — and the one instrument that would settle it directly is the session transcript.
+
+  **Why:** nothing invokes it. No hook does — but the enumeration has to reach past
+  `settings.json` to mean anything. That file has one `PreToolUse`/Bash matcher holding four
+  hooks, one `PreToolUse`/Read and one `SessionStart`, and there is no
+  `settings.local.json`; eight enabled plugins then register hooks of their own, forgeward
+  included (`UserPromptExpansion` on `^([A-Za-z0-9_]+-)?ship$`, `PreToolUse` on Bash). None
+  of them invokes `/review`. That forgeward already ships a `UserPromptExpansion` hook keyed
+  on a prompt name is the useful half of the finding: the mechanism is installed. Forgeward's
+  gate is *forbidden* from invoking it (`skills/gate/SKILL.md`, Step 1c — read-only
+  envelope versus `/review`'s `Edit`/`Write`, and a different base ref). And `/ship` does
+  not call it either: it inlines its own copy of the review army at
+  `ship/sections/review-army.md`, which is why all 21 hits are stamped `via:"ship"`. So
+  `/ship` is the only thing on this machine that has ever produced a review — and the
+  workflow that gates this repo deliberately never reaches `/ship`, because it re-bumps
+  `VERSION`.
+
+  **Fixed outside this repo, 2026-08-26:** the personal workflow shape in
+  `~/.claude/CLAUDE.md` now reads `branch → commit → /review → gate → PR`, which makes the
+  workflow itself the caller. That is a habit written into one machine's instructions, not
+  a mechanism — nothing enforces it, and it does nothing for anyone who installs forgeward.
+  The entries below are what forgeward can do about it from inside the gate.
+
+  **Superseded as a motivation, retained as evidence (0.17.0, 2026-08-26, hours after the
+  above was written).** The port removes the consequence, not the measurement: forgeward no
+  longer needs anything to invoke `/review`, because the five quality reviewers fire inside
+  the gate on every machine. So the closing line above — "the entries below are what
+  forgeward can do about it from inside the gate" — is answered rather than open, and the
+  entries below are struck accordingly. What the numbers still carry is the strongest
+  evidence for the port being right: a delegation that was never once taken on this machine
+  in two months was not a delegation. The measurement stands on its own and is deliberately
+  kept, because it is dated evidence that would otherwise have to be re-derived.
+
 - **✅ DONE (0.17.0) — The gate cannot tell whether the handoff it offered was actually
   taken, so the `quality` disclosure is a statement about what is owed, not what ran.**
   (filed with 0.15.0, 2026-08-19; closed 2026-08-26)
@@ -458,8 +622,13 @@ did *not* close.
   gate → push-and-PR by hand (which forgeward itself does, because `/ship` re-bumps the
   version). So on the `gstack_ship: present` branch the axis is reported as deferred and
   may simply never run. **The tractable check is the one `docs/axis-proposals.md`
-  already specced and shelved**: match a dashboard entry on `skill:"review"` + `commit` +
-  specialists-dispatched, treating a missing `via` as standalone — and it cannot block on
+  already specced and shelved** — though not in the shape it was specced in: the three
+  corrections at the end of this section retire `commit`, `via` and specialists-dispatched
+  from the match key. A second mechanism surfaced while measuring it, and it is already
+  installed: forgeward's own `hooks/hooks.json` registers a `UserPromptExpansion` hook on
+  `^([A-Za-z0-9_]+-)?ship$`, so the same shape keyed on `gate` could say "quality has not
+  been reviewed on this branch" as the user types the command, with the gate reading nothing
+  at run time. Either way it cannot block on
   a first version, because its input is absent for runs that legitimately happened. Worth
   reviving now that the disclosure is keyed correctly and the gap is the only thing left
   between "owed" and "paid". **Priority:** P3
@@ -472,7 +641,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   `"covered-by-forgeward"`, while forgeward's README skips code-quality because
   `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
   an existence proof, not a measured rate. (2026-08-05) **Priority:** P3 — downgraded at
-  0.12.0; forgeward's half is closed and the remaining half is another repo's code.
+  0.12.0 because forgeward's half is closed. Not because the rest is another repo's ticket:
+  the correction below shows there is no code on either side to change.
 
   **Half-narrowed by 0.8.0, and forgeward's half closed at 0.12.0.** Option B made the
   *gstack-absent* half explicit — the gate discloses `quality` as unowned. 0.12.0 closed
@@ -481,12 +651,25 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   probe can and cannot see (`quality: owned by gstack /review (installed; forgeward has
   no quality reviewer and does not check that /review ran)`). So a user with both tools
   installed is no longer told the axis is handled.
-  **What is left is not fixable from here.** `/review`'s skip reasons are written by
-  gstack, and nothing in forgeward can read them, change them, or detect that a review
-  ran — the loop only truly breaks when gstack stops deferring to forgeward for
-  `maintainability`. Filed against the other repo, not this one; the entry stays because
-  the *measurement* lives here and would otherwise be lost.
+  **What is left is not fixable from here.** Nothing in forgeward can read `/review`'s
+  skip reasons, change them, or detect that a review ran; the entry stays because the
+  *measurement* lives here and would otherwise be lost.
   (0.8.0, 2026-08-06; forgeward half closed 0.12.0, 2026-08-16)
+
+  **Correction, 2026-08-26 — there is no other-repo fix, because there is no other-repo
+  code.** This entry was filed as gstack's ticket, on the assumption that gstack's skill
+  *contains* the deferral and the remedy is gstack dropping it. It does not: `grep -rn 'covered-by-forgeward'` over
+  `~/.claude/skills/` returns **0**, and **0** files anywhere under
+  `~/.claude/skills/gstack/` mention forgeward at all. `review/SKILL.md`'s own documented
+  skip reasons are `"scope"`, `"gated"`, the under-50-line bail and `[GATE_CANDIDATE]`.
+  The strings this entry quotes were **improvised by the model at run time** and written
+  into the log — twice, in
+  `~/.gstack/projects/thimisou/fixtimed-events-followups-reviews.jsonl` (2026-07-29) and
+  again on 2026-08-26 in `androsland-claude-video`, the second phrased freehand as
+  "forgeward security-reviewer PASSed this exact range". So the loop is a *runtime*
+  behaviour with no code on either side to change, which makes it strictly harder to fix
+  than filed and not, as recorded, someone else's ticket.
+
   **✅ DONE (0.17.0, 2026-08-26) — the loop is broken from this side, and gstack's half
   stopped being wrong without gstack changing anything.** `/review` skipping
   `maintainability` as `covered-by-forgeward-and-coverage-audit` was a false claim when it
@@ -512,6 +695,12 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   quality pass, and there is no longer a delegation. Dropping it also retires the two
   cross-repo dependencies it carried (gstack's two `gstack-review-log` call sites and the
   `via`-key shape), plus the `"via":"standalone"` change it wanted filed against gstack.
+  That last one was measured before it was dropped, and the number is the reason it was
+  never worth much: across 85 `*-reviews.jsonl` files under `~/.gstack/projects/`, exactly
+  **one** of 122 lines carries no `via`, and it is a genuine standalone run. So the field's
+  absence was the only available signal, one sample wide, and indistinguishable from a
+  truncated write or an older template — the change would have shrunk the `unknown` bucket
+  without ever making it empty, and would have done nothing for lines already written.
   **Kept rather than deleted** because its analysis is the strongest single argument for
   the port: a check that must treat a missing field as "probably ran" and can never block,
   because a real review can leave no trace, is a check whose input the gate does not
@@ -528,6 +717,41 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   because both call sites are model-executed prompt steps: a review that happened can
   leave no entry, which under-counts a measurement but manufactures false FAILs in an
   enforcement. **Priority:** P3
+
+  **Three corrections to this design, measured 2026-08-26 before building it.** Census:
+  85 `*-reviews.jsonl` files under `~/.gstack/projects/`, 122 unique lines, 23 carrying
+  `skill:"review"` across **6 distinct key-shapes**.
+
+  (1) **It must reject forgeward's own gate runs — and `via` cannot be what rejects them.**
+  Two live log lines record forgeward's reviewers under `skill:"review"`:
+  `finrecruits/featcandidate-job-alerts-reviews.jsonl`, with `"note":"4 axes
+  (privacy/a11y/security/seo) x 3 rounds"` and `via:"forgeward-gate"`, and the 2026-08-26
+  `androsland-claude-video` line, whose `passes.skipped.security` reads "forgeward
+  security-reviewer PASSed this exact range" and which carries no `via` at all. So a check
+  keyed on `skill:"review"` alone reads forgeward's gate as the quality pass it exists to
+  disclose the absence of — and the obvious guard, rejecting `via:"forgeward-gate"`, catches
+  only the first: that record is the **oldest** of the six shapes, and the newest shape has
+  no `via` to reject. Key the rejection on a field the current shape carries
+  (`read_only:true`, or a `passes.skipped.*` reason naming forgeward), and test it against a
+  gate record in the *new* shape, not only the 2026-07 one.
+
+  (2) **`commit` cannot be in the match key, and neither can the rest of the template.**
+  `commit`, `specialists`, `quality_score` and per-finding `fingerprint`/`severity`/`action`
+  all come from `/review`'s Step 5.8 template, and the newest record on this machine carries
+  **none of them** — it carries `passes`/`counts`/`headline`/`workspace_guard`/`read_only`
+  instead. The shape this design was written against is the oldest of the six. Note what
+  this does *not* license: that record is still a real `/review` run (see the measurement
+  entry above), so a check keyed on the template's fields would have called a genuine
+  standalone pass unreviewed.
+
+  (3) **`unknown` must cover lookup failure, not only parse failure.** With `commit` gone,
+  the branch-derived filename is the only key left — and it drifts: **17 branch names on
+  this machine resolve to two different files** (`feat-dashboard-i18n-reviews.jsonl` and
+  `featdashboard-i18n-reviews.jsonl` are one branch), 4 logs sit under the literal branch
+  name `unknown`, and 3 sit one directory deeper because the branch name contains a slash.
+  Zero candidate files, more than one, or a record whose provenance is not readable is
+  `unknown`. The check must **never** degrade to `not reviewed` — that turns gstack's schema
+  churn into forgeward printing a false accusation.
 - **`/review` never writes `VERSION`, which reopens a cheaper handoff than `/ship`.**
   Every occurrence in `review/SKILL.md` is a read or a display string, and
   `bin/gstack-next-version` writes only to stdout. Version bumping is the sole reason
@@ -673,6 +897,29 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   **Priority:** —
 
 ## Housekeeping
+
+- **The installed plugin is 0.13.0 while master is 0.16.0, so three releases of gate
+  behaviour are not running on the machine that develops them.**
+  `~/.claude/plugins/installed_plugins.json` pins
+  `installPath: …/forgeward-gate/forgeward/0.13.0` and `lastUpdated 2026-08-18` (the record
+  has no `source` field; the repo is named in `known_marketplaces.json`). What is missing is
+  behavioural: the a11y blocking-surface widening (0.14.0) and the transcript audit (0.16.0)
+  have never run here. 0.13.0 also keys the `quality` axis on `gstack_review` rather than
+  `gstack_ship`, which 0.15.0 fixed — but scope that honestly: with both `/review` and
+  `/ship` installed, as they are here, 0.13.0 prints `quality: owned by gstack /review` where
+  0.16.0 prints `quality — deferred to /ship Step 9`. Both are disclosures of what is owed
+  rather than claims of coverage, so the local cost is a line naming the wrong runner, not a
+  false PASS. The P2 rests on the two behavioural gaps.
+
+  Two things make this recur rather than being a one-off `/plugin update`. There are **no
+  release tags** — `git tag` returns one entry, `item2-wip-quote-stripping`, which is a
+  work-in-progress marker rather than a version, and `git ls-remote --tags origin` returns
+  **nothing at all**, so that one is local-only and the remote marks nothing. And there is **no `CHANGELOG.md`**, so an installer comparing their pinned version to
+  master has nothing to read. Fix is: tag releases from `plugin.json`'s version at merge,
+  add a changelog, and write the update command into README so it is not folklore.
+  **Non-goal:** this does not propose a self-update check inside the gate — a gate that
+  phones home about its own version is a different product, and the failure it would guard
+  is a human forgetting to run one command. (2026-08-26) **Priority:** P2
 
 - **`test/` is not shellchecked, and the transcript-audit suite is the first test file
   where that cost something.** `.github/workflows/shellcheck.yml` runs `scripts/*.sh
@@ -1040,6 +1287,12 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   a subject described in prose, so the triage still has to read the file. This pass
   deliberately does not do the triage: it is a different theme from an archive cut, and a
   title needing an "and" is two PRs.
+  **Third sweep, 2026-08-26, during the execution-order pass.** `stale.mjs` over the
+  63-entry file returned **23 SUSPECT** and **10 REFERENT MISSING**; each was read and judged
+  a false alarm — regex literals, cross-repo paths into gstack and trivy, and a
+  `.forgeward/config.yml` this repo does not have. No triage edits followed. Same headline as
+  2026-08-19: the buckets are evidence, not verdicts. Re-run at goal 13.
+
   **Second triage ran 2026-08-19. One entry deleted, four corrected in place, and the
   headline is what the tool's own buckets were worth.**
 

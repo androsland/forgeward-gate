@@ -465,11 +465,31 @@ outlives the run.
 ### 5. The review-ran check (design, if built)
 
 Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
-it mechanically possible: entries carry `commit`, per-specialist `dispatched` + `reason`,
-`quality_score`, and per-finding `fingerprint`/`severity`/`action`.
+it mechanically possible — but the match key below was written from one sample of that log,
+and re-measuring it on 2026-08-26 falsified two thirds of it. Census: 85 `*-reviews.jsonl`
+files under `~/.gstack/projects/`, 122 unique lines, 23 carrying `skill:"review"` across
+**6 distinct key-shapes**.
 
-- Match on `skill:"review"` + `commit` + quality specialists dispatched. **Treat a
-  missing `via` as standalone**, never as malformed.
+- ~~Match on `skill:"review"` + `commit` + quality specialists dispatched.~~ `commit`,
+  `specialists`, `quality_score` and per-finding `fingerprint`/`severity`/`action` all come
+  from `/review`'s Step 5.8 template, and the newest record on this machine carries **none
+  of them** — while still being a genuine standalone `/review` run. Keying on the template's
+  fields would call a real quality pass unreviewed. Match on `skill:"review"` and nothing
+  else from that list.
+- **Treat a missing `via` as standalone** — this one survives, and it is gstack's own
+  documented semantics: `ship/sections/review-army.md` stamps `"via":"ship"` and says it
+  "distinguishes from standalone `/review` runs". What does **not** survive is using `via`
+  to reject forgeward's own gate runs. The breakdown is 21 `"ship"`, 1 `"forgeward-gate"`,
+  1 absent; the one `"forgeward-gate"` record is the **oldest** shape, so a gate run logged
+  today has no `via` to reject and would read as `reviewed` — the check reporting forgeward's
+  gate as the quality pass it exists to disclose the absence of. Reject gate runs on a field
+  the current shape carries (`read_only:true`, or a `passes.skipped.*` reason naming
+  forgeward).
+- **`unknown` covers lookup failure, not only parse failure.** With `commit` gone, the
+  branch-derived filename is the only key left, and it drifts: 17 branch names on this
+  machine resolve to two different files, 4 logs sit under the literal branch name
+  `unknown`, and 3 sit a directory deeper because the branch name contains a slash. Zero
+  candidates, or more than one, is `unknown` — never `not reviewed`.
 - **Warn, do not block, on a first version** — its input is a skippable prompt step, so
   blocking manufactures false FAILs against people who did review.
 - Key off a *configured* artifact in `.forgeward/config.yml`, not gstack specifically.
@@ -486,7 +506,12 @@ Stated explicitly, because a fix that undershoots its own evidence reads as full
 
 **What the evidence supports:** across 22 logged review runs, the broad quality pass ran
 only inside `/ship`, never standalone, and in 2 entries its specialists were skipped by
-explicit deferral to forgeward.
+explicit deferral to forgeward. **Re-measured 2026-08-26** at 23 `skill:"review"` records:
+21 `via:"ship"`, 1 `via:"forgeward-gate"`, and 1 standalone run — dated that same day, so
+"never standalone" held for the two months before it and is not a forward claim. The two
+deferral strings were **improvised at run time**, not read from gstack's skill (`grep -rn
+'covered-by-forgeward'` over `~/.claude/skills/` returns 0), so there is no other-repo code
+to change.
 
 **What the proposed fixes cover:**
 
