@@ -167,27 +167,53 @@ is untracked, the security-reviewer should hear about it.
 
 Step 1b is about the blind spot of the *diff*. This is the blind spot of the *machine*.
 
-forgeward's reviewer table is scoped as a **delta against gstack** — its third column
-says what each reviewer adds that gstack does not. Scoping by delta means every
-deferral becomes a hole the moment the other side is absent, and one already shipped
-that way (`supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not
-exist; it now detects and self-adjusts). `quality` was the second and is now closed —
-forgeward owns it outright, see below. **One axis is still owned by a partner tool:**
+forgeward's reviewer table began as a **delta against gstack** — its third column says
+what each reviewer adds that gstack does not. Scoping by delta means every deferral
+becomes a hole the moment the other side is absent, and this repo has now closed all
+three of them: `supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not
+exist (it detects and self-adjusts); `quality` deferred to `/review` (five ported
+reviewers own it outright as of 0.17.0); and `deep-audit` deferred to `/cso` (0.19.0
+ships `/forgeward:audit`). **No axis on this gate is owned by a tool that might not be
+installed.**
+
+Run the probe anyway — Step 1a needs its `seo_posture`, Step 3's marker validates its
+full JSON shape, and Step 3's handoff needs `gstack_ship`:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
 ```
 
-It prints one line of JSON and always exits 0 — it is informational, and must never
-stop a gate run. It also carries `seo_posture` for Step 1a, so one run serves both
-steps. Read `gstack_cso`, `gstack_ship`, and `substitutes`. `gstack_review` is still
-emitted — the marker validates the probe's full JSON shape and would reject a short line
-— but **nothing in this step reads it any more**, and that is the change: quality is no
-longer a question about what is installed.
+It prints one line of JSON and always exits 0 — it is informational, and must never stop
+a gate run. Read `seo_posture`, `substitutes`, `config`, `config_warnings` and
+`gstack_ship`. `gstack_review` and `gstack_cso` are still emitted and **nothing in this
+step reads either one** — that is the change: neither quality nor deep-audit is a
+question about what is installed any more.
 
-| axis | owner | run by | when it will not run |
-|------|-------|--------|----------------------|
-| `deep-audit` | gstack `/cso` (`gstack_cso`) | nothing here; the user runs it | `security-reviewer` still runs, diff-scoped — it does **not** replace a whole-repo audit. `/forgeward:ci-gate` is the closest standing substitute. |
+### `deep-audit` is forgeward's axis now — and it still gets ONE line
+
+0.19.0 ports gstack's `/cso` audit phases into `/forgeward:audit`, so the axis is
+guaranteed present and version-matched on every machine. That closes half of the hole and
+you must not let it read as the whole one: **this gate does not fire it.**
+
+| axis | owner | run by | what to say |
+|------|-------|--------|-------------|
+| `deep-audit` | forgeward `/forgeward:audit` | **not this gate** — the user runs it deliberately | `deep-audit: owned by /forgeward:audit (whole-repo, read-only). NOT run by this gate, which is diff-scoped — run it before a release, after an incident, or on a schedule.` |
+
+**Key that line on "not run by this gate", never on whether a tool is installed**, and
+that is the whole reason it survives the port. A presence-keyed check would now read
+`present` on every machine and print nothing, reporting the axis as owned while nothing
+verifies it was ever run — the exact bug the 0.17.0 quality work exists to avoid
+repeating, and the limit `scripts/forgeward-detect-gstack-skill.sh` states about itself
+under *presence, not diligence*. Nothing here can see whether `/forgeward:audit` has run.
+
+**Why not simply fire it here?** Not the `/review` reason — `/forgeward:audit` holds no
+`Edit` and no `Write`, so unlike `/review` it would survive Step 2's workspace guard
+intact. The reason is scope and cost: this gate resolves a publish boundary and reviews a
+diff, while the audit reads the whole repository and its history, on findings that move
+over months. Wiring it in would make every push pay for it. Do not add it to Step 2.
+
+Print it as **one clause on the firing decision you already print**, not a paragraph, and
+say nothing at all if `substitutes` names `deep-audit` — the user has answered.
 
 ### `quality` is forgeward's own axis now — say nothing about it
 
@@ -231,15 +257,17 @@ re-ports it. The drift check tells you that happened; nothing makes it happen. A
 is no longer a disclosure to suppress — a stale one in a repo's config is harmless and
 you should not mention it.
 
-If `deep-audit`'s owner is absent AND its name is not in `substitutes`, add the matching
-line above to the firing decision.
+The same snapshot property applies to `/forgeward:audit`, and with **less** cover: as of
+0.19.0 `forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and nothing else, so
+the audit port's provenance block is recorded and unchecked. Do not read the drift
+check's silence as covering it. Filed in `TODOS.md`.
 
-Then **carry on and gate normally**. This is disclosure, not refusal, and the
-distinction is the whole design (`docs/axis-proposals.md` §3): forgeward is fully
-operational standalone, and refusing to gate because a *different* tool is missing
-would trade a disclosed gap for a blocked user. Never FAIL, never withhold the marker,
-and never re-fire a reviewer to compensate — a security reviewer asked to also judge
-deep-audit scope does neither job well.
+Then **carry on and gate normally**, whatever any of the above printed. Everything in
+Step 1c is disclosure, not refusal, and the distinction is the whole design
+(`docs/axis-proposals.md` §3): forgeward is fully operational standalone, and a gate that
+stopped over a scope note would trade a disclosed gap for a blocked user. Never FAIL,
+never withhold the marker, and never re-fire a reviewer to compensate — a security
+reviewer asked to also judge whole-repo audit scope does neither job well.
 
 **Say it once, and only when it is news.** If `substitutes` names the axis, the user
 has already answered and you say nothing at all. A disclosure that repeats after being
@@ -279,12 +307,11 @@ not a YAML parser: on a file using anchors, aliases, multi-document streams or b
 scalars the number is counted over lines that were never keys, and nothing detects that
 case — so treat a large count as "look at your config", never as a defect tally.
 
-**State presence, never diligence.** The probe sees that a skill is *installed*. It
-cannot tell gstack-installed-and-never-run from gstack-actively-covering-the-axis, so
-`gstack_cso: present` licenses "the tool is here", never "the audit was run". If
-`config` reads `unreadable`, disclose anyway and say the config could not be read —
-being wrong in that direction costs a redundant paragraph; the other direction hides
-a real gap.
+**State presence, never diligence.** The probe sees that a skill is *installed*. It has
+never been able to tell installed-and-never-run from actively-covering-the-axis, which is
+why no disclosure in this step keys on presence any more. If `config` reads `unreadable`,
+disclose anyway and say the config could not be read — being wrong in that direction
+costs a redundant paragraph; the other direction hides a real gap.
 
 That distinction is why `quality` stopped being a disclosure at all. Until 0.17.0 it was
 the one axis where `present` also had to be disclosed, because the deferral turned out to
@@ -292,9 +319,10 @@ run both ways: in one repo's review log gstack's `/review` skipped its `maintain
 specialist with `reason: "covered-by-forgeward-and-coverage-audit"` while forgeward
 deferred quality straight back to `/review`. Two tools pointing at each other meant
 nobody reviewed quality, and nothing fired, because presence was all the probe could see.
-Porting the checklists ends that class of bug for this axis rather than describing it
-better — there is no deferral left to be reciprocated. `deep-audit` still has one, which
-is why the caveat above is still written down.
+Porting the checklists ended that class of bug for that axis rather than describing it
+better, and 0.19.0 did the same for `deep-audit`. **What survives the port is a smaller
+and more honest claim:** the axis has an owner that is always here, and nothing checks
+that the owner ran. The `deep-audit` clause above says exactly that and nothing more.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
