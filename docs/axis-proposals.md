@@ -464,12 +464,49 @@ outlives the run.
 
 ### 5. The review-ran check (design, if built)
 
-Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
-it mechanically possible: entries carry `commit`, per-specialist `dispatched` + `reason`,
-`quality_score`, and per-finding `fingerprint`/`severity`/`action`.
+> **DEAD at 0.17.0 — read the Q2 box before anything below.** The port gave forgeward the
+> quality axis outright, so there is no delegated pass left to check up on and this check
+> will not be built. The corrections in this section were measured *before* that landed and
+> are kept rather than deleted, because they are the argument: a check whose match key was
+> two-thirds wrong against its own log, whose only remaining key is a filename that drifts,
+> and which can never block because a real review can legitimately leave no trace, is a
+> check whose input the gate does not control — and that is what made owning the axis the
+> cheaper option. Read the rest of §5 as the post-mortem of a design, not as a spec.
+> Entry: `TODOS.md` → *❌ DROPPED (0.17.0, 2026-08-26) — The review-ran check* (quoted so
+> it greps; the date is part of the lead).
 
-- Match on `skill:"review"` + `commit` + quality specialists dispatched. **Treat a
-  missing `via` as standalone**, never as malformed.
+Rather than reimplementing quality, gate on whether the existing pass ran. The log makes
+it mechanically possible — but the match key below was written from one sample of that log,
+and re-measuring it on 2026-08-26 falsified two thirds of it. Census: 85 `*-reviews.jsonl`
+files under `~/.gstack/projects/`, 122 unique lines, 23 carrying `skill:"review"` across
+**6 distinct key-shapes**.
+
+- ~~Match on `skill:"review"` + `commit` + quality specialists dispatched.~~ `commit`,
+  `specialists`, `quality_score` and per-finding `fingerprint`/`severity`/`action` all come
+  from `/review`'s Step 5.8 template, and the newest record on this machine carries **none
+  of them** — while still being a genuine standalone `/review` run. Keying on the template's
+  fields would call a real quality pass unreviewed. Match on `skill:"review"` and nothing
+  else from that list.
+- **Treat a missing `via` as standalone** — this one survives, and it is gstack's own
+  documented semantics: `ship/sections/review-army.md` stamps `"via":"ship"` and says it
+  "distinguishes from standalone `/review` runs". What does **not** survive is using `via`
+  to reject forgeward's own gate runs. The breakdown is 21 `"ship"`, 1 `"forgeward-gate"`,
+  1 absent; the one `"forgeward-gate"` record is the **oldest** shape, so a gate run logged
+  today has no `via` to reject and would read as `reviewed` — the check reporting forgeward's
+  gate as the quality pass it exists to disclose the absence of. Reject gate runs on a field
+  the current shape carries (`read_only:true`, or a `passes.skipped.*` reason naming
+  forgeward). **That replacement key was never given a negative control, and it fails on
+  the census's own sole positive.** The one standalone `/review` record — `fix/gate-findings`
+  under `androsland-claude-video`, the record the next bullet leans on as proof a standalone
+  run exists — carries `read_only: true` *and* a `passes.skipped.security` naming forgeward,
+  so both proposed keys reject it. A later standalone row carries neither and would pass, so
+  the key is not inert; it was simply derived from one positive and zero negatives, which is
+  the error the whole section is a post-mortem of.
+- **`unknown` covers lookup failure, not only parse failure.** With `commit` gone, the
+  branch-derived filename is the only key left, and it drifts: 17 branch names on this
+  machine resolve to two different files, 4 logs sit under the literal branch name
+  `unknown`, and 3 sit a directory deeper because the branch name contains a slash. Zero
+  candidates, or more than one, is `unknown` — never `not reviewed`.
 - **Warn, do not block, on a first version** — its input is a skippable prompt step, so
   blocking manufactures false FAILs against people who did review.
 - Key off a *configured* artifact in `.forgeward/config.yml`, not gstack specifically.
@@ -486,7 +523,12 @@ Stated explicitly, because a fix that undershoots its own evidence reads as full
 
 **What the evidence supports:** across 22 logged review runs, the broad quality pass ran
 only inside `/ship`, never standalone, and in 2 entries its specialists were skipped by
-explicit deferral to forgeward.
+explicit deferral to forgeward. **Re-measured 2026-08-26** at 23 `skill:"review"` records:
+21 `via:"ship"`, 1 `via:"forgeward-gate"`, and 1 standalone run — dated that same day, so
+"never standalone" held for the two months before it and is not a forward claim. The two
+deferral strings were **improvised at run time**, not read from gstack's skill (`grep -rn
+'covered-by-forgeward'` over `~/.claude/skills/` returns 0), so there is no other-repo code
+to change.
 
 **What the proposed fixes cover:**
 
@@ -499,6 +541,15 @@ explicit deferral to forgeward.
 Neither fix, nor both together, restores the quality axis for a standalone user. That
 population is left uncovered on this axis by design; see the standalone-posture work in
 `TODOS.md`.
+
+**Overtaken at 0.17.0, and this paragraph is why.** Neither *proposed* fix restored the
+axis for a standalone user — which is what made a third option, not on this list, the one
+that got built: forgeward ported the five checklists and now reviews quality itself, on
+every machine, with no partner tool present. The sentence above is left standing because
+it is the clearest statement of the gap the port closed, and because the reasoning is
+worth keeping intact: a fix scoped to the population that already has gstack was never
+going to be enough, and reading that off this paragraph is what produced the port. What
+does **not** change is the measurement above it, which is dated and still holds.
 
 ## Re-proving the rejected option
 
