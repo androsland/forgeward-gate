@@ -1,6 +1,6 @@
 {
   "name": "forgeward-gate",
-  "description": "Single-plugin marketplace for forgeward gate — an enforced, read-only review gate that blocks the push until gstack's missing conformance reviewers pass.",
+  "description": "Single-plugin marketplace for forgeward gate — an enforced, read-only review gate that blocks the push until every fired conformance reviewer passes.",
   "owner": {
     "name": "Andreas Demetriou"
   },
@@ -8,8 +8,8 @@
     {
       "name": "forgeward",
       "source": "./",
-      "description": "Enforced, read-only conformance gate for gstack. Adds the reviewers gstack lacks (privacy, accessibility, ai-output, seo, supply-chain, security) and blocks /ship until every fired reviewer returns VERDICT: PASS.",
-      "version": "0.20.0",
+      "description": "Enforced, read-only conformance gate. Fires privacy, accessibility, ai-output, seo, supply-chain, security and quality reviewers on the surfaces a diff touches, and blocks the push until every fired reviewer returns VERDICT: PASS. Hands off to gstack's /ship when installed.",
+      "version": "0.21.0",
       "author": {
         "name": "Andreas Demetriou"
       },

@@ -1,10 +1,12 @@
 # forgeward gate
 
-> gstack ships fast. forgeward-gate makes sure it ships clean — an enforced, read-only review
-> gate that blocks the push until privacy, accessibility, AI-output, SEO, supply-chain, and
-> security checks pass.
+> An enforced, read-only review gate that blocks the push until privacy, accessibility,
+> AI-output, SEO, supply-chain, security and code-quality checks pass. It runs on any repo,
+> and hands off to gstack's `/ship` where that is installed.
 
-An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
+An **enforced, read-only conformance gate**. Nothing else has to be installed for it to
+work; where [gstack](https://github.com/garrytan/gstack) is present it integrates with it
+rather than duplicating it.
 
 This plugin has **three distinct parts**:
 - **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
@@ -18,10 +20,19 @@ This plugin has **three distinct parts**:
   supply chain, OWASP, STRIDE. The gate is diff-scoped and deliberately does not fire it; you
   run it before a release, after an incident, or on a schedule. Nothing enforces that it ran.
 
-gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
-*blocking* gate: its `/ship` is fully automated and never refuses to publish. This plugin
-adds the reviewers gstack has no equivalent for and makes them **block `/ship` until every
-fired reviewer returns `VERDICT: PASS`.** It touches zero gstack files.
+The gate fires only the reviewers a diff's surfaces call for and **blocks the push until
+every fired reviewer returns `VERDICT: PASS`.** That refusal is the part most tooling leaves
+out: automation that reviews and then publishes regardless is not a gate.
+
+forgeward was built alongside gstack — which covers think → plan → build → review → test →
+ship, and whose `/ship` is fully automated and never refuses to publish — and it still
+integrates there, blocking `/ship` exactly as it blocks an ungated push, touching zero
+gstack files. It no longer *depends* on it. Each of the three axes forgeward once deferred
+to gstack is now covered here on any machine: dependency CVEs (`supply-chain-reviewer`
+detects `/cso` and audits them itself when it is absent), code quality (five ported
+reviewers, 0.17.0), and the whole-repo audit (`/forgeward:audit`, 0.19.0). The gate's own
+Step 1c states the consequence in one line — *no axis on this gate is owned by a tool that
+might not be installed.*
 
 ## What it adds (and what it deliberately doesn't)
 
