@@ -5,8 +5,9 @@
 # this machine? Exit 0 and print the directory when it is, exit 1 and print nothing
 # when it is not.
 #
-# WHY THIS EXISTS. forgeward is scoped as a delta against gstack, so a reviewer can
-# defer an axis to a gstack skill BY NAME. Those deferrals shipped unconditional.
+# WHY THIS EXISTS - written 2026-08-05, and the situation it describes is now HISTORY.
+# forgeward was scoped as a delta against gstack, so a reviewer could defer an axis to a
+# gstack skill BY NAME. Those deferrals shipped unconditional.
 # `supply-chain-reviewer` was told, verbatim: "gstack's `/cso` Phase 3 already covers
 # dependency CVEs, install-scripts, and lockfile integrity - do NOT re-do those." On a
 # machine with no gstack, nobody checked them and the reviewer returned PASS clean.
@@ -15,11 +16,15 @@
 # front of it. The difference is that the 2026-07-13 case assumed the user would RUN
 # `/cso`; this one assumed they would HAVE it.
 #
-# FAILS CLOSED, ALWAYS. Every uncertain answer is "not installed". A false negative
-# costs the caller duplicated work - it audits an axis `/cso` would also have audited,
-# and the user sees two opinions instead of one. A false positive is a silently skipped
-# check, which is the bug this script exists to prevent. The asymmetry is the whole
-# design: nothing here should be relaxed to make detection more eager.
+# FAILS CLOSED, ALWAYS. Every uncertain answer is "not installed". The asymmetry is the
+# whole design and nothing here should be relaxed to make detection more eager - but READ
+# WHOSE COST IT IS NOW, because the caller changed under it. While the deferral existed, a
+# false negative cost duplicated work and a false positive was a silently skipped check,
+# which is the bug this script was written to prevent. As of 0.23.0 no reviewer defers, so
+# nothing calls this for `cso` at all. The one live consumer is
+# forgeward-detect-environment.sh's `gstack_ship`, where a false negative costs a MISSED
+# /ship handoff and a false positive costs the gate announcing a handoff it never
+# performed. Different consequence, same direction: closed is still the safe answer.
 #
 # WHAT COUNTS AS INSTALLED. A directory whose basename is the skill name, or that name
 # behind a prefix (`gstack-cso`), which contains a `SKILL.md` whose frontmatter carries
@@ -170,10 +175,12 @@ top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # `LC_ALL=C` pin, which is neither version order nor install order: the real cache enumerates
 # `0.1.0 0.10.0 0.13.0 0.16.0 0.5.0 0.9.1 0.9.2 0.9.3`, so the OLDEST directory is tried
 # first and the installed 0.16.0 is fourth. The UPGRADE case is the proven one and needs no
-# uninstall to reach — gstack ships `/cso`, a later version drops it, the old version dir
-# survives the upgrade, and `supply-chain-reviewer` goes on deferring dependency CVEs to a
-# skill the live gstack no longer has, which is the exact hole WHY THIS EXISTS was written to
-# close. A platform sweep is not a mitigation: one ran on 2026-08-26 and left all 7 stale
+# uninstall to reach — gstack ships a skill, a later version drops it, and the old version
+# dir survives the upgrade, so this answers "installed" for a skill the live gstack no longer
+# has. Until 0.23.0 that re-opened the CVE hole WHY THIS EXISTS records; it cannot any more,
+# because no reviewer defers. What it still does is make `gstack_ship` read present when
+# `/ship` is gone — the gate then reports a handoff it never performed, which is the same bug
+# shape one axis over. A platform sweep is not a mitigation: one ran on 2026-08-26 and left all 7 stale
 # forgeward versions in place. This resolves "a copy is on disk", never "the active version
 # is this". `installed_plugins.json` is the authoritative source and is deliberately not read
 # here; filed in TODOS.md rather than fixed, because reading it changes what the gate defers

@@ -171,10 +171,10 @@ forgeward's reviewer table began as a **delta against gstack** — its third col
 what each reviewer adds that gstack does not. Scoping by delta means every deferral
 becomes a hole the moment the other side is absent, and this repo has now closed all
 three of them: `supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not
-exist (it detects and self-adjusts); `quality` deferred to `/review` (five ported
-reviewers own it outright as of 0.17.0); and `deep-audit` deferred to `/cso` (0.19.0
-ships `/forgeward:audit`). **No axis on this gate is owned by a tool that might not be
-installed.**
+exist (it owns them outright as of 0.23.0, with no probe left); `quality` deferred to
+`/review` (five ported reviewers own it outright as of 0.17.0); and `deep-audit` deferred
+to `/cso` (0.19.0 ships `/forgeward:audit`). **No axis on this gate is owned by a tool
+that might not be installed.**
 
 Run the probe anyway — Step 1a needs its `seo_posture`, Step 3's marker validates its
 full JSON shape, and Step 3's handoff needs `gstack_ship`:

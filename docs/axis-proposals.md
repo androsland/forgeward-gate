@@ -387,6 +387,12 @@ other side is absent.** Shipped today:
   — do NOT re-do those."* No gstack → **nobody checks dependency CVEs**, and the reviewer
   returns PASS. Most severe of these: CVE scanning is table stakes and the user has been
   told the axis is handled.
+  *(Resolved in two stages, and the distinction is the point. 2026-08-05 made it
+  CONDITIONAL — the reviewer probed for `/cso` and audited CVEs itself when it was absent,
+  which closed the hole on a standalone machine but left the axis keyed on what happened
+  to be installed. 0.23.0 removed the probe: the reviewer owns dependency CVEs,
+  install-time scripts and lockfile integrity on every machine and defers to nothing.
+  Listed here only because this section is the historical finding list.)*
 - **README line 45** claims code quality is covered by `/review`. It is not.
   *(Resolved in 0.8.0. The line is 57, not 45 — the number here was wrong and TODOS.md
   inherited the error. It now qualifies the claim with "when gstack is installed" and
@@ -424,7 +430,7 @@ Nothing invokes gstack; nothing fails without it. Those exclusions stay inert st
 | Tier | What | Standalone? |
 | --- | --- | --- |
 | Core | 6 reviewers, conditional firing, posture classification, workspace guard, marker, pre-push enforcement | Unconditional — zero gstack dependency |
-| Falls back | dependency CVEs / install scripts / lockfile integrity — deferred to `/cso` when present, done by `supply-chain-reviewer` when not | Yes — the point of B |
+| Falls back | dependency CVEs / install scripts / lockfile integrity — deferred to `/cso` when present, done by `supply-chain-reviewer` when not | Yes — the point of B ← *superseded 2026-08-27 (0.23.0): the probe was removed and this row is now unconditional Core — the reviewer owns all five classes on every machine* |
 | Needs a partner tool | code quality; deep whole-repo audit | **No** — forgeward does not own these ← *empty since 0.19.0, see below* |
 | Needs gstack specifically | the one-motion `/ship` handoff on all-PASS | No — push and PR by hand |
 

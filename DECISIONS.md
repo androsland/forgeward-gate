@@ -5,6 +5,75 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — the `/cso` probe is removed; `supply-chain-reviewer` owns all five classes unconditionally
+
+**Date:** 2026-08-27 · **Version:** 0.23.0
+
+**The decision, in one line.** `agents/supply-chain-reviewer.md` no longer runs
+`forgeward-detect-gstack-skill.sh cso`, and no longer has a `DEFERRED` and a `FULL` mode.
+It audits typosquatting/hallucination, licensing, dependency CVEs, install-time scripts
+and lockfile integrity on every machine, with nothing conditional.
+
+**It reverses the 2026-08-05 entry below** — `RESOLVED — supply-chain-reviewer deferred
+dependency CVEs to a /cso that need not exist` — which made the deferral conditional. That
+is not a repudiation of it. It took an unconditional hole and closed it on every machine
+that lacked gstack, which was the entire installed base the plugin could not see. What it
+could not do was stop the axis being *conditional*, and 0.19.0 is what made conditional
+pointless.
+
+**What changed underneath it.** 0.19.0 ported `/cso`'s audit phases into
+`/forgeward:audit`, and Step 1c stopped deferring any axis to a tool that might not be
+installed. From that point the probe branched on a fact that decided nothing: forgeward
+covers dependency CVEs whether or not gstack is installed, so `/cso` being present changed
+only *which tool did the work*, never whether the work was in scope. A branch that cannot
+change the outcome is not a graceful deferral; it is a second code path to keep correct.
+
+**And it was keyed on the wrong fact from the start.** The reviewer's own prompt said so —
+*"Exit 0 means the tool is present, never the axis was audited"* — and then branched on
+presence anyway, mitigating with an instruction to name `/cso` in the report whenever a
+dependency looked risky. That mitigation is the tell: a check whose answer has to be
+caveated in prose every time it is consulted is not answering the question that was asked.
+`skills/gate/SKILL.md` reached the same conclusion for `deep-audit` at 0.19.0 and keyed its
+line on **"not run by this gate"** rather than on installation. This brings the last
+reviewer into line with that.
+
+**The cost, accepted rather than argued away.** On a machine where the user separately runs
+`/cso`, its Phase 3 and this reviewer's step 3 now overlap. Duplicated work on some machines
+is the correct price for an axis audited on all of them. The fail-closed detector made the
+same trade one level down for as long as the deferral existed — a false negative bought a
+duplicated audit, a false positive a skipped check. It no longer does, and saying otherwise
+would be describing a caller that went away: with the `cso` probe gone the only live consumer
+is `gstack_ship`, where failing closed costs a **missed `/ship` handoff** and failing open
+costs the gate reporting a handoff it never performed. Both script headers were re-keyed on
+that in this same commit, alongside `test/gate-test.sh`'s D-block.
+
+**What did NOT change, and must not later be removed as dead.**
+`scripts/forgeward-detect-gstack-skill.sh` stays, and so do all **seventeen** of its
+assertions — `test/gate-test.sh` D1–D12, in which D8 alone carries five (D8b–D8f), and D8b
+is the one pinning the layout gstack actually installs. Count the assertions, not the
+labels: "twelve" is how a later cleanup deletes five of them believing it kept the set. `forgeward-detect-environment.sh` still calls it and still
+emits `gstack_cso`, which `forgeward-write-marker.sh`'s `_env_ok` regex **requires** —
+dropping the field fails every marker validation. `gstack_ship` comes from the same script,
+and Step 3's handoff reads it. One caller went away, not the mechanism.
+
+**The remaining variable is the scanner, so that is what the mandatory first line names
+now.** `SUPPLY-CHAIN MODE:` recorded whether `/cso` was installed, because that decided the
+scope. `SUPPLY-CHAIN SCOPE:` records the five fixed classes plus which CVE scanner was
+actually available (`trivy`, `osv-scanner`, `npm audit`, or none). The line's purpose is
+unchanged and is why it was re-keyed rather than deleted: the same diff can still be
+reviewed at different *depth* on two machines, and without the line a PASS is unreadable
+after the fact.
+
+**Non-goals, so the change is not read as more than it is.** This does not make the
+reviewer whole-repo — it stays diff-scoped, and a CVE reachable through a dependency the
+diff does not touch is still not its finding; `/forgeward:audit` is the whole-repo pass and
+nothing verifies that it ran. It does not give the reviewer a scanner: on a machine with no
+`trivy` and no `osv-scanner` the CVE class is checked by hand or declared uncovered, which
+is exactly what it was in FULL mode before. And it removes a branch, not a disclosure —
+every "an unavailable check is a stated gap, never a clean result" instruction in the file
+survives intact, because the failure this whole family of entries records is a silent pass,
+not a conditional one.
+
 ## DECISION — forgeward takes the deep-audit axis too, as a SKILL rather than a reviewer
 
 **Date:** 2026-08-26 · **Version:** 0.19.0
@@ -1763,7 +1832,10 @@ the suite instead of quietly outdating this paragraph.
 
 ## RESOLVED — `supply-chain-reviewer` deferred dependency CVEs to a `/cso` that need not exist
 
-**Date:** 2026-08-05
+**Date:** 2026-08-05 · **Superseded 2026-08-27 (0.23.0)** — the conditional deferral this
+entry decided on was removed entirely; the reviewer now owns the axis on every machine and
+runs no probe. See the entry of that date at the top of this file. The diagnosis below
+still stands and is why the detector exists; only the remedy was replaced.
 
 **Symptom.** On a machine with no gstack installed, `supply-chain-reviewer` returned
 `SUPPLY-CHAIN VERDICT: PASS` on a diff adding dependencies without anything having checked those

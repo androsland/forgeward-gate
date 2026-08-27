@@ -29,8 +29,8 @@ ship, and whose `/ship` is fully automated and never refuses to publish — and 
 integrates there, blocking `/ship` exactly as it blocks an ungated push, touching zero
 gstack files. It no longer *depends* on it. Each of the three axes forgeward once deferred
 to gstack is now covered here on any machine: dependency CVEs (`supply-chain-reviewer`
-detects `/cso` and audits them itself when it is absent), code quality (five ported
-reviewers, 0.17.0), and the whole-repo audit (`/forgeward:audit`, 0.19.0). The gate's own
+owns them outright as of 0.23.0), code quality (five ported reviewers, 0.17.0), and the
+whole-repo audit (`/forgeward:audit`, 0.19.0). The gate's own
 Step 1c states the consequence in one line — *no axis on this gate is owned by a tool that
 might not be installed.*
 
@@ -44,7 +44,7 @@ Eleven read-only reviewers, each firing **only** when the diff touches its surfa
 | `accessibility-reviewer` | UI | gstack's design reviews are taste/AI-slop, not WCAG 2.1 AA conformance |
 | `ai-output-reviewer` | an LLM / paid-AI call | gstack covers prompt-injection for *its* browser, not *your* LLM output reliability/cost |
 | `seo-reviewer` | public, indexable pages | no SEO/crawlability/metadata coverage anywhere in gstack |
-| `supply-chain-reviewer` | a dependency manifest | typosquatted/hallucinated packages and copyleft-license conflicts, which gstack's `/cso` does not cover — **plus** CVEs/install-scripts/lockfiles itself when `/cso` is not installed |
+| `supply-chain-reviewer` | a dependency manifest | typosquatted/hallucinated packages and copyleft-license conflicts, which gstack's `/cso` does not cover — **plus** CVEs/install-scripts/lockfiles, which it now owns unconditionally rather than deferring |
 | `security-reviewer` | executable code (queries, handlers, auth, file/shell/network I/O, `.sql`) | gstack's `/cso` covers this axis but is **opt-in and manual** — see below |
 | `maintainability-reviewer` | any code (always-on) | ported from gstack's Review Army — see below |
 | `testing-reviewer` | any code or test (always-on) | ported from gstack's Review Army — see below |
@@ -91,17 +91,21 @@ block — is monitored on the same instrument. Neither glob is a claim of comple
 ported artefact placed outside both is unchecked with nobody told, which is stated as a
 non-goal in the script's header.
 
-**Deferrals to gstack are conditional, not assumed.** The table's third column is a *delta* — it
-says what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a
-hole when the other side is absent, and one of them shipped that way: `supply-chain-reviewer` was
-told unconditionally that `/cso` Phase 3 covers dependency CVEs, so on a machine with no gstack
-nobody checked them and the reviewer returned PASS clean. It now detects `/cso`
-(`scripts/forgeward-detect-gstack-skill.sh`) and audits CVEs, install scripts and lockfile
-integrity itself when it is not there, announcing which mode it ran in. Detection **fails closed**:
-anything ambiguous is treated as "not installed", so the cost of being wrong is a duplicated check
-rather than a skipped one. It sees *presence*, not diligence — it cannot tell gstack-installed-and-
-never-run from gstack-actively-covering-the-axis, and it cannot see that you cover the axis with
-Dependabot or a CI job instead.
+**No reviewer here defers to gstack any more.** The table's third column is a *delta* — it says
+what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a hole
+when the other side is absent, and one of them shipped that way: `supply-chain-reviewer` was told
+unconditionally that `/cso` Phase 3 covers dependency CVEs, so on a machine with no gstack nobody
+checked them and the reviewer returned PASS clean. The 2026-08-05 fix made the deferral
+*conditional* — the reviewer probed for `/cso` and announced a `DEFERRED` or a `FULL` mode.
+**0.23.0 removes the probe entirely**, and the reviewer owns CVEs, install scripts and lockfile
+integrity everywhere. The intermediate step was right for its moment and stopped being right at
+0.19.0: once `/forgeward:audit` closed the last axis, whether `/cso` is installed decided only
+which tool did the work, never whether the work was in scope. It was also keyed on the wrong fact
+throughout — detection sees *presence*, never diligence. It cannot tell
+gstack-installed-and-never-run from gstack-actively-covering-the-axis, so "installed" never meant
+"audited", and it cannot see that you cover the axis with Dependabot or a CI job instead. The
+detector (`scripts/forgeward-detect-gstack-skill.sh`) is still here and still **fails closed**;
+the `/ship` handoff reads it through the environment probe. No reviewer does.
 
 **Code quality used to be on this list and no longer is.** Until 0.17.0 the answer was
 "forgeward does not review code quality" — and the deferral turned out to run both ways: in one
@@ -560,9 +564,9 @@ SAST engine's recall. (One narrow exception: when the diff *redefines* an existi
 reads the prior definition to establish a baseline — but the finding must still land on a changed
 line, and the baseline comes from source/migration history, which is a proxy for the deployed
 definition rather than proof of it.) Run `/forgeward:audit` for a deep whole-repo audit — it ships
-here as of 0.19.0 and needs no gstack, and `supply-chain-reviewer` picks up the CVE axis itself
-when gstack's `/cso` is absent. Note what that does and does not buy: the audit is guaranteed
-present on every machine, and **nothing verifies it was run** — no marker, no state, no check. It
+here as of 0.19.0 and needs no gstack, and `supply-chain-reviewer` owns the CVE axis itself on
+every machine. Note what that does and does not buy: the audit is guaranteed present
+on every machine, and **nothing verifies it was run** — no marker, no state, no check. It
 is a skill you invoke, not a gate you pass. The gate's final `/ship` handoff is established standalone as of
 0.8.0: with no gstack it writes the marker and hands back for a manual push instead of reporting
 a handoff that did not happen. Treat the `ci-gate` CI scanners as your unskippable floor. A gate

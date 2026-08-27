@@ -35,12 +35,14 @@ export LC_ALL=C
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 detect="$here/forgeward-detect-gstack-skill.sh"
 
-# The gstack skills forgeward's own text names. `cso` drives supply-chain-reviewer's
-# conditional deferral and `ship` drives the Step 3 handoff. `review` no longer drives
-# anything: 0.17.0 ported the five quality checklists, so forgeward owns that axis outright
-# and nothing reads `gstack_review` any more.
+# The gstack skills forgeward's own text names. Only `ship` still drives anything: the
+# Step 3 handoff reads it. `review` stopped at 0.17.0, when the five ported quality
+# checklists gave forgeward that axis outright, and `cso` stopped at 0.23.0, when
+# `agents/supply-chain-reviewer.md` dropped its conditional deferral and took dependency
+# CVEs, install-time scripts and lockfile integrity on every machine. Two of the three
+# fields now have no consumer.
 #
-# It is still probed, and deliberately. The pass marker embeds this probe's full JSON line
+# They are still probed, and deliberately. The pass marker embeds this probe's full JSON line
 # and `test/gate-test.sh` validates the whole shape, so dropping a field is a change to the
 # marker format, not a tidy-up — see `skills/gate/SKILL.md` under Step 3. Keeping a field
 # whose consumer went away is the cheaper side of that trade; removing it is a separate,
