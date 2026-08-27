@@ -299,6 +299,20 @@ commit that was fixing it — a line number cannot survive its own fix.
   someone re-ports it. `scripts/forgeward-rubric-drift.sh` detects that gstack moved; it
   cannot make anyone act, and it is blind on a machine with no gstack — which is exactly
   the machine the port exists to serve, so its silence there is not a clean bill.
+- **`supply-chain-reviewer` owns dependency CVEs, install-time scripts and lockfile
+  integrity outright (0.23.0). Never re-key any of the five classes on whether gstack's
+  `/cso` is installed, and never restore a `DEFERRED`/`FULL` mode.** Detection sees
+  *presence*, never diligence — a probe can tell that `/cso` is installed and can never
+  tell that anyone ran it — so keying an axis on it reports coverage nothing checked.
+  Same failure the `quality` bullet above records, one axis over. **The mechanism stays
+  even though this caller went:** `scripts/forgeward-detect-gstack-skill.sh` is pinned by
+  D1–D12, `forgeward-detect-environment.sh` still emits `gstack_cso`, and
+  `forgeward-write-marker.sh`'s `_env_ok` regex **requires** that field — dropping it
+  fails every marker validation. Do not tidy it away as dead. **What this does not buy:**
+  the reviewer is still diff-scoped and still has no scanner of its own, so a machine with
+  no `trivy` and no `osv-scanner` checks CVEs by hand or states the gap — unconditional
+  ownership is not a coverage claim, and the duplicated work on a machine that also runs
+  `/cso` is an accepted cost, not a bug to fix by restoring the branch.
 - **No AI-attribution / co-author-trailer check in the gate.** Considered and rejected at
   0.10.0: `/gate` handing off to `/ship` is structurally a perfect chokepoint, but forgeward
   is a plugin other people install and plenty of them legitimately want that trailer. If it

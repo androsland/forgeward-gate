@@ -2153,13 +2153,18 @@ case "$hooks_ref" in
   *)            ok "manifest does not re-reference the auto-loaded hooks/hooks.json (no duplicate-load)" ;;
 esac
 
-# D1-D12: gstack skill detection, which decides whether supply-chain-reviewer audits
-# dependency CVEs or defers them to `/cso`. The deferral used to be unconditional, so on
-# a machine without gstack nobody checked CVEs and the reviewer returned PASS clean.
+# D1-D12: gstack skill detection. It was built because supply-chain-reviewer deferred
+# dependency CVEs to `/cso` unconditionally, so on a machine without gstack nobody checked
+# CVEs and the reviewer returned PASS clean; the reviewer then probed and self-adjusted.
+# 0.23.0 removed that probe — the reviewer owns the axis everywhere and branches on
+# nothing. The script and these assertions stay because the /ship handoff still rides on
+# it: `forgeward-detect-environment.sh` derives `gstack_ship` from this script, and Step 3
+# hands off only when that reads `present`. A false positive there is the gate reporting a
+# handoff it never performed, which is the same bug shape one axis over.
 #
-# EVERY assertion here pins a DIRECTION, not just a result. A false negative costs the
-# reviewer duplicated work; a false positive is a silently skipped check — the original
-# bug. So the interesting cases below are the ones that must come back "not installed",
+# EVERY assertion here pins a DIRECTION, not just a result. A false negative costs a
+# duplicated check or a redundant disclosure; a false positive is a silently skipped step
+# — the original bug. So the interesting cases below are the ones that must come back "not installed",
 # and a future edit that makes detection more eager has to turn one of them red.
 #
 # CLAUDE_CONFIG_DIR is set on every call. Without it these would read the developer's
@@ -2211,10 +2216,10 @@ D2="$TMP/det2"; mkskill "$D2/skills/gstack-cso" "$MARKER"
 D3="$TMP/det3"; mkdir -p "$D3/skills"
 [ "$(det "$D3" cso)" = 1 ] \
   && ok "detect: empty skills dir is NOT installed (the standalone case)" \
-  || nok "detect D3" "expected 1 — a false positive here re-opens the CVE hole"
+  || nok "detect D3" "expected 1 — a false positive reads a standalone machine as a gstack one"
 
 # D4: a skill genuinely named `cso` that is not gstack's. The name alone must not be
-# enough, or an unrelated skill silently switches the reviewer into DEFERRED mode.
+# enough, or an unrelated skill is read as gstack's and the gate acts on it.
 D4="$TMP/det4"; mkskill "$D4/skills/cso" 'description: Some other vendor CSO helper.'
 [ "$(det "$D4" cso)" = 1 ] \
   && ok "detect: same-named skill WITHOUT the marker is NOT installed (name alone is not enough)" \
@@ -2343,17 +2348,24 @@ mkskill "$R/.claude/skills/cso" "$MARKER"
 rm -rf "$R/.claude"
 
 # D12: a malformed argument is a usage error (2), not a silent "installed". Any non-zero
-# is FULL mode for the caller, so this direction is safe either way — asserted so the
+# reads as "not installed" to the caller, so this direction is safe either way — asserted so the
 # distinction between "absent" and "you called it wrong" does not quietly disappear.
 [ "$(det "$D1" 'cso/../../etc')" = 2 ] \
   && ok "detect: a path-shaped argument is a usage error, never a match" \
   || nok "detect D12" "expected 2"
 
 # --- E1..E11: environment disclosure (Option B standalone posture) ---------------
-# forgeward is scoped as a DELTA against gstack, so what a PASS covers depends on what
-# else is installed. 0.8.0 makes that visible instead of leaving it to a README table:
-# the gate DISCLOSES an unowned axis and gates anyway. These pin the probe that decision
-# reads from.
+# forgeward WAS scoped as a delta against gstack, so what a PASS covered depended on what
+# else was installed. 0.8.0 made that visible instead of leaving it to a README table: the
+# gate DISCLOSED an unowned axis and gated anyway. That era is over — 0.17.0 took `quality`,
+# 0.19.0 took `deep-audit`, and 0.23.0 took dependency CVEs, install scripts and lockfile
+# integrity, so no axis on this gate is owned by a tool that might not be installed.
+#
+# The probe outlives the disclosure it was written for, and these assertions are why it can
+# be trusted to. Three things still read it: Step 1a takes `seo_posture`, Step 3's handoff
+# takes `gstack_ship`, and forgeward-write-marker.sh's `_env_ok` regex validates the whole
+# JSON shape including the two fields nothing else reads. Do not read the E-block as
+# pinning a live deferral; read it as pinning a probe whose consumers moved.
 #
 # THE VACUITY TRAP, and it is the reason E2 exists. forgeward-detect-environment.sh is
 # NOT a PATH lookup, so the suite's PATH-shim helpers do nothing to it. It resolves
@@ -2365,9 +2377,11 @@ rm -rf "$R/.claude"
 # gstack is very likely installed on the machine running this suite (it is on the
 # author's), so an assertion that forgets root 1 or 3 finds the REAL gstack, and one that
 # forgets root 2 finds whatever the cwd repo ships. Every "absent" assertion below would
-# then pass while proving nothing. E2 is the positive control that makes that detectable:
-# it must come back "present" from the same harness, so a change that hard-wires the
-# probe to "absent" turns E2 red instead of quietly greening E1.
+# then pass while proving nothing. E2 and E2b are the positive controls that make that
+# detectable: each must come back "present" from the same harness, so a change that
+# hard-wires the probe to "absent" turns one of them red instead of quietly greening E1.
+# Two controls, not one, because they cover different arms — E2 the `review` arm, E2b the
+# `cso` arm — and a control for one proves nothing about the other.
 ENV_SH="$PLUGIN/scripts/forgeward-detect-environment.sh"
 ER="$TMP/envrepo"; mkrepo "$ER"          # a repo with NO .claude/skills of its own
 ( cd "$ER" && echo x > x.txt && git add -A && git commit -qm init ) >/dev/null 2>&1
@@ -2397,6 +2411,23 @@ E2J="$(envprobe "$E2C")"
 [ "$(jfield "$E2J" gstack_review)" = present ] && [ "$(jfield "$E2J" gstack_ship)" = absent ] \
   && ok "env: a planted /review reads PRESENT while /ship stays absent (E1 is not vacuous)" \
   || nok "env E2" "got '$E2J'"
+
+# E2b: THE POSITIVE CONTROL FOR `gstack_cso`, and it is E2's twin rather than a duplicate of
+# it. E2 controls the `review` arm; nothing controlled the `cso` arm at all, so E1's single
+# "absent" assertion was the whole of its coverage. That was survivable while a reviewer
+# BRANCHED on the field — a probe stuck on "absent" would have shown up as every machine
+# reporting the same mode. 0.23.0 removed that consumer: `agents/supply-chain-reviewer.md`
+# owns dependency CVEs, install scripts and lockfile integrity on every machine, so nothing
+# reads `gstack_cso` to make a decision any more. The field survives because
+# forgeward-write-marker.sh's `_env_ok` regex REQUIRES it, and a required-but-unread field
+# is exactly the shape that rots silently. This is the assertion that would go red.
+E2bC="$TMP/envcfg-cso"; mkdir -p "$E2bC/skills/cso"
+printf -- '---\nname: cso\nversion: 1.0.0\n%s\n---\n\nBody.\n' "$MARKER" > "$E2bC/skills/cso/SKILL.md"
+E2bJ="$(envprobe "$E2bC")"
+[ "$(jfield "$E2bJ" gstack_cso)" = present ] && [ "$(jfield "$E2bJ" gstack_ship)" = absent ] \
+  && [ "$(jfield "$E2bJ" gstack_review)" = absent ] \
+  && ok "env: a planted /cso reads PRESENT while ship and review stay absent (E1's cso arm is not vacuous)" \
+  || nok "env E2b" "got '$E2bJ'"
 
 # E3: no config file at all -> absent, empty list. The common case, and it must disclose.
 rmcfg
@@ -2479,13 +2510,25 @@ E9J="$(envprobe "$EMPTY_CFG")"
 # E10: the marker carries the environment, and it round-trips through the SAME dotted-path
 # read the hooks use. This is provenance — nothing enforces on it — so the assertion is
 # that it is readable, not that it gates anything.
+#
+# It names `gstack_cso` explicitly, and that is the field with no consumer left as of
+# 0.23.0. What the key check buys is a SECOND CODE PATH, and only that: E1 and E2b read
+# the probe's own stdout, while this reads the copy forgeward-write-marker.sh interpolated
+# and `_env_ok` validated. A marker writer that stops embedding the field correctly is
+# invisible to E1 and E2b.
+#
+# It does NOT cover the probe, and the comment here claimed it did until the reviewer
+# mutation-tested the claim instead of reading it. Drop the field from the probe's printf
+# and E1 goes red on its own, because `jfield` prints nothing for a missing key and the
+# empty string is not `absent`. The novel coverage in this commit is E2b's — a probe
+# hard-wired to a stale `absent` passes E1 and this check both, and fails only there.
 EM="$TMP/envmarker"; mkrepo "$EM"
 ( cd "$EM" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
    && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
 EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EMJ" ] \
-  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
   && ok "env: the pass marker is schema 4 and carries a readable environment object" \
   || nok "env E10" "marker '$EMJ'"
 

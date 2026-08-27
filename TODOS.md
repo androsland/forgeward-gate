@@ -108,7 +108,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
-| 14 | **PARTLY DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`; 2026-08-27) — only `supply-chain-reviewer`'s `/cso` probe is still open, and it has its own PR filed below.** **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
+| 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27) — every coupling in the entry below is closed. The other half of this goal is NOT done and the row must not be struck for it: gate-run logging is still open at P3, and the `/forgeward:audit` entry says it is blocked on the same decision. Decide those together, or split this goal.** **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
 | 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has five open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, 0.17.0), PR #45 (execution order), PR #47 (0.18.0's cache-glob fix) and the 0.19.0 audit port each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged, #46's inside the three Quality-axis entries it struck, and #47's and 0.19.0's inside the entries they struck in place. `## Completed`'s newest entry is 0.16.0, which is now **three** shipped versions behind. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 | 17 | **✅ DONE (0.20.0, 2026-08-26).** **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13/14 stay unpinned and the script is blind with no gstack checkout. Shipped with R14/R14b as pre-fix controls and R14c/R14d as wrong-fix controls; the entry's twelve-site snapshot was wrong in both directions, as it said it would be. | Deep-audit axis ×1 (struck) | code |
@@ -570,6 +570,21 @@ did *not* close.
   there**, so the two cover opposite directions and neither is sufficient alone. E17 also
   carries an emptiness floor, because an assertion built on a derived value that can be empty
   otherwise asserts a property of nothing.
+- **E10's oracle is key PRESENCE, not value agreement with the same-run probe.** It asserts
+  `"gstack_cso" in d["environment"]` on the marker JSON; it never checks that the value the
+  marker carries is the one the probe emitted on that same invocation. That is not a live
+  gap: `forgeward-write-marker.sh` regex-validates the probe's whole line against `_env_ok`
+  and copies it verbatim, so there is no per-field parse that could corrupt one value while
+  leaving the key present and the line still regex-valid. It becomes a real gap the moment
+  that file moves from raw-copy to per-field assembly and re-serialization — and nothing
+  else covers that direction: E1 and E2b read the probe's stdout and bypass the marker
+  entirely, E10 checks membership only, and the D-block pins
+  `forgeward-detect-gstack-skill.sh` rather than the writer. The fix, **if and only if that
+  refactor happens**, is a same-run cross-check asserting the marker's `gstack_cso` equals
+  the probe's own `gstack_cso` for that invocation. Deliberately not written now: an
+  assertion authored against a code path that does not exist pins the current
+  implementation shape instead of the property, which is the cost the E17 entry above
+  already paid once. (testing review, 2026-08-27) **Priority:** P4
 - **The config check is TOCTOU by construction, and that is accepted, not overlooked.**
   The `[ -L ]` refusal and the `[ -f ]`/`[ -r ]` arm beside it run in
   `forgeward-detect-environment.sh`'s config-reading block, but `wc -c` and
@@ -930,19 +945,35 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   as the frame it is scoped against. Both manifests and the README lead were rewritten to
   that. The evidence the decision rested on is in the gate's own Step 1c, not in a
   judgement call: *no axis on this gate is owned by a tool that might not be installed.*
-  One coupling from the list above is still live: `supply-chain-reviewer`'s `/cso` probe,
-  which gets its own PR under the executable-behaviour rule.
+  **CLOSED at 0.23.0 — `supply-chain-reviewer`'s `/cso` probe is gone.** The reviewer ran
+  `forgeward-detect-gstack-skill.sh cso` and declared a `DEFERRED` or a `FULL` mode; it now
+  owns typosquatting, licensing, dependency CVEs, install-time scripts and lockfile
+  integrity on every machine and branches on nothing. Filed as the *good* pattern while the
+  axis belonged to gstack, and that reading was right until 0.19.0 — after which the probe
+  decided only which tool did work forgeward covered either way. The accepted cost is
+  duplicated effort on a machine where someone separately runs `/cso`; the alternative was
+  keying an axis on presence, and presence was never the question a probe could answer.
+  `scripts/forgeward-detect-gstack-skill.sh` and the `gstack_cso` field **stay** — the
+  marker's `_env_ok` regex requires the field and D1–D12 pin the script, and the `/ship`
+  handoff still reads `gstack_ship` from it. Its own PR under the executable-behaviour rule.
   `agents/security-reviewer.md:3,14` was closed at 0.22.0 — the reviewer now names the
   *shape* it guards against (a pipeline that reviews and then publishes regardless) and
   cites gstack's `/ship` as the instance forgeward was built beside, rather than as the
   definition of the axis. It went in its own PR because the frontmatter `description` is
-  what routes the subagent, which makes it executable behaviour and not prose. The `UserPromptExpansion` matcher gap is unchanged
-  and is not a positioning question; it is an enforcement gap on a standalone install.
+  what routes the subagent, which makes it executable behaviour and not prose.
+  The `UserPromptExpansion` matcher gap is unchanged and is not a positioning question;
+  it is an enforcement gap on a standalone install.
   **Deliberately NOT changed:** the README reviewer table's third column, *"Why it's here
   (not redundant with gstack)"*, and its eleven rows. That column is provenance and is
-  already caveated in place two sections below it ("Deferrals to gstack are conditional, not
-  assumed"); rewriting it would delete accurate history to serve a tagline. If it is ever
-  revisited, revisit it as history, not as identity. **Priority:** P3
+  already caveated in place two sections below it (the paragraph titled "No reviewer here
+  defers to gstack any more" as of 0.23.0, "Deferrals to gstack are conditional, not
+  assumed" before that); rewriting it would delete accurate history to serve a tagline. If
+  it is ever revisited, revisit it as history, not as identity. **The one exception, and it
+  is a correction rather than a rewrite:** 0.23.0 edited the `supply-chain-reviewer` row's
+  tail, which said the reviewer covers CVEs/install-scripts/lockfiles *"itself when `/cso`
+  is not installed"* — a statement of behaviour that stopped being true in the same commit.
+  A false clause is not provenance. The row still says what `/cso` does not cover, which is
+  what the column is for. **Priority:** P3
 
 - **✅ FIXED (0.18.0, 2026-08-26) — `forgeward-detect-gstack-skill.sh`'s plugin-cache glob
   was one directory too shallow, so a plugin-installed gstack had never been detected.**
