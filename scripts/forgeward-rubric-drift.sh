@@ -83,16 +83,15 @@ fi
 # — silence, exit 0 — so drift went unmonitored with nobody told. That is the false
 # all-clear the header refuses. Pinned by R13.
 #
-# TWO GLOB DEPTHS, and the second is not redundant. The sibling
-# scripts/forgeward-detect-gstack-skill.sh globs `plugins/cache/*/*/skills`; measured on
-# the author'"'"'s machine that matches NOTHING, because the installed layout carries a
-# version level — `cache/<marketplace>/<plugin>/<version>/skills`. Both are searched here
-# rather than copying the sibling'"'"'s depth, because copying a glob that matches nothing
-# is not following the precedent, it is inheriting the bug. THE SIBLING IS STILL WRONG:
-# fixing it moves gstack DETECTION, which drives the /cso deferral and the Step 3 /ship
-# handoff — a different blast radius from a drift advisory — so it is filed in TODOS.md
-# for its own change. Said here so the divergence reads as deliberate rather than as one
-# of these two scripts being stale.
+# TWO GLOB DEPTHS, and the second is the one that fires. The installed layout carries a
+# version level — `cache/<marketplace>/<plugin>/<version>/skills`. Enumerated on the
+# author's machine: 8 marketplaces, 8 plugins, 15 version directories, 14 holding a
+# `skills/`, and zero at the shallower `cache/<marketplace>/<plugin>/skills`. The shallow
+# depth is kept defensively rather than from evidence, and R13b is what stops it being
+# deleted as dead. The version level is constrained to `[0-9]*` for the reason
+# `scripts/forgeward-detect-gstack-skill.sh` gives at its own copy of this loop — a bare `*`
+# also matches `node_modules/skills`, which is detection getting more eager — and R13c pins
+# it. The two scripts must keep agreeing here; they diverged once and it cost ten versions.
 #
 # $HOME is guarded, never interpolated straight into a default. Under `set -u` an unset
 # HOME makes `${VAR:-$HOME/...}` abort with `HOME: unbound variable` and exit 1 —
@@ -111,7 +110,7 @@ fi
 # An explicit override wins OUTRIGHT and is never merged into the search order: the
 # suite drives synthetic roots through it, and a variable that merely joined the list
 # would make those assertions depend on whatever gstack happens to be installed on the
-# machine running them — the vacuity trap the drift block'"'"'s header describes.
+# machine running them — the vacuity trap the drift block's header describes.
 gs_roots=()
 if [ -n "${FORGEWARD_GSTACK_ROOT:-}" ]; then
   gs_roots+=("$FORGEWARD_GSTACK_ROOT")
@@ -122,7 +121,7 @@ else
   [ -n "$top" ] && gs_roots+=("$top/.claude/skills/gstack")
   if [ -n "$claude_dir" ]; then
     for cand in "$claude_dir"/plugins/cache/*/*/skills/gstack \
-                "$claude_dir"/plugins/cache/*/*/*/skills/gstack; do
+                "$claude_dir"/plugins/cache/*/*/[0-9]*/skills/gstack; do
       [ -d "$cand" ] && gs_roots+=("$cand")
     done
   fi

@@ -1,7 +1,7 @@
 # TODOS
 
 Deferred engineering work for forgeward-gate, grouped by component. Priority tags
-(P0 highest → P4) are advisory and no longer discriminate — 44 of the 67 open entries
+(P0 highest → P4) are advisory and no longer discriminate — 44 of the 68 open entries
 are P3 **as of 2026-08-26**, which `## Execution order` is the response to. That pair of
 numbers is a dated copy of the census in that section and nothing refreshes it here:
 step 6 of the loop re-measures the section, so re-read this sentence against it rather
@@ -14,9 +14,9 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Execution order
 
-Sixty-seven open entries **as of 2026-08-26, re-measured after the quality-axis port
-merged** — too many to sweep and too flat to prioritise: 44 P3, 11 P4, 4 P2 and 8
-carrying no priority at all, so the priority field carries no signal. Every count in
+Sixty-eight open entries **as of 2026-08-26, re-measured after 0.18.0's cache-glob fix**
+— too many to sweep and too flat to prioritise: 44 P3, 12 P4, 4 P2 and 8 carrying no
+priority at all, so the priority field carries no signal. Every count in
 this section is a dated measurement rather than a live fact, and step 6 is the only
 thing that refreshes any of them. The re-measurement is why this section reads
 differently from the commit that introduced it: the port struck two of the five
@@ -55,8 +55,13 @@ observable by running something, not when its entries "feel handled."
    ```
 
    The obvious version — a plain `grep -c` over everything above `## Completed` — returns
-   **47** against a census of 44, over by exactly the three struck entries sitting above
-   the archive. That is this file's own recurring failure arriving in the one instrument
+   **47** against a census of 44, over by three. There are **four** struck entries above
+   the archive as of 0.18.0 and only three of them are P3; the fourth is P2, so the
+   overcount and the struck count agree by coincidence at this priority and do not agree
+   at P2, where naive and census both read 4 because the struck one is the *only* P2 the
+   naive pass adds and the census subtracts. Do not read "over by the struck entries" as a
+   rule — it is a per-priority accident, and the earlier wording here said "exactly the
+   three struck entries" while there were three, which is how the accident hid. That is this file's own recurring failure arriving in the one instrument
    offered to a reader without `measure.mjs`: a count that classifies by an entry's lead
    and a closure that lives in its body. **Neither command produces the live-entry total
    (67) nor the P4/P2/no-priority split**; those come from `measure.mjs` or from counting
@@ -78,7 +83,7 @@ is keyed to HEAD, so an amend invalidates it.
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
 | 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4 | test |
-| 2 | **gstack detection sees a plugin-installed gstack.** `forgeward-detect-gstack-skill.sh`'s cache glob accounts for the version level, and the arm has a positive control built the way R13 builds one — it has none today, because gstack is skills-installed on the only machine that has tested it. Its own PR: it changes what the gate defers and where it hands off. | Quality axis ×1 | code |
+| 2 | **✅ DONE (0.18.0, 2026-08-26).** **gstack detection sees a plugin-installed gstack.** `forgeward-detect-gstack-skill.sh`'s cache glob accounts for the version level, and the arm has a positive control built the way R13 builds one — it has none today, because gstack is skills-installed on the only machine that has tested it. Its own PR: it changes what the gate defers and where it hands off. Shipped as its own PR, with D8b as the positive control and D8c pinning the direction; the two-level glob was kept on a disclosed absence of evidence, and the arm's remaining false POSITIVE — a cached but uninstalled plugin — is filed rather than fixed. | Quality axis ×1 (struck) | code |
 | 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, and the update path is written down. | Housekeeping ×2 (version drift, `item2-wip` tag) | docs |
 | 4 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
 | 5 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it; and the HEAD-pinned marker's re-review cost is either reduced or written down as the price of fixing a Low finding. | Gate — base detection ×5 | code |
@@ -147,8 +152,16 @@ of the five ported reviewers (`maintainability`, `performance`, `api-contract`,
 `live-test/LIVE-TEST.md` among the documents that "described behaviour the code did not
 have", so that clause is the weakest observer available for the goal that most needs a
 strong one — treat it as manual-only and unregressable by CI until goal 1 adds a
-machine-checkable half. It balances as written — 62 drawn across the sixteen goals plus
-the five below, 67 against 67 live. Two rounds of arithmetic errors are on the record
+machine-checkable half. It balanced as written at 62 drawn across the sixteen goals plus the five
+below, 67 against 67 live. **0.18.0 moved it and the movement is recorded rather than
+absorbed:** goal 2 is done and the one entry it drew is struck, so 61 are drawn from live
+entries; the same PR filed **two** new entries that no goal draws — the arm's residual
+false positive, and a performance measurement taken while reviewing it. 61 + 5 + 2 = 68,
+against 68 live. The total moved by one and every term in it moved, which is exactly the
+shape that hid the first two errors — and an intermediate draft of this very paragraph
+said `61 + 5 + 1 = 67` because the second entry had not been filed yet when it was
+written, so the arithmetic was correct against a tree that no longer existed by the time
+the branch was ready. Two rounds of arithmetic errors are on the record
 here rather than quietly corrected, because both are the same shape and neither
 announced itself: the first draft had what is now goal 13 — numbered 12 before the
 renumbering, so a reader checking `c392bcd` finds goal 13 is the archive goal — claiming
@@ -887,8 +900,21 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   lacks". The last one is a positioning decision, not a bug, and should be made
   deliberately rather than drifted into. **Priority:** P3
 
-- **`forgeward-detect-gstack-skill.sh`'s plugin-cache glob is one directory too shallow,
-  so a plugin-installed gstack has never been detected.** (0.17.0, 2026-08-26) It globs
+- **✅ FIXED (0.18.0, 2026-08-26) — `forgeward-detect-gstack-skill.sh`'s plugin-cache glob
+  was one directory too shallow, so a plugin-installed gstack had never been detected.**
+  The precondition this entry set — *"whether the two-level shape is a real layout
+  anywhere"* — was answered by enumeration rather than sample before the fix landed:
+  `find ~/.claude/plugins/cache -maxdepth 4 -name skills -type d` returns **14 versioned
+  paths across 8 marketplaces and zero two-level ones**. So the shallow depth has no
+  positive evidence behind it and is **kept anyway**, on the drift script's defensive
+  footing, with D8 rewritten to say so — a passing D8 is not proof that layout exists.
+  D8b is the positive control the entry asked for, built the way R13 builds one, and it was
+  verified to FAIL against the pre-fix script before being accepted: `git show HEAD:` of the
+  old script exits 1 on a versioned fixture where the new one exits 0. D8c pins the
+  direction, so a future widening that swallows a fourth level turns red. The drift script's
+  "THE SIBLING IS STILL WRONG" paragraph is retired in the same commit, per the rule that a
+  doc describing gate behaviour changes with the code.
+  *Original text follows, unedited apart from this lead.* It globs
   `"$claude_dir"/plugins/cache/*/*/skills`; measured on the author's machine that matches
   **nothing**, while `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills`
   exists for both installed plugins — the real layout carries a **version** level the glob
@@ -903,6 +929,53 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   not from evidence) — and note that E2's positive control passes today because gstack is
   **skills**-installed here, so this arm has no positive control at all and a fix needs one
   built the way R13 builds it. **Priority:** P2
+- **The plugin-cache arm resolves "a copy is on disk", not "the active version is this" —
+  a false POSITIVE, which is the direction this probe is least able to afford.** (0.18.0,
+  2026-08-26) Surfaced by the fix directly above, and not fixed with it. The cache retains
+  every version ever installed: `~/.claude/plugins/cache/forgeward-gate/forgeward/` holds
+  **8** of them (0.1.0 through 0.16.0) on the machine this was measured on. So the glob now
+  matches a gstack that was installed once and later removed, and the probe answers
+  `present`. Every consumer of that answer then defers: `supply-chain-reviewer` hands
+  dependency CVEs to a `/cso` that is not there, and Step 3 offers a `/ship` handoff nobody
+  can take. That is precisely the silent-hole shape `docs/axis-proposals.md` §3 exists to
+  refuse — the gate discloses a gap it believes is covered.
+  **What would settle it:** `~/.claude/plugins/installed_plugins.json` is authoritative and
+  carries `version` and `installPath` per plugin; it is deliberately **not** read here,
+  because parsing JSON in a script that must stay dependency-free and byte-predictable is a
+  different change from widening a glob, and it moves what the gate defers on *every* probe
+  rather than on the plugin arm alone.
+  **The ordering makes it worse rather than merely possible, and that was measured after the
+  first draft of this entry.** `check_root` returns the FIRST match, and glob order is
+  lexicographic under the script's own `LC_ALL=C` pin — which is neither version order nor
+  install order. The real cache enumerates `0.1.0 0.10.0 0.13.0 0.16.0 0.5.0 0.9.1 0.9.2
+  0.9.3`, so the OLDEST directory is tried first and the installed `0.16.0` is **fourth**.
+  The arm does not merely tolerate a stale copy; it selects one.
+  **The reachable case is UPGRADE, not uninstall — so this needed no P3-pending-a-check.**
+  An earlier draft of this entry scored it P3 on the stated uncertainty *"nobody has checked
+  whether Claude Code purges the cache on uninstall"*, which was the wrong question: the
+  upgrade path reaches the same hole and is already proven here.
+  `~/.claude/plugins/installed_plugins.json` names exactly one forgeward version installed
+  while 8 version directories exist, so upgrades demonstrably do not purge. gstack ships
+  `/cso`, a later gstack drops it, the old version directory survives, and
+  `supply-chain-reviewer` goes on deferring dependency CVEs to a skill the live gstack no
+  longer has. A platform sweep is not the mitigation either: one ran 2026-08-26 and left all
+  7 stale forgeward versions in place. **Priority:** P2
+- **INVESTIGATE — the deepened cache glob is ~75× slower and a symlink in the cache
+  amplifies it.** (0.18.0, 2026-08-26) Measured on the author's machine while reviewing the
+  fix above: the old two-level `plugins/cache/*/*/skills` expands in **0.002s**, the
+  three-level `plugins/cache/*/*/[0-9]*/skills` in **0.154s**. Both scripts pay it on every
+  probe, and the gate probes twice (detect-environment delegates to the detector). At 0.15s
+  it is invisible next to a gate run; it is filed because the *shape* is a multiplier, not
+  because the number is a problem today.
+  **It is NOT a security finding and must not be written up as one.** Reaching the
+  amplifying case needs write access to `~/.claude/plugins/cache`, and anyone with that can
+  simply plant a `SKILL.md` carrying the `(gstack)` marker — a direct false positive, which
+  is strictly cheaper than making a glob slow. The threat model does not have an attacker who
+  can write there but would rather cause latency.
+  **What would settle whether it needs anything:** measure on a cache an order of magnitude
+  larger than this one (8 marketplaces, 15 version dirs) before reaching for `find -maxdepth`
+  or a first-match short-circuit. Do not optimise on this single sample. **Priority:** P4
+
 - **The drift script's remaining unasserted edges.** (0.17.0, 2026-08-26) R1–R13 do not
   cover: a gstack root that exists but is a *file* rather than a directory; an `agents/`
   holding zero ported rubrics at all (`checked=0`, which prints a count of nothing under
