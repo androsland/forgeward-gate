@@ -102,9 +102,9 @@ is keyed to HEAD, so an amend invalidates it.
 | 5 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it; and the HEAD-pinned marker's re-review cost is either reduced or written down as the price of fixing a Low finding. | Gate — base detection ×5 | code |
 | 6 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it". | Standalone posture ×6 | code |
 | 7 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured" stops returning PASS, and the two security rules are verified on more than one fixture each. | Reviewers ×5 | prompts |
-| 8 | **`forgeward-scan.sh` stops trusting shape.** Layer 1 reads flag values, layer 4 stops using TRACKED as a proxy, and the `basename` exemption survives three named forgeries under test — a rename, a symlinked path, and a path whose basename collides with an exempt one. Enumerated, because "cannot be forged" is not something a test can show. | Reviewers ×4 | code |
+| 8 | **PARTLY DONE (0.24.0, 2026-08-27) — the `basename` leg is closed; the other two are still open.** All three named forgeries are under test as of 0.24.0 (P8m: a rename, a symlink, and a basename collision — the first two against real binaries, because a stub cannot distinguish "dispatched on the name" from "identified the binary"). Still open: layer 1 reads flag values, and layer 4 stops using TRACKED as a proxy. Both change *enforcement* rather than tests, and layer 4 needs a defined behaviour when the var is absent, so they are a separate PR. | Reviewers ×4 | code |
 | 9 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
-| 10 | **Scanner arities are verified against real binaries.** — **BLOCKED**: `trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this machine. Prerequisite is a container or CI job that has them. | Reviewers ×3 | blocked |
+| 10 | **✅ DONE (2026-08-27).** **Scanner arities are verified against real binaries.** All five installed to `~/.local/bin` from release tarballs (phpcs via `php:8.1-cli`, the host PHP lacking `xmlwriter`/`SimpleXML`); every arity and `-o` claim in the reviewer prompts and `forgeward-scan.sh` re-tested against a running binary and **all held**. Three previously unmeasured facts recorded in the entries below. | Reviewers ×3 | test |
 | 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
@@ -395,20 +395,71 @@ preferring to delete a weightless detail rather than correct it.
   so anyone able to plant that executable already has code execution here, making
   the file-write strictly weaker than what they already hold. Probing `--version`
   would not close it — a spoofed binary can print anything. In the script header as
-  a blind spot. (PR #6, sixth security pass, 2026-08-01) **Priority:** —
-- **`trivy fs`'s one-path arity is verified from SOURCE, not from a binary.** Per
-  `pkg/commands/app.go`, `filesystem`'s `PreRunE` calls `validateArgs`, which errors when
-  `len(args) > 1` — so trivy fails loudly where gitleaks silently rescoped to the cwd.
-  trivy is not installed on the machine that fixed this, so that half is unconfirmed
-  against a running binary, and the version read was `main` rather than a pinned tag.
-  Re-verify where trivy is present. gitleaks 8.30.1 and semgrep were both confirmed
-  empirically (semgrep genuinely takes many paths: two given, two in `paths.scanned`).
-  (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
-- **The per-tool arities the reviewers document are unverified for `phpcs`,
-  `osv-scanner`, `grype` and `syft`** — none of the four is installed here. The
-  gitleaks defect was exactly this shape (a documented plural where the tool takes one),
-  and it survived three releases because nobody ran the arity check. Do the same pass on
-  each when a machine has them. (gitleaks untracked-.env fix, 2026-08-10) **Priority:** P3
+  a blind spot. **Under test since 0.24.0 (2026-08-27), as a limit rather than a
+  bug.** `test/gate-test.sh` P8m pins the behaviour under the three forgeries goal 8
+  enumerates: the real **syft** binary reached under the name `trivy` is *refused*
+  `-o json` even though syft genuinely overloads `-o` (so the refusal can only be
+  coming from the name); a symlink named `grype` pointing at the real **trivy** inherits
+  the exemption, so the wrapper does not `readlink` the path; and a project's own
+  tracked `./tools/grype` — an accidental collision, not an attack — gets `-o sarif`
+  through layer 1, writes the file, and is then reported by **layer 3** with the path
+  named and exit **3**. That last leg is the containment the script header claims,
+  turned into an assertion. Two of the three legs need real scanners installed and
+  self-skip otherwise; with stubs on both sides they would prove nothing, since
+  "the wrapper dispatched on the name" and "the wrapper identified the binary" produce
+  identical output. **If this gap is ever closed, rewrite those legs to expect refusal
+  — do not delete them.** (PR #6, sixth security pass, 2026-08-01; pinned 2026-08-27)
+  **Priority:** —
+- **A fourth shape of that same forgery is untested: a bare command name resolved through
+  `$PATH`.** P8m pins three on-disk shapes — a rename, a symlink, a collision — and all
+  three hand `forgeward-scan.sh` a *path*. The shape it does not cover is a caller passing
+  the bare word `grype`, resolved by `command -v` against whatever `$PATH` says, which is
+  the likelier vector of the four: planting a `grype` earlier in `$PATH` needs no write
+  access to the real binary's directory. It is the same accepted limit and the same
+  reasoning applies untouched — the wrapper still runs `"$tool" "$@"`, so the planter
+  already holds code execution — so this is a **test** gap and not a new exposure, and it
+  should be pinned the way the other three were rather than fixed. Note before writing it
+  that the two real-binary legs would need a `$PATH` shim rather than a forged path, so it
+  is not a copy of leg A. (gate testing-reviewer, 2026-08-27) **Priority:** P3
+- **CLOSED 2026-08-27 — `trivy fs`'s one-path arity is now verified against a BINARY,
+  on a pinned tag.** The source read stands: per `pkg/commands/app.go`, `filesystem`'s
+  `PreRunE` calls `validateArgs`, which errors when `len(args) > 1`. Confirmed empirically
+  on **trivy 0.74.0**: `trivy fs dirA dirB` prints `Usage: trivy filesystem [flags] PATH`
+  and exits **1** — it fails loudly where gitleaks silently rescoped to the cwd. The
+  second claim in the same block was confirmed too: trivy's `-o` really is a filename,
+  and `trivy fs -f json -o json dirA` created a 233-byte file literally named `json`.
+  The earlier caveat — unconfirmed against a running binary, version read was `main`
+  rather than a pinned tag — no longer applies. gitleaks 8.30.1 and semgrep were already
+  confirmed empirically (semgrep genuinely takes many paths: two given, two in
+  `paths.scanned`). Kept as reference data, not open work.
+  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27) **Priority:** —
+- **CLOSED 2026-08-27 — the four unverified per-tool arities are all measured, and
+  every documented claim held.** The gitleaks defect was a documented plural where the
+  tool takes one, and it survived three releases because nobody ran the check; the same
+  pass has now been run on each of the four, against two distinguishable fixture
+  directories:
+
+  | tool | version | positional arity | evidence |
+  |---|---|---|---|
+  | `phpcs` | 4.0.4 | **many** | both files returned their own `FILE:` header and finding count |
+  | `osv-scanner` | 2.5.1 | **many** | `dirA/requirements.txt` and `dirB/requirements.txt` both appear as distinct `source.path` values in one run |
+  | `grype` | 0.117.0 | **one** | `accepts at most 1 arg(s), received 2`, exit 1 |
+  | `syft` | 1.51.0 | **one** | `accepts at most 1 arg(s), received 2`, exit 1 |
+
+  **No scanner forgeward invokes has the gitleaks failure mode.** grype and syft are
+  anchore Cobra CLIs and refuse a second path loudly, exactly as trivy does; phpcs and
+  osv-scanner genuinely take many. Nothing in `agents/*.md` or `forgeward-scan.sh`
+  needed correcting — that is the finding, and it is the reason this closed with no
+  code change.
+
+  **Two facts that were not previously written down.** `syft` takes one path, which no
+  prompt documents because no reviewer invokes syft — it appears only in the `-o`
+  exemption list. And `osv-scanner` takes many, which makes
+  `agents/supply-chain-reviewer.md`'s "equivalent substitute" phrasing an understatement
+  on the one axis this entry cares about. The correction to that prompt ships in its
+  OWN PR, not this one: `agents/*.md` is a reviewer prompt, and the executable-behaviour
+  rule keeps a five-line prompt edit out of a two-hundred-line prose-and-test diff.
+  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27) **Priority:** —
 - **`forgeward-scan.sh` layer 4 uses TRACKED as a proxy for "in the reviewed diff".**
   It gets an argv, not a base ref, so a tracked file the diff never touched still passes.
   That is the whole gap between what the wrapper enforces and what the constraint
@@ -1285,6 +1336,18 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   rules ship in the security-reviewer's pack but can never fail a gate".
   (env/config rulepack, 2026-08-14) **Priority:** P3
 
+- **This repo's own CI runs the suite with no scanners installed, so two of the three
+  basename-forgery legs never execute there.** `.github/workflows/test.yml` runs `npm test`
+  on a bare `ubuntu-latest`; P8m legs A (rename) and B (symlink) both need a real binary
+  and self-skip, so the only machine that ever runs them is a developer's. That is not a
+  false green — the legs report `SKIPPED` — but it does mean CI cannot catch a regression
+  in the two assertions that were the whole reason goal 10's installs mattered. `syft` and
+  `trivy` are the two to add: both are a single no-root release-tarball fetch, and neither
+  needs the ~3.9GB vulnerability database `grype` pulls on first run, so the job stays
+  cheap. Deliberately **not** bundled with the test change that surfaced it: a workflow
+  file is executable behaviour and gets its own PR. (gate testing-reviewer, 2026-08-27)
+  **Priority:** P2
+
 ## Enforcement boundary
 
 - **The local gate is strong, not indestructible, and this is by design.**
@@ -1302,6 +1365,29 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   **Priority:** —
 
 ## Housekeeping
+
+- **`test/gate-test.sh` reports a skip through `ok()`, so a run with nothing installed is
+  indistinguishable from a run that checked everything.** The tally is
+  `echo "# pass $PASS / fail $FAIL"` and there is no third counter, so every
+  `ok "...: SKIPPED (x not installed)"` line lands in `$PASS`. It is honest per line — the
+  word SKIPPED is right there — and dishonest in the one number people actually read, and
+  the count is now genuinely PATH-independent (231 on master and 234 on HEAD, with and
+  without the scanners), which makes the summary *look* like proof that the same work
+  happened either way. Wanted: a `SKIP` counter and a third figure in the tally. Deliberately
+  not folded into the change that surfaced it — it touches the harness's own reporting
+  contract and every `SKIPPED` call site, which is a bigger diff than the three assertions
+  that prompted it. (gate testing-reviewer, 2026-08-27) **Priority:** P2
+
+- **The layer-3 containment assertion is copy-pasted between P8l and P8m leg C.** Both
+  spend three lines on the same shape — precondition (the file really was written), `rc = 3`,
+  and the written path named in the report — differing only in variable names
+  (`lo_bad`/`$LR/pwned.txt`/`$out` against `col_bad`/`$FGR/sarif`/`$fcol`). They test the
+  same property (layer 3 catches what layer 1 let through) from two different root causes,
+  so a change to the containment contract has to be made twice and will one day be made
+  once. Wanted: a small `assert_layer3_catches` helper both call. Low, and worth doing only
+  if a third caller appears — two copies of three lines is under the threshold where an
+  abstraction pays for itself, and the note exists so the third one triggers it rather than
+  becoming a third copy. (gate maintainability-reviewer, 2026-08-27) **Priority:** P3
 
 - **`live-test/setup.sh` defaults its scaffold INSIDE the repo, and `.gitignore` does not
   cover it.** (found while running the 0.19.0 gate, 2026-08-26) `TARGET="${1:-$PWD/forgeward-live-test}"`
@@ -1914,6 +2000,87 @@ cut back at the next one; it is not trimmed entry-by-entry.
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
+
+- **Goal 8 leg 3: the `basename` exemption is now pinned under its three named forgeries
+  — and it is pinned as a LIMIT, not fixed.** (0.24.0, 2026-08-27) The goal asked that the
+  exemption "survive three named forgeries under test — a rename, a symlinked path, and a
+  path whose basename collides with an exempt one", *enumerated, because "cannot be forged"
+  is not something a test can show*. `test/gate-test.sh` P8m now runs all three.
+
+  **The two that need real binaries are the reason this waited for goal 10.** With a stub
+  on both sides of the dispatch, "the wrapper looked at the name" and "the wrapper
+  identified the binary" emit byte-identical output, so a stub-only version of this test
+  would have asserted nothing at all. What makes leg 1 mean something is that the binary
+  under the forged name is a **real syft**, which genuinely overloads `-o` — `syft -o json`
+  prints to stdout and writes no file — and it is refused `-o json` anyway. The refusal has
+  nowhere to come from except the name. Leg 2 is the same fact in the permissive direction:
+  a symlink named `grype` pointing at the **real trivy** inherits grype's exemption, so the
+  wrapper does not `readlink` the path it was handed.
+
+  **Leg 3 is the one that carries the containment claim.** It needs no forger and no
+  scanner: a project that ships its own `./tools/grype` collides with the exempt name by
+  accident. The script gets `-o sarif` through layer 1 — that IS the documented limit — and
+  layer 3 then reports the file it wrote, names the path, and turns its exit 0 into 3. The
+  header has claimed "layer 3 still reports the result" since PR #6; that sentence is now
+  an assertion rather than a promise.
+
+  **What this deliberately does not do.** It does not close the gap, and the entry above
+  says why in full: `forgeward-scan.sh` runs `"$tool" "$@"`, so anyone able to place the
+  forged executable already holds code execution, and a `--version` probe cannot help
+  against a binary that can print anything. **If someone ever does close it, those legs
+  must be rewritten to expect refusal, not deleted** — a deleted regression test for a
+  closed gap is how the gap comes back. Legs 1 and 2 of goal 8 (layer 1 reading flag
+  values, layer 4 dropping the TRACKED proxy) are untouched here: both change enforcement
+  rather than tests, and layer 4 still needs a defined behaviour when the var is absent.
+
+  **Suite count moved 231 → 234, and the first draft of this paragraph got the baseline
+  wrong — which is the part worth recording.** It claimed 231 was a *with-scanners*
+  number and 230 a *no-scanners* one, on the theory that a pre-existing leg emits an
+  extra assertion once gitleaks is on PATH; and it closed with "measured both ways on the
+  same PATH rather than inferred", which is the sentence that made it dangerous, because
+  it had been inferred. The gate's maintainability reviewer caught it. Measured, four
+  runs: **master scores 231 with the scanners and 231 without; HEAD scores 234 with and
+  234 without.** Every scanner-dependent leg substitutes a `SKIPPED` line one-for-one
+  instead of dropping an assertion, so the count is PATH-independent on both sides and
+  the delta is exactly the three new legs. 230 is a real number that belongs to a
+  different commit — `5e4b06b^` (`f82c21a`), measured, the commit before
+  *supply-chain-reviewer owns all five classes* added the 231st — and it was quoted in
+  the 0.21.0/0.22.0 PR **bodies**, never in a TODOS entry. **The lesson generalizes past
+  this number:** a claim that advertises its own verification method is the one to check
+  hardest, because "measured" was doing the work of evidence in a sentence that had none.
+
+- **Goal 10 unblocked itself: the five absent scanners were installable without root all
+  along, and every arity claim they were blocking held.** The goal had sat **BLOCKED**
+  behind "`trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this
+  machine. Prerequisite is a container or CI job that has them." The prerequisite was
+  real; the block was not. Four install to `~/.local/bin` straight from release
+  tarballs — trivy 0.74.0, osv-scanner 2.5.1, grype 0.117.0, syft 1.51.0 — and needed no
+  package manager and no password.
+
+  **The fifth is the one that justified the entry's wording.** `phpcs.phar` 4.0.4 runs
+  fine, but the host PHP 8.1 ships `libxml` and `tokenizer` without `xmlwriter` or
+  `SimpleXML`, and adding `php8.1-xml` is the only step in the pass that wants root. It
+  went through `php:8.1-cli` instead — which is exactly the "container" the entry named,
+  so the blocker was accurate for one tool in five and was being applied to all five.
+
+  **EVERY DOCUMENTED CLAIM HELD, AND THAT IS THE RESULT.** `trivy fs` takes one path and
+  says so loudly (exit 1). trivy's `-o` is a filename: `-f json -o json` wrote a 233-byte
+  file called `json`. phpcs takes many. osv-scanner takes many, and its bare
+  `--format json <path>` form still works in v2.5.1 despite the v2 CLI restructure.
+  grype and syft each take exactly one. The per-tool `-o` asymmetry that
+  `forgeward-scan.sh` encodes was proven end to end against the real binaries —
+  `grype -o json` allowed, `trivy -o json` refused, `trivy -f json` allowed,
+  `-o json=out.json` and `-o out.json` refused for both anchore tools. **No prompt and no
+  script needed correcting**, so the goal closed with one prose accuracy fix and no
+  behaviour change — and that fix (`agents/supply-chain-reviewer.md`, five lines saying
+  osv-scanner takes several paths where trivy takes one) is filed as its own PR rather
+  than folded in here, because a reviewer prompt is executable behaviour whatever its
+  size.
+
+  **What it cost, which is the part worth reusing.** grype pulls a **~3.9GB** vulnerability
+  database on first run; the other four needed no download at all. That is a CI-cost fact,
+  and it is the reason grype is the one tool here not to put in a workflow casually.
+  (2026-08-27)
 
 - **`forgeward-transcript-audit.sh`: the P2 filed with the gitleaks fix is now shipped, and
   its first real run corrected the README that specified it.** Shipped 2026-08-19 as

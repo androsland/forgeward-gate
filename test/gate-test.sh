@@ -1705,6 +1705,88 @@ else
   ok "forgeward-scan --log-opts write containment: SKIPPED (gitleaks not installed)"
 fi
 
+# P8m: the per-tool `-o` exemption dispatches on `basename "$tool"`, and that is a
+# DOCUMENTED limit rather than a defect awaiting a fix — this script runs `"$tool" "$@"`,
+# so anyone able to place the executable already holds code execution here, and probing
+# `--version` would not help because a spoofed binary can print anything.
+#
+# "Cannot be forged" is not something a test can show, so what is pinned instead is the
+# behaviour under three NAMED forgeries — a rename, a symlink, and an innocent basename
+# collision — plus the containment the header claims: layer 3 still reports the result.
+#
+# Two of the three need REAL scanners, and that is the whole reason they are worth
+# running: with a stub on both sides, "the wrapper dispatched on the name" and "the
+# wrapper identified the binary" produce identical output, so a stub cannot tell them
+# apart. If someone later closes this gap, rewrite these legs to expect refusal rather
+# than deleting them.
+FORGEDIR="$TMP/forge"; mkdir -p "$FORGEDIR"
+FGR="$TMP/forgerepo"; mkrepo "$FGR"
+mkdir -p "$FGR/tools"
+# an ordinary project script that happens to be named `grype` and is not grype:
+printf '#!/usr/bin/env bash\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && : > "$2"; shift; done\nexit 0\n' > "$FGR/tools/grype"
+chmod +x "$FGR/tools/grype"
+( cd "$FGR"; printf 'x\n' > a.txt; git add -A; git commit -qm base ) >/dev/null 2>&1
+
+# (A) RENAME. The real syft binary reached under the name `trivy`. syft genuinely
+# overloads `-o` — `syft -o json` prints to stdout and writes nothing — so a refusal here
+# can only be coming from the name. Hard link where the filesystem allows it; the copy is
+# the fallback, and either way it is byte-identical to the installed binary.
+if command -v syft >/dev/null 2>&1; then
+  ln "$(command -v syft)" "$FORGEDIR/trivy" 2>/dev/null || cp "$(command -v syft)" "$FORGEDIR/trivy"
+  ( cd "$FGR" && "$SCAN" "$FORGEDIR/trivy" -o json ) >/dev/null 2>&1; rc=$?
+  ren_bad=""
+  # The fixture check is load-bearing HERE in a way it is not in most tests, so it is not
+  # ceremony: layer 1 rejects on the basename inside its argument loop, BEFORE the script
+  # ever runs `command -v "$tool"`. A path that does not exist therefore also exits 2 — so
+  # if the hardlink and the copy both failed, the exit code below would still be 2 and
+  # this leg would print `ok` next to a message asserting "the REAL syft binary", which
+  # would be false. Verified: `$SCAN /nonexistent/trivy -o json` exits 2.
+  [ -x "$FORGEDIR/trivy" ] || ren_bad="$ren_bad [precondition: the syft hardlink/copy was not created, so nothing was forged and the exit code below proves nothing]"
+  [ "$rc" = 2 ] || ren_bad="$ren_bad [real syft named 'trivy' was not refused -o json: rc=$rc, expected 2]"
+  [ -z "$ren_bad" ] \
+    && ok "forgeward-scan: forgery 1/3 (rename) — the REAL syft binary under the name 'trivy' is refused '-o json'; the exemption follows the name, not the tool" \
+    || nok "forgeward-scan basename forgery: rename" "$ren_bad"
+else
+  ok "forgeward-scan basename forgery 1/3 (rename): SKIPPED (syft not installed)"
+fi
+
+# (B) SYMLINK, in the permissive direction — the one that matters. A link named `grype`
+# pointing at the real trivy inherits grype's exemption: the wrapper does not readlink
+# the path. trivy's own global parser then rejects `-o` (`unknown shorthand flag`), which
+# is trivy's verdict and not the wrapper's, so the assertion is that the WRAPPER stayed
+# out of it — no refusal line, an exit that is not 2, and nothing new in the repo.
+if command -v trivy >/dev/null 2>&1; then
+  ln -s "$(command -v trivy)" "$FORGEDIR/grype" 2>/dev/null
+  fsym="$( cd "$FGR" && "$SCAN" "$FORGEDIR/grype" -o json 2>&1 >/dev/null )"; rc=$?
+  sym_bad=""
+  # Unlike leg A this one already fails safe without the check — a missing link makes the
+  # wrapper print its own "not installed (skipped)" line, which trips the *forgeward-scan:*
+  # case below. What it does not do is say WHY, so the check is here for the diagnostic.
+  [ -L "$FORGEDIR/grype" ] || sym_bad="$sym_bad [precondition: the symlink was not created]"
+  [ "$rc" != 2 ] || sym_bad="$sym_bad [wrapper refused it — if the exemption now resolves symlinks, rewrite this leg]"
+  case "$fsym" in *forgeward-scan:*) sym_bad="$sym_bad [wrapper printed a verdict: $fsym]" ;; esac
+  [ -e "$FGR/json" ] && sym_bad="$sym_bad [a file named 'json' was created]"
+  [ -z "$sym_bad" ] \
+    && ok "forgeward-scan: forgery 2/3 (symlink) — a link named 'grype' pointing at the REAL trivy inherits the exemption; the wrapper does not resolve the link" \
+    || nok "forgeward-scan basename forgery: symlink" "$sym_bad"
+else
+  ok "forgeward-scan basename forgery 2/3 (symlink): SKIPPED (trivy not installed)"
+fi
+
+# (C) COLLISION, and the containment. No forger is needed for this one: a project that
+# ships its own `./tools/grype` collides with the exempt name by accident, and the script
+# below writes whatever `-o` names. Layer 1 lets `-o sarif` through — that IS the limit —
+# and the assertion is that layer 3 catches the write, names the path, and turns the
+# script's exit 0 into 3 so the caller cannot read contamination as success.
+fcol="$( cd "$FGR" && "$SCAN" ./tools/grype -o sarif 2>&1 >/dev/null )"; rc=$?
+col_bad=""
+[ -e "$FGR/sarif" ] || col_bad="$col_bad [precondition: the collided script wrote nothing, so this no longer tests the limit]"
+[ "$rc" = 3 ] || col_bad="$col_bad [layer 3 did not flag the write: rc=$rc, expected 3]"
+case "$fcol" in *sarif*) ;; *) col_bad="$col_bad [the written path was not named in the report]" ;; esac
+[ -z "$col_bad" ] \
+  && ok "forgeward-scan: forgery 3/3 (basename collision) — a project's own './tools/grype' inherits the exemption at layer 1, and layer 3 reports the file it wrote (exit 3)" \
+  || nok "forgeward-scan basename forgery: collision containment" "$col_bad"
+
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
 ad="$( cd "$R" && "$ARTDIR" )"
 case "$ad" in
