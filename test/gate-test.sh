@@ -3016,7 +3016,7 @@ _r1="$(drift)"; _r1rc=$?
 # script that exited before comparing anything would green R1.
 _r2="$(drift --verbose)"
 case "$_r2" in
-  *"ok       alpha-reviewer"*"1 ported rubric(s) checked"*)
+  *"ok       alpha-reviewer"*"1 ported rubric(s) parsed, 1 checked"*)
     ok "drift: --verbose names the rubric it compared and counts it (R1 is not vacuous)" ;;
   *) nok "drift R2: the clean path proves nothing" "out='$_r2'" ;;
 esac
@@ -3067,10 +3067,11 @@ case "$_r5v" in
   *) nok "drift R5: --verbose cannot distinguish no-gstack from no-drift" "out='$_r5v'" ;;
 esac
 
-# R6: THE FLOOR, and the only assertion here that touches the shipped tree. Everything
-# above runs on a synthetic fixture, so all six would pass unchanged if the real
-# `agents/` directory carried no provenance blocks at all and the drift check covered
-# nothing. This counts the real ported rubrics and requires all five — and it requires
+# R6: THE FLOOR for the `agents/` half, and one of the two assertions here that touch the
+# shipped tree (R14d is the same instrument for `skills/`). Everything above runs on a
+# synthetic fixture, so all six would pass unchanged if the real `agents/` directory
+# carried no provenance blocks at all and the drift check covered nothing. This counts
+# the real ported rubrics and requires all five — and it requires
 # BOTH fields, because the script skips any reviewer missing either one and a
 # half-recorded port is silently unchecked rather than loudly broken.
 #
@@ -3079,9 +3080,13 @@ esac
 # here drives a synthetic fixture, so R6 has to read the SHIPPED tree with no fixture
 # in the path at all. Running the script over the real agents/ would need a synthetic
 # gstack root holding copies of the five real rubrics, which reintroduces exactly the
-# fixture dependence R6 exists to escape. The exposure is that a future loosening of
-# the script's regex would not show up here -- accepted, and named rather than left
-# for the next reader to discover.
+# fixture dependence R6 exists to escape. The exposure it buys is that a loosening of
+# the script's regex would not show up here -- which stopped being hypothetical the day
+# the reader was made tolerant of CRLF and uppercase hex. R14j is the control: it runs
+# the real script over this same shipped tree and asserts it parses exactly the number
+# R6 and R14d count between them, so the two copies of the reader are compared rather
+# than assumed to agree. Keep the copy strict on purpose -- what SHIPS should be
+# canonical even where the reader tolerates what a checkout does to it on the way in.
 _r6n=0; _r6bad=""
 for _f in "$PLUGIN"/agents/*-reviewer.md; do
   [ -f "$_f" ] || continue
@@ -3138,7 +3143,7 @@ if command -v shasum >/dev/null 2>&1; then
   _r8="$(FORGEWARD_GSTACK_ROOT="$DGS" PATH="$SHAONLY" \
          "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r8rc=$?
   case "$_r8" in
-    *"ok       alpha-reviewer"*"1 ported rubric(s) checked"*)
+    *"ok       alpha-reviewer"*"1 ported rubric(s) parsed, 1 checked"*)
       [ "$_r8rc" -eq 0 ] \
         && ok "drift: the shasum arm reproduces the sha256sum digest through the script (the macOS branch is not dead code)" \
         || nok "drift R8: shasum arm exited $_r8rc" "out='$_r8'" ;;
@@ -3177,7 +3182,7 @@ printf 'Half checklist.\n' > "$DGS/review/specialists/half.md"
 _r10="$(drift --verbose)"
 case "$_r10" in
   *"half-reviewer"*) nok "drift R10: a reviewer with no source-sha256 was treated as a port" "out='$_r10'" ;;
-  *"1 ported rubric(s) checked"*)
+  *"1 ported rubric(s) parsed, 1 checked"*)
     ok "drift: a reviewer carrying only one provenance field is skipped and not counted (R6 is what stops it shipping)" ;;
   *) nok "drift R10: unexpected count with a half-recorded reviewer present" "out='$_r10'" ;;
 esac
@@ -3322,6 +3327,334 @@ case "$_r13c" in
       || nok "drift R13c: reported nothing to compare but exited $_r13crc" "out='$_r13c'" ;;
   *) nok "drift R13c: an empty config dir did not degrade cleanly" "rc=$_r13crc out='$_r13c'" ;;
 esac
+
+# R14: A PORTED SKILL IS DRIFT-CHECKED, AND IT IS NAMED BY ITS DIRECTORY.
+# `skills/audit/` is a port of gstack's /cso audit phases, taken the same way the five
+# reviewer rubrics were and carrying the same provenance block — but the loop globbed
+# `agents/*-reviewer.md` and nothing else, so the largest ported artefact in the repo
+# was unchecked while the script printed a confident count of everything it did check.
+# That is the false all-clear the header refuses, arriving through the scan's scope
+# rather than through its comparison.
+#
+# THE NAME IS HALF THE ASSERTION, not a cosmetic extra. A skill's basename is the
+# constant `SKILL.md`, so a basename-derived key reports `SKILL` — which is not a name,
+# and is the SAME key for every skill that is ever ported, so two drifting skills would
+# print two identical lines. `*"ok       SKILL"*` is checked explicitly and fails the
+# assertion; matching only the positive would go green on the broken naming the day
+# someone reintroduces it, since `ok       beta` and `ok       SKILL` are not mutually
+# exclusive outputs of a loop that could print both.
+#
+# Verified to FAIL against the pre-fix script (`git show HEAD:` at the time of writing):
+# the skills glob was absent, so the run counted one rubric and printed no `beta` line
+# at all, and this assertion went nok via its catch-all arm. Runs --verbose
+# for the reason R12 records: the `ok       <name>` line is verbose-only.
+mkdir -p "$DGS/cso/sections" "$DP/skills/beta"
+printf 'Audit phases, v1.\n' > "$DGS/cso/sections/phases.md"
+BETA_SHA="$(sha256sum "$DGS/cso/sections/phases.md" | cut -d' ' -f1)"
+{ printf -- '---\nname: beta\n---\n\n'
+  printf '<!-- PORTED PHASES\n     source-path:   cso/sections/phases.md\n'
+  printf '     source-sha256: %s\n-->\n\nBody.\n' "$BETA_SHA"
+} > "$DP/skills/beta/SKILL.md"
+_r14="$(drift --verbose)"; _r14rc=$?
+case "$_r14" in
+  *"ok       SKILL"*) nok "drift R14: a ported skill is keyed by its basename, not its directory" "out='$_r14'" ;;
+  *"ok       beta"*"2 ported rubric(s) parsed, 2 checked"*)
+    [ "$_r14rc" -eq 0 ] \
+      && ok "drift: a ported skills/<name>/SKILL.md is checked and named by its directory" \
+      || nok "drift R14: found the skill but exited $_r14rc" "out='$_r14'" ;;
+  *) nok "drift R14: skills/*/SKILL.md is not scanned" "out='$_r14'" ;;
+esac
+
+# R14f: A DRIFTED SKILL IS NAMED IN THE NOTE BY ITS DIRECTORY, NOT BY ITS BASENAME.
+# R14 above pins the verbose `ok` line, and the NOTE is the line a reader actually acts
+# on -- it is the script's only unconditional output, so for a user who never passes
+# --verbose it is the ENTIRE product. Until this assertion existed the drifted branch was
+# unpinned for skills: mutation-proven by rewriting the `drifted=` accumulator's `$name`
+# back to `$(basename "$f" .md)`, which left the suite green while every drifting skill
+# printed `SKILL`. That is the exact failure R14's own header argues matters, asserted one
+# branch away from where it happens.
+#
+# Negative arm first, for R14's reason: `  SKILL  ` and `  beta  ` are not mutually
+# exclusive outputs of a loop that could emit both.
+printf 'Audit phases, v2 - a phase was added.\n' > "$DGS/cso/sections/phases.md"
+_r14f="$(drift)"; _r14frc=$?
+case "$_r14f" in
+  *"have drifted"*"  SKILL  "*) nok "drift R14f: a drifted skill is reported as SKILL, not by its directory" "out='$_r14f'" ;;
+  *"have drifted"*"  beta  "*)
+    [ "$_r14frc" -eq 0 ] \
+      && ok "drift: a drifted skill is named by its directory in the NOTE, not by its basename" \
+      || nok "drift R14f: reported the skill drift but exited $_r14frc" "out='$_r14f'" ;;
+  *) nok "drift R14f: a drifted ported skill went unreported" "out='$_r14f'" ;;
+esac
+printf 'Audit phases, v1.\n' > "$DGS/cso/sections/phases.md"
+
+# R14g: SO IS A SKILL WHOSE source-path ESCAPES THE TREE. R12 is this assertion for
+# `agents/`; the malformed branch derives its key from the same `case` as every other
+# branch, so this is the fourth and last of the four exits a skill can take (ok, drifted,
+# missing, malformed) and the only one that was still unpinned. It is here because the
+# NAMING comment in the script claimed to be "pinned by R14" for exactly this branch and
+# R14 does not reach it -- a comment claiming coverage it does not have is the defect,
+# not merely the gap it hides.
+mkdir -p "$DP/skills/gamma"
+{ printf -- '---\nname: gamma\n---\n\n'
+  printf '<!-- PORTED PHASES\n     source-path:   ../outside/secret.txt\n'
+  printf '     source-sha256: %s\n-->\n\nBody.\n' "$BETA_SHA"
+} > "$DP/skills/gamma/SKILL.md"
+_r14g="$(drift)"; _r14grc=$?
+case "$_r14g" in
+  *"escapes the rubric tree"*"  SKILL  "*) nok "drift R14g: a traversing skill is reported as SKILL, not by its directory" "out='$_r14g'" ;;
+  *"escapes the rubric tree"*"  gamma  "*)
+    [ "$_r14grc" -eq 0 ] \
+      && ok "drift: a skill whose source-path escapes the tree is refused loudly and named by its directory" \
+      || nok "drift R14g: reported the traversal but exited $_r14grc" "out='$_r14g'" ;;
+  *) nok "drift R14g: a traversing ported skill was not refused" "out='$_r14g'" ;;
+esac
+rm -rf "$DP/skills/gamma"
+
+# R14b: A gstack CHECKOUT IS RECOGNISED BY `cso` AS WELL AS BY `review/specialists`.
+# The landmark that qualifies a candidate root was `review/specialists` alone, which is
+# where the reviewer rubrics live. The audit phases come from `cso/`, so a checkout
+# holding one and not the other read as "not gstack" and the whole run degraded to the
+# quiet no-op — silence that means "no drift" to anyone reading it. Drives the root
+# through FORGEWARD_GSTACK_ROOT, which still goes through the landmark test.
+DGS2="$TMP/driftgstack-cso-only"
+mkdir -p "$DGS2/cso/sections"
+printf 'Audit phases, v1.\n' > "$DGS2/cso/sections/phases.md"
+_r14b="$(FORGEWARD_GSTACK_ROOT="$DGS2" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r14b" in
+  *"no gstack rubrics"*) nok "drift R14b: a checkout with cso/ but no review/specialists reads as no-gstack" "out='$_r14b'" ;;
+  *"ok       beta"*) ok "drift: a gstack checkout is recognised by cso/ as well as by review/specialists" ;;
+  *) nok "drift R14b: unexpected output from a cso-only root" "out='$_r14b'" ;;
+esac
+
+# R14c: THE FALLBACK PASS IS LANDMARK-MAJOR, NOT CANDIDATE-MAJOR.
+# This pins pass 2 of the root scan — the fallback that runs when NO candidate holds
+# every landmark. Candidate-major is the shorter way to write it and it is wrong: a
+# `cso`-only root that sorts earlier would shadow a `review/specialists` root that sorts
+# later, and the five reviewer rubrics would then all report `no longer exist`. Nothing
+# else here goes red on that, which is what makes this load-bearing rather than a
+# restatement of R14b.
+#
+# BOTH fixture roots are partial ON PURPOSE, and the word "complete" does not belong to
+# this assertion: pass 1 must not fire on either of them, and R14e is where a genuinely
+# complete root is tested. Reading this one as covering partial-shadows-complete is how
+# that case went unnoticed until 0.20.0 — it is a DIFFERENT pass and a different bug.
+#
+# `aaa-market` sorts before `zzz-market`, so the cso-only root is the one a candidate-major
+# loop would select. The discriminator is which side reports `ok`: the reviewer-rubric root
+# has alpha.md and no phases.md, the cso-only root the reverse.
+DPC4="$TMP/driftcfg4"
+mkdir -p "$DPC4/plugins/cache/aaa-market/gstack/1.0.0/skills/gstack/cso/sections"
+mkdir -p "$DPC4/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/review/specialists"
+printf 'Audit phases, v1.\n' > "$DPC4/plugins/cache/aaa-market/gstack/1.0.0/skills/gstack/cso/sections/phases.md"
+printf 'Alpha checklist, v1.\n' > "$DPC4/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/review/specialists/alpha.md"
+_r14c="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC4" \
+         bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r14c" in
+  *"ok       beta"*) nok "drift R14c: a cso-only root shadowed a review/specialists root that sorts later" "out='$_r14c'" ;;
+  *"ok       alpha-reviewer"*"no longer exist"*"  beta  "*)
+    ok "drift: the fallback pass tries review/specialists across every candidate before cso is tried at all" ;;
+  *) nok "drift R14c: neither root was selected" "out='$_r14c'" ;;
+esac
+
+# R14e: A CANDIDATE HOLDING EVERY LANDMARK WINS OVER A PARTIAL ONE THAT SORTS EARLIER.
+# R14c pins the fallback; this pins the pass that runs BEFORE it, and it exists because
+# landmark-major ordering alone is asymmetric. It stops a `cso`-only root shadowing a
+# `review/specialists` one — and does nothing at all in the other direction, because pass
+# 2 accepts the first candidate holding `review/specialists` and stops there, complete
+# checkout on the same machine or not.
+#
+# That is not a hypothetical ordering: plugin-cache candidates arrive glob-sorted, and a
+# marketplace or version directory sorting earlier (`1.10.0` sorts before `1.9.0`) that
+# predates `cso/` is an ordinary machine, not a contrived one. Reproduced against the
+# pre-fix script: it selected `aaa-market` and printed `no longer exist ... Upstream may
+# have renamed or removed them` for `beta` while `zzz-market` held the file one directory
+# over. A false claim about upstream is worse than this script's default silence, so the
+# FIRST arm below is the negative — matching only the positive would go green on a
+# regression that prints the bogus NOTE alongside a correct `ok`.
+#
+# The discriminator is the ROOT NAME in the summary line, not the ok-count: both roots
+# can satisfy alpha-reviewer, and only the complete one can satisfy beta.
+#
+# R14c's pass arm above carries a FLOOR for the same reason. Its negative discriminator
+# (`ok       beta` = the cso-only root won) is reachable only while `$DP/skills/beta`
+# exists, and that fixture is built fifty lines earlier and torn down forty lines later;
+# delete or reorder either and R14c asserts a property of nothing while still printing
+# ok. Requiring the missing-beta line pins the fixture's presence in the same breath, and
+# buys the `missing` branch's skill naming as a second effect.
+DPC5="$TMP/driftcfg5"
+mkdir -p "$DPC5/plugins/cache/aaa-market/gstack/1.0.0/skills/gstack/review/specialists"
+mkdir -p "$DPC5/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/review/specialists"
+mkdir -p "$DPC5/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/cso/sections"
+printf 'Alpha checklist, v1.\n' > "$DPC5/plugins/cache/aaa-market/gstack/1.0.0/skills/gstack/review/specialists/alpha.md"
+printf 'Alpha checklist, v1.\n' > "$DPC5/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/review/specialists/alpha.md"
+printf 'Audit phases, v1.\n'    > "$DPC5/plugins/cache/zzz-market/gstack/1.0.0/skills/gstack/cso/sections/phases.md"
+_r14e="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$DPC5" \
+         bash "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r14e" in
+  *"no longer exist"*) nok "drift R14e: a partial root that sorts earlier shadowed a complete gstack checkout" "out='$_r14e'" ;;
+  *"ok       alpha-reviewer"*"ok       beta"*"zzz-market"*)
+    ok "drift: a candidate holding every landmark wins over a partial one that sorts earlier" ;;
+  *) nok "drift R14e: the complete root was not selected" "out='$_r14e'" ;;
+esac
+# BOTH HALVES of the skills fixture go, not just the plugin one. R10 and R12 remove the
+# plugin-side and gstack-side files on the same line and this block broke that convention:
+# leaving `$DGS/cso` behind makes the shared synthetic root satisfy BOTH landmarks from
+# here on, so any assertion added later via `drift()` silently meets a different root
+# shape than R1-R13 did.
+rm -rf "$DP/skills" "$DGS/cso"
+
+# R14h: A RUN THAT PARSES NOTHING SAYS SO, UNCONDITIONALLY. This is the assertion that
+# makes every OTHER silence in this block mean something. R1 pins that a clean run is
+# silent; before the vacuity guard existed, a run that found a gstack checkout and then
+# read ZERO ports out of the plugin was silent in exactly the same way, on the same exit
+# code, through the same no-argument invocation `skills/gate/SKILL.md` uses. The failure
+# is not that a check goes missing -- it is that its absence is indistinguishable from
+# its success, which is the false all-clear this whole script exists to refuse.
+#
+# Runs QUIET on purpose. Every other diagnostic here is verbose-only and the gate never
+# passes --verbose, so a verbose-gated guard would be a guard nobody in production sees.
+cp "$DP/agents/alpha-reviewer.md" "$TMP/alpha-reviewer.bak"
+sed 's/source-sha256:.*/source-sha256: not-a-hash/' "$TMP/alpha-reviewer.bak" > "$DP/agents/alpha-reviewer.md"
+_r14h="$(drift)"; _r14hrc=$?
+case "$_r14h" in
+  *"NO ported rubric could be read"*)
+    [ "$_r14hrc" -eq 0 ] \
+      && ok "drift: a root found but nothing parsed is reported in QUIET mode, not mistaken for a clean run" \
+      || nok "drift R14h: reported the vacuous run but exited $_r14hrc" "out='$_r14h'" ;;
+  "") nok "drift R14h: a run that parsed zero rubrics was silent -- indistinguishable from a clean run" "rc=$_r14hrc" ;;
+  *) nok "drift R14h: unexpected output for a vacuous run" "out='$_r14h'" ;;
+esac
+
+# R14i: THE PROVENANCE READER SURVIVES A CRLF CHECKOUT AND AN UPPERCASE DIGEST. Both were
+# reproduced against the strict reader and both parsed ZERO ports out of the entire plugin
+# while printing nothing, which is R14h's failure arriving through the regex rather than
+# through the path. Neither input is exotic: this repo ships no `.gitattributes`, so a
+# clone under Git-for-Windows' default `core.autocrlf=true` produces the first, and
+# PowerShell's `Get-FileHash` and GitHub's blob view both emit the second.
+#
+# One fixture carries BOTH deviations at once. That is deliberate and it is the weaker
+# half of the assertion -- it cannot say which tolerance is doing the work, so R14h is
+# what stands behind it: whichever one regresses, the run parses nothing and R14h reddens
+# by name. Splitting this in two would pin the mechanism more precisely and is not done,
+# because the guard that matters is the one that fires on a miss nobody anticipated.
+sed -e 's/source-sha256: *\([0-9a-f]*\)/source-sha256: \U\1/' "$TMP/alpha-reviewer.bak" \
+  | sed 's/$/\r/' > "$DP/agents/alpha-reviewer.md"
+_r14i="$(drift)"; _r14irc=$?
+_r14iv="$(drift --verbose)"
+case "$_r14i$_r14iv" in
+  *"NO ported rubric could be read"*) nok "drift R14i: a CRLF checkout with an uppercase digest parsed zero rubrics" "out='$_r14iv'" ;;
+  *"ok       alpha-reviewer"*"1 ported rubric(s) parsed, 1 checked"*)
+    [ -z "$_r14i" ] && [ "$_r14irc" -eq 0 ] \
+      && ok "drift: a CRLF provenance block with an uppercase source-sha256 is read, compared and reported clean" \
+      || nok "drift R14i: parsed it but the quiet path was not clean" "rc=$_r14irc quiet='$_r14i'" ;;
+  *) nok "drift R14i: a CRLF/uppercase provenance block did not reach a clean comparison" "out='$_r14iv'" ;;
+esac
+cp "$TMP/alpha-reviewer.bak" "$DP/agents/alpha-reviewer.md"
+
+# R14l: A SYMLINKED `scripts/` DIRECTORY STILL RESOLVES THE PLUGIN ROOT. Bash's `pwd`
+# builtin is LOGICAL, so invoked through such a symlink the script's `$here/..` landed on
+# the symlink's parent, `agents/` and `skills/` pointed at nothing, every file fell through
+# the `[ -f ]` guard, and the run was silent with rc=0 -- the third reproduced route to the
+# same silent zero R14h and R14i cover from the other two directions. Symlinking the whole
+# plugin directory was always fine and stays fine; this is the one-level-in case.
+#
+# R14h is the backstop and this is the fix: without `pwd -P` the run is now LOUD but still
+# wrong, and this assertion is what pins it being right.
+mkdir -p "$TMP/r14l"
+ln -sf "$DP/scripts" "$TMP/r14l/scripts"
+_r14l="$(FORGEWARD_GSTACK_ROOT="$DGS" "$TMP/r14l/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r14lrc=$?
+case "$_r14l" in
+  *"NO ported rubric could be read"*) nok "drift R14l: a symlinked scripts/ dir resolved the plugin root one level wrong and scanned nothing" "out='$_r14l'" ;;
+  *"ok       alpha-reviewer"*"1 ported rubric(s) parsed, 1 checked"*)
+    [ "$_r14lrc" -eq 0 ] \
+      && ok "drift: the plugin root resolves physically, so a symlinked scripts/ directory scans the real agents/ and skills/" \
+      || nok "drift R14l: resolved the root but exited $_r14lrc" "out='$_r14l'" ;;
+  *) nok "drift R14l: unexpected output through a symlinked scripts/ directory" "out='$_r14l'" ;;
+esac
+rm -rf "$TMP/r14l"
+
+# R14d: THE FLOOR FOR THE SKILLS HALF. R6 is this assertion for `agents/`, and it would
+# stay green with every ported skill's provenance block deleted. Same instrument, same
+# reason: R14 above runs entirely on a synthetic fixture, so without this the skills glob
+# could be scanning a shipped tree that records nothing. Reads `$PLUGIN` with no fixture
+# in the path, and requires the same BOTH-fields pair, because a half-recorded port is
+# silently unchecked rather than loudly broken.
+#
+# The floor is 1, not a count of `skills/*/`: `gate` and `ci-gate` are forgeward's own
+# and are not ports, so requiring every skill to carry provenance would be asserting a
+# property this repo does not have. What it pins is that at least one does and that none
+# is half-recorded.
+_r14dn=0; _r14dbad=""
+for _f in "$PLUGIN"/skills/*/SKILL.md; do
+  [ -f "$_f" ] || continue
+  _has_p="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_f" | head -1)"
+  _has_s="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_f" | head -1)"
+  if [ -n "$_has_p" ] && [ -n "$_has_s" ]; then
+    _r14dn=$((_r14dn+1))
+  elif [ -n "$_has_p" ] || [ -n "$_has_s" ]; then
+    _r14dbad="$_r14dbad $(basename "$(dirname "$_f")")"
+  fi
+done
+[ "$_r14dn" -ge 1 ] && [ -z "$_r14dbad" ] \
+  && ok "drift: all $_r14dn shipped ported skill(s) record BOTH source-path and a 64-hex source-sha256" \
+  || nok "drift R14d: a ported skill is not drift-checkable" "complete: $_r14dn (expected >= 1) | half-recorded:${_r14dbad:- none}"
+
+# R14j: THE TEST'S READER AND THE SCRIPT'S READER AGREE ON THE SHIPPED TREE. R6 and R14d
+# above each carry a DELIBERATE copy of the script's two `sed` expressions, and R6's own
+# header names the exposure that buys: "a future loosening of the script's regex would
+# not show up here -- accepted". That loosening has now happened (R14i is why), so the
+# exposure stopped being hypothetical and this is the control that closes it, in the shape
+# CLAUDE.md asks for -- two arms of one reader must be ASSERTED to agree, not assumed to.
+#
+# Derived on both sides. The left is R6's and R14d's strict canonical count; the right is
+# read out of the script's own summary line by RUNNING it over the shipped tree, against a
+# synthetic root built from the script's own landmark list and holding no files at all, so
+# every port parses, every port reports missing, and nothing depends on what gstack has on
+# this machine. Divergence in either direction reddens: a script regex that accepts less
+# than the canonical shape parses fewer, and one that accepts more parses more.
+#
+# NOT what this pins: it says the two readers agree about the shipped files, never that
+# either is correct about a file that does not ship. R14i is the assertion for what a
+# checkout can do to those files on the way to disk.
+_r14j_root="$TMP/r14j-gsroot"
+_r14j_lm="$(sed -n 's/^gs_landmarks=(\(.*\))$/\1/p' "$PLUGIN/scripts/forgeward-rubric-drift.sh")"
+for _l in $_r14j_lm; do mkdir -p "$_r14j_root/$_l"; done
+_r14jout="$(FORGEWARD_GSTACK_ROOT="$_r14j_root" \
+            "$PLUGIN/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+_r14jn="$(printf '%s\n' "$_r14jout" | sed -n 's/^rubric-drift: \([0-9][0-9]*\) ported rubric(s) parsed,.*/\1/p')"
+_r14jexp=$((_r6n + _r14dn))
+if [ -n "$_r14j_lm" ] && [ -n "$_r14jn" ] && [ "$_r14jn" -ge 1 ] && [ "$_r14jn" -eq "$_r14jexp" ]; then
+  ok "drift: the script parses exactly the $_r14jn shipped port(s) R6 and R14d count (the two copies of the reader agree)"
+else
+  nok "drift R14j: the script's reader and the suite's copy of it disagree on the shipped tree" \
+      "script parsed:'${_r14jn:-NONE}' suite counted:$_r14jexp (R6 $_r6n + R14d $_r14dn) landmarks:'${_r14j_lm:-NONE}'"
+fi
+
+# R14k: EVERY SHIPPED PORT'S source-path SITS UNDER A LANDMARK THE ROOT SCAN KNOWS.
+# That correspondence IS the 0.20.0 bug: `skills/audit` was ported from `cso/` while the
+# landmark list held only `review/specialists`, so a checkout carrying one subtree and not
+# the other read as no-gstack and the whole run went quiet. R14b fixed the instance; this
+# is the detector for the NEXT one, which the script's own header names as undetected.
+#
+# Both sides derived, again. The landmark list is read out of the script rather than typed
+# here, and the source-paths are read out of the script's OWN missing-NOTE from the R14j
+# run above -- so a port added under some third gstack subtree reddens this the day it is
+# added, without anyone remembering to update a list.
+_r14kbad=""
+_r14kn=0
+while IFS= read -r _pth; do
+  [ -n "$_pth" ] || continue
+  _r14kn=$((_r14kn+1)); _hit=0
+  for _l in $_r14j_lm; do case "$_pth" in "$_l"/*) _hit=1 ;; esac; done
+  [ "$_hit" -eq 1 ] || _r14kbad="$_r14kbad $_pth"
+done <<EOF
+$(printf '%s\n' "$_r14jout" | sed -n 's/^  [^ ][^ ]*  (\(.*\))$/\1/p')
+EOF
+[ -n "$_r14j_lm" ] && [ "$_r14kn" -ge 1 ] && [ "$_r14kn" -eq "$_r14jexp" ] && [ -z "$_r14kbad" ] \
+  && ok "drift: all $_r14kn shipped source-path(s) sit under a landmark the root scan recognises ($_r14j_lm)" \
+  || nok "drift R14k: a shipped port sits outside every landmark, so a checkout holding only its subtree reads as no-gstack" \
+      "landmarks:'${_r14j_lm:-NONE}' paths seen:$_r14kn (expected $_r14jexp) | outside:${_r14kbad:- none}"
 
 # =============================================================================
 # A25–A29 — the two repo-wide conventions, pinned.
@@ -3591,10 +3924,10 @@ else
   # carry (assertion R6's subject), for the same reason — without both, re-porting after
   # an upstream change is guesswork.
   #
-  # NON-GOAL, stated because a green A31 must not be read as drift coverage:
-  # scripts/forgeward-rubric-drift.sh iterates `agents/*-reviewer.md` and nothing else, so
-  # these two fields are RECORDED and UNCHECKED. Extending the drift check to `skills/` is
-  # filed in TODOS.md; this assertion is what makes that extension possible, not a
+  # NON-GOAL, stated because a green A31 must not be read as drift coverage: this asserts
+  # the fields are WELL-FORMED, never that the recorded hash still matches upstream. R14
+  # is what compares them, on a synthetic fixture, with R14d as the floor over the shipped
+  # tree. A31 is what makes R14 possible — a port with no block is unpinnable — not a
   # substitute for it.
   _a31_path="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_a30_skill" | head -1)"
   _a31_sha="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_a30_skill" | head -1)"

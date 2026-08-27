@@ -74,10 +74,11 @@ the checklists live only in gstack's own checkout, reached by an absolute path h
 in gstack's `SKILL.md`. A port trades that for drift, and drift is *reported*:
 `scripts/forgeward-rubric-drift.sh` compares the recorded hashes against the installed
 gstack copy, prints only when something moved, and always exits 0. On a machine with no
-gstack it prints nothing, which is the whole point. It iterates `agents/*-reviewer.md` and
-**nothing else** — `skills/audit/SKILL.md` carries the same provenance block and is not
-re-hashed by anything, so the audit port's drift is recorded and unchecked. Filed in
-[TODOS.md](TODOS.md); the recording is what makes the fix mechanical, not the coverage.
+gstack it prints nothing, which is the whole point. Since 0.20.0 it iterates
+`skills/*/SKILL.md` as well, so `/forgeward:audit` — which carries the same provenance
+block — is monitored on the same instrument. Neither glob is a claim of completeness: a
+ported artefact placed outside both is unchecked with nobody told, which is stated as a
+non-goal in the script's header.
 
 **Deferrals to gstack are conditional, not assumed.** The table's third column is a *delta* — it
 says what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a

@@ -228,8 +228,9 @@ merging.** All three were correct until this release and all three are now false
 
 Their checklists are ports of gstack's Review Army specialists, taken under MIT with the
 source commit and a sha256 recorded in each `agents/*-reviewer.md`. That is a fork, so it
-drifts. Run the drift check — it is five sha256 comparisons against files already on
-disk, it prints nothing when there is no news, and it always exits 0:
+drifts. Run the drift check — it is a handful of sha256 comparisons against files already
+on disk (the five reviewers and `/forgeward:audit`), it prints nothing when there is no
+news, and it always exits 0:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-rubric-drift.sh"
@@ -259,10 +260,19 @@ re-ports it. The drift check tells you that happened; nothing makes it happen. A
 is no longer a disclosure to suppress — a stale one in a repo's config is harmless and
 you should not mention it.
 
-The same snapshot property applies to `/forgeward:audit`, and with **less** cover: as of
-0.19.0 `forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and nothing else, so
-the audit port's provenance block is recorded and unchecked. Do not read the drift
-check's silence as covering it. Filed in `TODOS.md`.
+The same snapshot property applies to `/forgeward:audit`, and since 0.20.0 with the same
+cover: `forgeward-rubric-drift.sh` iterates `skills/*/SKILL.md` too, so the audit port's
+`source-sha256` is monitored on the run you just made. Two of its limits matter enough to
+state here — only Phases 2-11 are hash-pinned at all, and the check is blind on a machine
+with no gstack checkout, which is the machine the port exists to serve. **That is not the
+whole list, and this sentence deliberately no longer claims to be**: the script's own
+header carries the non-goals, it is the only copy anyone maintains, and a closed count in
+a second file goes stale the first time one is added.
+
+One silence it no longer keeps: when a gstack checkout IS found and not one ported rubric
+could be read, the script now says so unconditionally, on stdout, and still exits 0. Relay
+that line like any other — it means drift was **not** checked on this run, which before
+0.20.0 was indistinguishable from a clean one.
 
 Then **carry on and gate normally**, whatever any of the above printed. Everything in
 Step 1c is disclosure, not refusal, and the distinction is the whole design

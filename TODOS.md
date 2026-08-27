@@ -111,7 +111,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 14 | **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
 | 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has five open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, 0.17.0), PR #45 (execution order), PR #47 (0.18.0's cache-glob fix) and the 0.19.0 audit port each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged, #46's inside the three Quality-axis entries it struck, and #47's and 0.19.0's inside the entries they struck in place. `## Completed`'s newest entry is 0.16.0, which is now **three** shipped versions behind. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
-| 17 | **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13/14 stay unpinned and the script is blind with no gstack checkout. | Deep-audit axis ×1 | code |
+| 17 | **✅ DONE (0.20.0, 2026-08-26).** **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13/14 stay unpinned and the script is blind with no gstack checkout. Shipped with R14/R14b as pre-fix controls and R14c/R14d as wrong-fix controls; the entry's twelve-site snapshot was wrong in both directions, as it said it would be. | Deep-audit axis ×1 (struck) | code |
 
 ### Five entries are not work
 
@@ -1048,8 +1048,53 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   the emitted report, not a unit test. Filed so the absence is recorded rather than
   discovered later as a green suite. **Priority:** P3
 
-- **`forgeward-rubric-drift.sh` iterates `agents/*-reviewer.md` and nothing else, so
-  `/forgeward:audit`'s `source-sha256` is recorded and never re-hashed.** (0.19.0,
+- **✅ FIXED (0.20.0, 2026-08-26) — `forgeward-rubric-drift.sh` now iterates
+  `skills/*/SKILL.md` as well, so `/forgeward:audit`'s `source-sha256` is compared on
+  every gate run.** Shipped with four assertions, and only two of them are controls
+  against the *pre-fix* script: R14 (a ported skill is scanned, and keyed by its
+  DIRECTORY — the basename is the constant `SKILL.md`, so a basename key reported every
+  skill as `SKILL`, and the assertion checks the broken form explicitly because
+  `ok       beta` and `ok       SKILL` are not mutually exclusive outputs) and R14b (a
+  gstack checkout is recognised by `cso/` as well as by `review/specialists/` — the
+  audit phases live under `cso/`, so a checkout holding one and not the other read as
+  no-gstack and the whole run went quiet). Both verified to fail against
+  `git show HEAD:scripts/forgeward-rubric-drift.sh`. **R14c and R14d are green against
+  the pre-fix script by construction and are controls against the plausible WRONG fix**,
+  which is the distinction worth carrying: R14c pins that the fallback scan is
+  landmark-major rather than candidate-major (candidate-major is shorter and lets a
+  `cso`-only root shadow a `review/specialists` root that sorts later, which nothing else
+  here would redden — verified by mutation), and R14d is R6's floor for the skills half,
+  reading the shipped tree with no fixture in the path.
+
+  **A fifth assertion, R14e, was added by the review that gated this branch, and the
+  finding it pins is the one worth remembering.** Landmark-major ordering is asymmetric:
+  it stops a `cso`-only root shadowing a `review/specialists` one and does nothing in the
+  other direction, because the first candidate holding `review/specialists` won outright.
+  A plugin-cache directory sorting earlier (`1.10.0` sorts before `1.9.0`) that predates
+  `cso/` was therefore selected over a complete checkout on the same machine, and the run
+  printed `no longer exist ... Upstream may have renamed or removed them` for the audit
+  port while the file it names sat one directory over — an advisory asserting something
+  false about upstream, which is strictly worse than this script's default silence.
+  Reproduced against the shipped script before fixing. A completeness pass now runs
+  first and takes the first candidate holding EVERY landmark, with the landmark-major
+  scan kept as the fallback for a genuinely partial machine. Two things made it survive
+  the first pass and both are the lesson: the code comment claimed the ordering stopped
+  "a partial checkout shadow[ing] a complete one" without naming the direction it does
+  not cover, and **R14c called one of its two partial fixture roots "complete"** — so the
+  case read as already tested by an assertion that never built it. Found independently by
+  the maintainability specialist and by `codex review`; neither the suite nor the author's
+  own critical pass caught it. The entry's twelve-site snapshot was wrong in both
+  directions. Two sites it missed were `README.md`'s no-gstack paragraph and
+  `THIRD-PARTY-LICENSES.md`'s "what this file does not do" paragraph, both of which
+  stated the old scope in prose the `\*-reviewer\.md` grep does not match — which is the
+  snapshot's own stated failure mode arriving on schedule. It also over-counted by two in
+  the other direction: `README.md`'s provenance paragraph and `test/gate-test.sh`'s R6
+  loop scope themselves to the five reviewers ON PURPOSE and are still correct, so they
+  were left alone (R14d is R6's counterpart for `skills/`, not a widening of it). No
+  replacement total is quoted here — it would rot the same way. **What it still does not
+  buy, unchanged:** the script is blind on a machine with no gstack checkout, which is
+  the machine the port exists to serve, and Phases 0/1/12/13/14 are not hash-pinned at
+  all (below). Original entry follows. (0.19.0,
   2026-08-26) The loop is `for f in "$agents_dir"/*-reviewer.md`. `skills/audit/SKILL.md`
   carries the same provenance block shape — `source-path`, `source-commit`, `source-sha256`
   against `cso/sections/audit-phases.md` — and nothing compares it to the live gstack file,
@@ -1072,11 +1117,46 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   once each; and `test/gate-test.sh` twice (the `agents/*-reviewer.md` provenance loop and
   the comment stating the script's scope). **This list is a snapshot and nothing keeps it
   current** — re-run `grep -rn '\*-reviewer\.md'` before starting, because a site added
-  after 2026-08-26 will not be here. **What it still would not buy:** the script is
+  after 2026-08-26 will not be here — and it under-counted by two for exactly that reason.
+  **What it still would not buy:** the script is
   blind on a machine with no gstack checkout, which is the machine the port exists to serve,
   and the audit's Phases 0/1/12/13/14 are not hash-pinned at all (below), so even a green
   extended run covers less than the skill's provenance block appears to promise.
   **Priority:** P2
+- **Three accepted limits in `forgeward-rubric-drift.sh`, found by the review that gated
+  0.20.0 and knowingly not fixed.** (drift-check review, 2026-08-26) All three were
+  reproduced or read against the shipped script; none changes a verdict, and each is
+  recorded here rather than in the PR body because the PR is gone after merge.
+  1. **`n_drift` / `n_miss` / `n_bad` count LINES, not entries.** Each report entry is
+     `  <name>  (<source-path>)` plus a newline, counted with `grep -c .`. `source-path`
+     comes out of a `sed` substitution and so cannot hold a newline, but `name` is the
+     basename of a **directory** under `skills/`, and a directory name containing a
+     newline splits one entry across two lines and over-counts by one. The list itself is
+     printed in full, so the user sees the truth and only the integer in the sentence
+     above it is wrong. Reachable only by a newline in a directory name inside forgeward's
+     own shipped tree, which is committed and reviewed — the same trust boundary the
+     traversal guard's comment already declines to treat as a security boundary. The fix
+     is to increment an integer at each of the three append sites and delete the three
+     `grep -c` subshells; it is cheap, but it changes no output in any reachable case, so
+     it needs a fixture with a newline-named skill directory to be verifiable at all,
+     and that is the whole cost.
+  2. **The `Searched: %s` diagnostic under-reports what was considered.** The two
+     fixed candidates (`$claude_dir/skills/gstack`, `$top/.claude/skills/gstack`) are
+     appended unguarded, so they appear whether or not they exist; the plugin-cache
+     candidates are `[ -d ]`-guarded before being appended, so a path that does not exist
+     is never named. The line therefore mixes "looked here, nothing there" with "never
+     looked", and only under `--verbose`. Dropping the `-d` guard would put an unmatched
+     glob's literal pattern into the list, which is worse; the honest fix is a wording
+     change plus an assertion pinning it, and the wording is not worth a user-visible
+     string change on this branch.
+  3. **A `.gitattributes` carrying `* text=auto eol=lf` was considered and deliberately
+     not added.** A CRLF checkout is what made the strict reader parse zero ports, and
+     normalising line endings at checkout would prevent that class at the source. It was
+     rejected for scope, not merit: it changes the checkout of **every tracked file** in
+     the repo, which is a decision about the repo rather than about this script, and the
+     tolerant reader plus the vacuity guard make the script correct on a CRLF checkout
+     regardless. Revisit it as its own PR if a second CRLF-shaped defect appears.
+  **Priority:** P3
 - **Phases 0, 1, 12, 13 and 14 of `/forgeward:audit` are ported from `cso/SKILL.md` and
   are deliberately NOT hash-pinned.** (0.19.0, 2026-08-26) Phase 14 belongs in this set
   and an earlier draft left it out, on the reasoning that it writes through
@@ -1172,6 +1252,23 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   **Priority:** —
 
 ## Housekeeping
+
+- **`live-test/setup.sh` defaults its scaffold INSIDE the repo, and `.gitignore` does not
+  cover it.** (found while running the 0.19.0 gate, 2026-08-26) `TARGET="${1:-$PWD/forgeward-live-test}"`
+  at `live-test/setup.sh`, so invoking it with no argument from the repo root creates
+  `forgeward-live-test/app/` (a git repo) and `forgeward-live-test/remote.git/` (a bare
+  repo) as untracked directories at the root. `.gitignore` holds `.impeccable/`,
+  `node_modules/`, `*.log` and `.DS_Store` — none of them match, so a later `git add -A`
+  commits two nested repositories. Reproduced: it was run by mistake here, on the
+  assumption that `live-test/*.sh` was a test harness rather than a scaffold generator,
+  and removed with `rm -rf -- ./forgeward-live-test`. `live-test/LIVE-TEST.md` documents
+  the safe invocation (`bash <PLUGIN_DIR>/live-test/setup.sh ~/forgeward-live-test`), so
+  the docs are right and the default is wrong. **The fix belongs in the default, not in
+  `.gitignore`** — same reasoning as *never fix a scanner leak with a filename exclusion*
+  in `CLAUDE.md`: an ignore entry makes the accident invisible instead of impossible, and
+  it would still leave a nested git repo in the working tree. Refuse a target inside the
+  repo, or default outside it. **Non-goal:** this is not an argument for a `.gitignore`
+  entry as well; one mechanism, and the one that prevents the write. **Priority:** P3
 
 - **The installed plugin trails master by one release — and the interesting half of this
   entry is that it said "four" until an adversarial re-derivation caught it, 37 minutes

@@ -79,12 +79,13 @@ it is the notice travelling with the copy, as MIT requires, applied conservative
 Both sections are covered by the single notice above. There is one upstream, one
 copyright holder and one licence; reproducing the text twice would not add anything.
 
-**Its provenance block is recorded and unchecked.** `forgeward-rubric-drift.sh` iterates
-`agents/*-reviewer.md` and nothing else, so the `source-sha256` in
-`skills/audit/SKILL.md` is a record, not a monitored pin. Extending the drift check to
-`skills/` is filed in `TODOS.md`. And only the Phases 2-11 source is hash-pinned at all:
-`cso/SKILL.md` mixes the audit method with gstack's own preamble, telemetry and learnings
-machinery, so a hash over it would fire on changes that have nothing to do with this port.
+**Its provenance block is checked as of 0.20.0.** `forgeward-rubric-drift.sh` iterates
+`skills/*/SKILL.md` alongside `agents/*-reviewer.md`, so the `source-sha256` in
+`skills/audit/SKILL.md` is a monitored pin rather than a record. Only the Phases 2-11
+source is hash-pinned at all, and that has not changed: `cso/SKILL.md` mixes the audit
+method with gstack's own preamble, telemetry and learnings machinery, so a hash over it
+would fire on changes that have nothing to do with this port. What is monitored is
+`cso/sections/audit-phases.md`; Phases 0, 1, 12, 13 and 14 remain unpinned.
 
 ## What this file does not do
 
@@ -94,7 +95,7 @@ generated from a lockfile and nothing scans for it. It lists source that was **c
 this tree**, which is the only category a lockfile cannot see.
 
 Nothing keeps it current automatically. `forgeward-rubric-drift.sh` notices when the
-*content* of a ported rubric moves — and only for the five files under `agents/`, never
-for `skills/audit/SKILL.md`. It does not notice a new port, a removed port, or an upstream
+*content* of a ported rubric moves — for the five files under `agents/` and for
+`skills/audit/SKILL.md`. It does not notice a new port, a removed port, or an upstream
 **relicensing**. Adding or dropping a ported file means editing this table by hand, in the
 same commit.
