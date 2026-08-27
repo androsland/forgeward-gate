@@ -6,13 +6,17 @@
 
 An **enforced, read-only conformance gate** for [gstack](https://github.com/garrytan/gstack).
 
-This plugin has **two distinct parts**:
+This plugin has **three distinct parts**:
 - **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
   hook that blocks an un-gated push. Everything below describes it.
 - **`/forgeward:ci-gate`** — an on-demand skill that detects your repo's real stack, drafts the
   CI it's missing (tests/lint **and** security scanning), and offers to make those checks
   required via branch protection. Drafting is advisory; enforcement is one explicit, confirmed
   step. See [its section](#forgewardci-gate--draft-the-ci-then-enforce-it).
+- **`/forgeward:audit`** — an on-demand, read-only whole-repo security audit: git-history
+  secrets, dependency supply chain, CI/CD, infrastructure, integrations, LLM security, skill
+  supply chain, OWASP, STRIDE. The gate is diff-scoped and deliberately does not fire it; you
+  run it before a release, after an incident, or on a schedule. Nothing enforces that it ran.
 
 gstack covers think → plan → build → review → test → ship. The one thing it lacks is a
 *blocking* gate: its `/ship` is fully automated and never refuses to publish. This plugin
@@ -44,8 +48,9 @@ fired only privacy + accessibility, returned PASS, and a **critical SQL-injectio
 shipped on a green marker** (a commercial SAST scanner independently flagged 1 critical + 13 high
 on the same diff). `security-reviewer` closes that — it fires automatically in the gate,
 diff-scoped, running a bundled framework-aware SAST rulepack plus injection/authz reasoning. It
-does **not** replace `/cso` for a deep whole-repo audit, and one reviewer won't match a commercial
-SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real scanners into CI.
+does **not** replace a whole-repo audit, and one reviewer won't match a commercial
+SAST engine's recall; for an unskippable floor, `/forgeward:ci-gate` wires real scanners into CI,
+and for the whole-repo audit `/forgeward:audit` is now forgeward's own (see below).
 
 **The five quality reviewers are ports, and the port was the point.** `quality` was
 forgeward's last axis deferred to gstack: the gate disclosed that `/review` owned it and
@@ -69,7 +74,11 @@ the checklists live only in gstack's own checkout, reached by an absolute path h
 in gstack's `SKILL.md`. A port trades that for drift, and drift is *reported*:
 `scripts/forgeward-rubric-drift.sh` compares the recorded hashes against the installed
 gstack copy, prints only when something moved, and always exits 0. On a machine with no
-gstack it prints nothing, which is the whole point.
+gstack it prints nothing, which is the whole point. Since 0.20.0 it iterates
+`skills/*/SKILL.md` as well, so `/forgeward:audit` — which carries the same provenance
+block — is monitored on the same instrument. Neither glob is a claim of completeness: a
+ported artefact placed outside both is unchecked with nobody told, which is stated as a
+non-goal in the script's header.
 
 **Deferrals to gstack are conditional, not assumed.** The table's third column is a *delta* — it
 says what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a
@@ -92,14 +101,34 @@ runs nowhere, and nothing fires, because both are installed. Naming an owner ins
 coverage was the honest version of that, but it was still a hole. The five ported reviewers close
 it: quality is reviewed here, on every machine, whether gstack is installed or not.
 
-**Still not included on purpose:** a deep whole-repo security audit, which gstack's `/cso` owns
-and `security-reviewer` explicitly does not replace — it is diff-scoped by design.
-`/forgeward:ci-gate` is the closest standing substitute. Disclosure, not refusal: forgeward is
-fully operational standalone, and this is now the only axis where a PASS means less without a
-partner tool. Pin `standalone.substitutes` in `.forgeward/config.yml` to silence an axis you
-cover another way — a disclosure that repeats after being answered is nagging, and nagging is how
-gates get switched off. (A stale `quality` entry there is harmless and suppresses nothing, because
-there is no longer a quality disclosure to suppress.)
+**Plus one skill that is not a reviewer: `/forgeward:audit` (0.19.0).** The deep whole-repo
+security audit — secrets archaeology through git history, dependency supply chain, CI/CD pipeline
+security, infrastructure and IaC, webhook and integration tracing, LLM/AI security, skill supply
+chain, OWASP Top 10, STRIDE, data classification. It is a port of gstack's `/cso` audit phases
+under MIT (see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)) and it closes the third and
+last axis forgeward deferred to a tool that need not be installed. It declares no `Edit` and no `Write`, so no code-editing tool is available to it, and its
+report is written outside the repository under audit. That narrows the write surface rather
+than closing it — `Bash` is on its tool list and must be, since the phases run git and
+scanners — so "read-only" here is a discipline the prompt asserts, backed by the gate's
+worktree snapshot and by `forgeward-scan.sh`, not a capability the tool list forbids.
+
+**The gate does not fire it, and that is not an oversight.** `/forgeward:gate` resolves a publish
+boundary and reviews a diff; the audit reads the whole repository and its history, on findings that
+move over months, so wiring it in would make every push pay for it. The gate therefore prints one
+clause naming the axis as *not run by this gate* — keyed on that, never on whether the skill is
+installed, because a presence-keyed check would now read `present` everywhere and say nothing while
+nothing verifies the audit was ever run. Run it deliberately: before a release, after an incident,
+when you inherit a repo. Put `deep-audit` in `standalone.substitutes` to silence the clause.
+
+**Still not covered by anything here:** the running system. Every reviewer and the audit read the
+repository, so platform environment variables, secret-manager contents, WAF and gateway rules, the
+IAM policy actually attached in the cloud account, and whether a branch protection rule is really
+required in GitHub are all outside what a PASS can mean. `/forgeward:ci-gate` moves part of the
+floor server-side; nothing here inspects production. Pin `standalone.substitutes` in
+`.forgeward/config.yml` to silence an axis you cover another way — a disclosure that repeats after
+being answered is nagging, and nagging is how gates get switched off. (A stale `quality` entry
+there is harmless and suppresses nothing, because there is no longer a quality disclosure to
+suppress.)
 
 ### `.forgeward/config.yml`
 
@@ -360,10 +389,10 @@ see limits.
 
 **Automated suites — `npm test`.** Five suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
-repos: `gate-test.sh` (194), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`rules-test.sh` (39), `transcript-audit-test.sh` (37) — 336 assertions. Every suite prints
+repos: `gate-test.sh` (218), `pre-push-test.sh` (15), `version-check-test.sh` (51),
+`rules-test.sh` (39), `transcript-audit-test.sh` (37) — 360 assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
-numbers here were last re-measured against a full run at 0.16.0, and `package.json`'s `test`
+numbers here were last re-measured against a full run at 0.19.0, and `package.json`'s `test`
 script, not this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
@@ -376,7 +405,7 @@ green run that checked less than it appears to. Both differ from the **hooks**, 
 JSON with `jq` *or* `python3` and fail open when neither exists: for the hooks `python3` is
 optional, for the version check it is not.
 
-`test/gate-test.sh` (194 assertions) — the in-editor layer:
+`test/gate-test.sh` (218 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
@@ -411,6 +440,16 @@ optional, for the version check it is not.
   workspace guard catches whatever the text-level guards can't see. The live control asks the
   platform whether the contamination is even stageable before asserting — a POSIX-only test would
   pass while the bug remained, because the bug *is* the path translation.
+- **A ported file's provenance and a skill's declared tool list are checked from the file** —
+  `/forgeward:audit` must enumerate at least three `allowed-tools` and none of them may be a
+  code-editing tool, and it must record a `source-path`, a 40-hex `source-commit` and a 64-hex
+  `source-sha256`. The non-empty floor is the assertion, not decoration: a *missing*
+  `allowed-tools` key grants every tool, so `grep -q Write` alone passes on the worst case.
+  Each item is normalized before it is judged, because `- Write `, `- Write  # note`,
+  `- "Write"` and `- Write(*)` are four legal spellings a whole-line match misses — all four
+  are mutation-tested. What this does **not** establish is that the audit cannot write:
+  `Bash` remains on the list, so the no-write property rests on the prompt and on the gate's
+  worktree snapshot, and this assertion must not be cited as covering it.
 
 `test/pre-push-test.sh` (15 assertions) — the enforcement layer, driven exactly as git drives
 it (refs on stdin, so no command parsing):
@@ -509,9 +548,11 @@ reviews the change, not the whole repo, and one LLM reviewer won't match a dedic
 SAST engine's recall. (One narrow exception: when the diff *redefines* an existing callable it
 reads the prior definition to establish a baseline — but the finding must still land on a changed
 line, and the baseline comes from source/migration history, which is a proxy for the deployed
-definition rather than proof of it.) Run gstack's `/cso` for a deep whole-repo audit **if you have
-gstack** — the reviewers do not assume you do, and `supply-chain-reviewer` picks up the CVE axis
-itself when `/cso` is absent. The gate's final `/ship` handoff is established standalone as of
+definition rather than proof of it.) Run `/forgeward:audit` for a deep whole-repo audit — it ships
+here as of 0.19.0 and needs no gstack, and `supply-chain-reviewer` picks up the CVE axis itself
+when gstack's `/cso` is absent. Note what that does and does not buy: the audit is guaranteed
+present on every machine, and **nothing verifies it was run** — no marker, no state, no check. It
+is a skill you invoke, not a gate you pass. The gate's final `/ship` handoff is established standalone as of
 0.8.0: with no gstack it writes the marker and hands back for a manual push instead of reporting
 a handoff that did not happen. Treat the `ci-gate` CI scanners as your unskippable floor. A gate
 PASS means the reviewed change is clean, not that the running application is secure.
@@ -773,9 +814,10 @@ fires — the line is tracked vs untracked, not the filename.
 
 MIT — see [LICENSE](LICENSE).
 
-Five of the quality reviewers embed checklist text copied verbatim from gstack, which
-is separately MIT and separately copyrighted. MIT wants its notice to travel with a
-substantial copy, and a `source-commit` pointer is not a notice, so gstack's is
+Five of the quality reviewers embed checklist text copied verbatim from gstack, and
+`/forgeward:audit` adapts gstack's `/cso` audit phases. gstack is separately MIT and
+separately copyrighted. MIT wants its notice to travel with a substantial copy, and a
+`source-commit` pointer is not a notice, so gstack's is
 reproduced in full in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) alongside the
 list of which files carry it. Nothing generates that file and nothing checks it: it
 covers source copied *into* this tree, which is the one category a lockfile cannot

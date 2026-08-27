@@ -1,19 +1,38 @@
 #!/usr/bin/env bash
 # forgeward-rubric-drift.sh
 #
-# Report whether forgeward's five ported quality rubrics still match the gstack
-# files they were ported from. Informational only: it prints at most a few lines,
-# never fails a gate, and always exits 0.
+# Report whether forgeward's ported gstack material still matches the files it was
+# ported from. Informational only: it prints at most a few lines, never fails a gate,
+# and always exits 0.
 #
 # WHY THIS EXISTS. forgeward's quality reviewers (maintainability, testing,
 # performance, api-contract, data-migration) are ports of gstack's Review Army
-# specialist checklists, taken under MIT with the source commit and a sha256
-# recorded in each `agents/*-reviewer.md`. A port removes the runtime dependency —
-# forgeward reviews quality on a machine with no gstack at all — but it buys that
-# with drift: gstack can improve a checklist and nothing would tell us. This
-# closes that loop the cheap way. It is five sha256 comparisons against files that
-# are already on disk, so it costs nothing to run inside a gate that is already
-# invoking the environment probe.
+# specialist checklists, and `skills/audit/` is a port of gstack's `/cso` audit
+# phases — all taken under MIT with the source commit and a sha256 recorded in the
+# ported file. A port removes the runtime dependency — forgeward reviews quality and
+# runs a deep audit on a machine with no gstack at all — but it buys that with drift:
+# gstack can improve a checklist and nothing would tell us. This closes that loop the
+# cheap way. It is a handful of sha256 comparisons against files that are already on
+# disk, so it costs nothing to run inside a gate that is already invoking the
+# environment probe.
+#
+# WHAT IT SCANS: `agents/*-reviewer.md` and `skills/*/SKILL.md`. Neither glob is a
+# claim that everything under it is a port — a file with no `source-path`/`source-sha256`
+# pair is skipped silently, which is the normal case for the reviewers that are not
+# ports and for `skills/gate/` and `skills/ci-gate/`.
+#
+# TWO SHAPES IT STRUCTURALLY CANNOT SEE, stated as non-goals because an unstated limit
+# reads as a claim of coverage:
+#   1. A ported artefact placed OUTSIDE both globs is unchecked with nobody told. A glob
+#      list is the same narrowing that let the skills directory go unscanned until
+#      0.20.0, and nothing detects the next one.
+#   2. Only the FIRST `source-path`/`source-sha256` pair in a file is compared (both
+#      readers end in `head -1`), so a file ported from two upstream sources is pinned
+#      on one of them. That is live, not theoretical: `skills/audit/SKILL.md` takes
+#      Phases 2-11 from `cso/sections/audit-phases.md`, which is pinned, and Phases
+#      0/1/12/13/14 from `cso/SKILL.md`, which is deliberately not — see
+#      THIRD-PARTY-LICENSES.md. A second pair added to a ported file would be read as
+#      covered and never compared.
 #
 # The alternative that was considered and rejected was reading gstack's rubrics at
 # runtime instead of porting them. That keeps the copy authoritative and auto-
@@ -60,9 +79,17 @@ set -uo pipefail
 # must not have its behaviour depend on the invoker's environment.
 export LC_ALL=C
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd "$here/.." && pwd)"
+# `pwd -P`, not `pwd`. Bash's builtin `pwd` is LOGICAL: invoked through a symlinked
+# `scripts/` directory it returns the symlink's path, `$here/..` is then the symlink's
+# parent rather than the plugin root, and `agents_dir`/`skills_dir` point at nothing.
+# Every file falls through the `[ -f "$f" ] || continue` guard and the run is silent
+# with rc=0 -- byte-identical to a clean run. Reproduced before fixing. Symlinking the
+# whole plugin directory was always safe and stays safe; this is about symlinking the
+# `scripts/` directory alone.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+root="$(cd "$here/.." && pwd -P)"
 agents_dir="$root/agents"
+skills_dir="$root/skills"
 
 verbose=0
 [ "${1:-}" = "--verbose" ] && verbose=1
@@ -127,12 +154,51 @@ else
   fi
 fi
 
+# TWO LANDMARKS AND TWO PASSES. A candidate qualifies as a gstack checkout if it holds
+# `review/specialists` (where the five reviewer rubrics come from) or `cso` (where the
+# audit phases come from). Pass 1 takes the first candidate holding ALL of them, so a
+# checkout that can answer every ported artefact always beats one that can answer some.
+# Pass 2 is the fallback for a genuinely partial machine, and it is landmark-major
+# rather than candidate-major so a `cso`-only root cannot shadow a `review/specialists`
+# root that sorts later.
+#
+# THE COMPLETENESS PASS IS NOT A NICETY. Without it the first candidate holding EITHER
+# landmark won outright, and the plugin-cache candidates arrive glob-sorted — so a
+# marketplace or version directory that sorts earlier (`1.10.0` sorts before `1.9.0`)
+# and predates `cso/` was selected over a complete checkout on the same machine. The
+# run then printed `no longer exist ... Upstream may have renamed or removed them` for
+# the audit port while the file it names sat on disk one directory over: an advisory
+# telling the user something false about upstream, which is worse than the silence this
+# script defaults to. Reproduced before the fix and pinned by R14e.
+#
+# Both passes read ONE list, so adding a third landmark cannot update one and miss the
+# other — but note that it silently widens what pass 1 counts as "complete", and a
+# machine holding two of three landmarks then falls through to pass 2. Neither landmark
+# matches `~/.claude/skills/review`, the stub that holds SKILL.md and nothing else,
+# which is the configuration this must keep NOT firing on. A port from some third
+# gstack subtree would need its landmark added here; nothing detects that.
+gs_landmarks=(review/specialists cso)
 gs_root=""
 for cand in "${gs_roots[@]:-}"; do
-  [ -n "$cand" ] && [ -d "$cand/review/specialists" ] || continue
-  gs_root="$cand"
-  break
+  [ -n "$cand" ] || continue
+  all_present=1
+  for landmark in "${gs_landmarks[@]}"; do
+    [ -d "$cand/$landmark" ] || { all_present=0; break; }
+  done
+  if [ "$all_present" -eq 1 ]; then
+    gs_root="$cand"
+    break
+  fi
 done
+if [ -z "$gs_root" ]; then
+  for landmark in "${gs_landmarks[@]}"; do
+    for cand in "${gs_roots[@]:-}"; do
+      [ -n "$cand" ] && [ -d "$cand/$landmark" ] || continue
+      gs_root="$cand"
+      break 2
+    done
+  done
+fi
 
 if [ -z "$gs_root" ]; then
   [ "$verbose" -eq 1 ] && printf 'rubric-drift: no gstack rubrics at any searched root — nothing to compare. Searched: %s\n' "${gs_roots[*]:-<none>}"
@@ -143,20 +209,65 @@ fi
 drifted=''
 missing=''
 malformed=''
+# TWO COUNTERS, NOT ONE, AND THEY ANSWER DIFFERENT QUESTIONS. `parsed` is how many files
+# carried a readable provenance block; `checked` is how many of those had a live upstream
+# file to hash. They diverge exactly when a port goes missing upstream, which is reported,
+# and `parsed` is the one the vacuity guard needs -- a run that parses nothing has nothing
+# to say about drift and must not look like a run that found none.
+parsed=0
 checked=0
 
-for f in "$agents_dir"/*-reviewer.md; do
+for f in "$agents_dir"/*-reviewer.md "$skills_dir"/*/SKILL.md; do
   [ -f "$f" ] || continue
-  src_path="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$f" | head -1)"
-  src_sha="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$f" | head -1)"
-  [ -n "$src_path" ] && [ -n "$src_sha" ] || continue   # not a ported reviewer
+  # BOTH READERS ARE DELIBERATELY TOLERANT ON THE THINGS THAT ARE NOT THE VALUE, because
+  # every way this reader can miss produces the same output as a clean run. Two shapes
+  # were reproduced against the strict form: a CRLF checkout (the trailing `\r` defeated
+  # a ` *$` anchor and parsed ZERO ports out of the whole plugin), and an uppercase
+  # digest (PowerShell's `Get-FileHash` and GitHub's blob view both emit uppercase, and
+  # this is a plugin people install on Windows). `[[:space:]]` under the script-wide
+  # `LC_ALL=C` covers `\r` and tabs; the digest is matched case-insensitively and folded
+  # to lowercase, because `A9F` and `a9f` are the same hash and rejecting one of them
+  # buys nothing. The `parsed` guard below is the backstop for the misses this does not
+  # anticipate -- a tolerant regex narrows the class, it does not close it.
+  src_path="$(sed -n 's/^[[:space:]]*source-path:[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' "$f" | head -1)"
+  src_sha="$(sed -n 's/^[[:space:]]*source-sha256:[[:space:]]*\([0-9a-fA-F]\{64\}\)[[:space:]]*$/\1/p' "$f" | head -1)"
+  [ -n "$src_path" ] && [ -n "$src_sha" ] || continue   # not a port
+  # `sed y///`, not `tr` and not bash's `${x,,}`. `tr` would be a NEW external tool on a
+  # script whose whole dependency set is one digest tool plus sed/cut/basename/dirname/
+  # head/grep -- and R8 caught it the moment it was added, by running this file under a
+  # PATH holding only that set. `${x,,}` is bash 4.0, and the `shasum` branch above exists
+  # because this runs on macOS, where `/usr/bin/env bash` can still be 3.2 and the
+  # expansion is a SYNTAX error -- which takes the whole script down rather than one
+  # comparison. `y` is POSIX sed and costs nothing already spent.
+  src_sha="$(printf '%s' "$src_sha" | sed 'y/ABCDEF/abcdef/')"
+  parsed=$((parsed + 1))
+
+  # NAMING. A reviewer is `agents/<name>-reviewer.md` and names itself; a ported skill
+  # is `skills/<name>/SKILL.md`, where the basename is a constant and the DIRECTORY
+  # carries the identity. Taking the basename for both reported the audit skill as
+  # `SKILL` — not a name, and the same string for every skill that is ever ported, so
+  # two drifting skills would print one indistinguishable line each. Derived once here,
+  # above the traversal guard, so the malformed report uses the same key as every other
+  # branch -- and each of the four exits a file can take is pinned by its own assertion,
+  # because "derived once" is a claim about this line and the branches are what a reader
+  # sees: R14 (ok), R14f (drifted), R14c (missing) and R14g (malformed). This comment
+  # said "pinned by R14" for four rounds and R14 reaches only the first of them, which is
+  # the shape worth naming: a comment asserting coverage it does not have is a defect on
+  # its own account, not merely a label on the gap it hides.
+  # What this does NOT resolve: `agents/x-reviewer.md` alongside
+  # `skills/x-reviewer/SKILL.md` would print the same key twice. No such pair exists and
+  # nothing enforces it.
+  case "$(basename "$f")" in
+    SKILL.md) name="$(basename "$(dirname "$f")")" ;;
+    *)        name="$(basename "$f" .md)" ;;
+  esac
 
   # A `source-path` with a `..` segment resolves OUTSIDE the rubric tree, and the
   # comparison then reports `ok` for a file that is not the rubric -- the false
   # all-clear this script exists to refuse. This is NOT a security boundary and must
-  # not be read as one: `agents/*-reviewer.md` are committed, reviewed files, and
-  # anyone who can write one can already put arbitrary instructions in a prompt the
-  # model executes, which is a far larger lever than a hash oracle. The guard is here
+  # not be read as one: both globs read committed, reviewed files that the model
+  # EXECUTES as instructions -- a reviewer prompt and a skill alike -- so anyone who can
+  # write one already has a far larger lever than a hash oracle. The guard is here
   # for the realistic case -- a hand-edited or mis-ported provenance block -- and it
   # is LOUD rather than silent, because unlike a reviewer with no provenance at all
   # (normal: six shipped reviewers are not ports) a malformed one is unambiguously a
@@ -166,13 +277,11 @@ for f in "$agents_dir"/*-reviewer.md; do
   # concatenation makes it `$gs_root//etc/passwd`, which stays inside the tree and is
   # already reported as missing (verified). Pinned by R12.
   case "/$src_path/" in
-    */../*) malformed="$malformed  $(basename "$f" .md)  ($src_path)
+    */../*) malformed="$malformed  $name  ($src_path)
 "
             continue ;;
   esac
 
-  checked=$((checked + 1))
-  name="$(basename "$f" .md)"
   live="$gs_root/$src_path"
 
   if [ ! -f "$live" ]; then
@@ -180,6 +289,7 @@ for f in "$agents_dir"/*-reviewer.md; do
 "
     continue
   fi
+  checked=$((checked + 1))
 
   now="$(sha256_of "$live")"
   if [ "$now" != "$src_sha" ]; then
@@ -190,21 +300,42 @@ for f in "$agents_dir"/*-reviewer.md; do
   fi
 done
 
-[ "$verbose" -eq 1 ] && printf 'rubric-drift: %d ported rubric(s) checked against %s\n' "$checked" "$gs_root"
+[ "$verbose" -eq 1 ] && printf 'rubric-drift: %d ported rubric(s) parsed, %d checked against %s\n' "$parsed" "$checked" "$gs_root"
+
+# THE VACUITY GUARD, AND IT IS THE REASON SILENCE FROM THIS SCRIPT MEANS ANYTHING. Every
+# other branch here is verbose-only, and the gate invokes this script with no arguments --
+# so before this existed, "checked 6 files, all clean" and "checked 0 files because the
+# reader broke" were the same empty output on the same exit code. That is the worst shape
+# an advisory can take: it is not that the check is missing, it is that its absence is
+# indistinguishable from its success. Unconditional on purpose.
+#
+# It fires only when a gstack root WAS found, so the ordinary no-gstack machine -- the one
+# this port exists to serve -- stays silent as designed. The one legitimate configuration
+# it would fire on is a fork that has deleted every ported rubric while keeping this
+# script; there the remedy is to delete the script too, and an informational line that
+# never fails a gate is an acceptable cost for closing a silent-zero.
+if [ "$parsed" -eq 0 ]; then
+  printf 'NOTE: a gstack checkout was found at %s but NO ported rubric could be read.\n' "$gs_root"
+  printf 'forgeward ships ported rubrics, so this is a defect in this run rather than a clean result:\n'
+  printf 'the provenance blocks did not parse (a CRLF checkout does this), or agents/ and skills/ were\n'
+  printf 'not where this script looked. Drift was NOT checked. Re-run with --verbose for the roots tried.\n'
+fi
 
 n_drift=$(printf '%s' "$drifted" | grep -c . || true)
 n_miss=$(printf '%s' "$missing" | grep -c . || true)
 n_bad=$(printf '%s' "$malformed" | grep -c . || true)
 
 if [ "$n_drift" -gt 0 ]; then
-  printf 'NOTE: %d ported quality rubric(s) have drifted from the installed gstack copy:\n%s' "$n_drift" "$drifted"
+  printf 'NOTE: %d ported rubric(s) have drifted from the installed gstack copy:\n%s' "$n_drift" "$drifted"
   printf 'Re-port from %s and update source-commit/source-sha256 in the same commit.\n' "$gs_root"
   printf 'The gate is unaffected — forgeward'"'"'s copy is authoritative and was used for this run.\n'
 fi
 
 if [ "$n_miss" -gt 0 ]; then
   printf 'NOTE: %d ported rubric(s) no longer exist in the installed gstack copy:\n%s' "$n_miss" "$missing"
-  printf 'Upstream may have renamed or removed them. forgeward'"'"'s copy still works; drift can no longer be checked for these.\n'
+  printf 'Compared against %s. Upstream may have renamed or removed them -- but a wrong root or an\n' "$gs_root"
+  printf 'unreadable directory produces this same line, so check that path before believing the upstream\n'
+  printf 'half. forgeward'"'"'s copy still works either way; drift can no longer be checked for these.\n'
 fi
 
 if [ "$n_bad" -gt 0 ]; then

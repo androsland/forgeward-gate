@@ -5,6 +5,142 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — forgeward takes the deep-audit axis too, as a SKILL rather than a reviewer
+
+**Date:** 2026-08-26 · **Version:** 0.19.0
+
+**The decision, in one line.** gstack's `/cso` audit phases are **ported** into
+`skills/audit/SKILL.md` as `/forgeward:audit`, a whole-repo read-only skill; the gate's
+Step 1c stops deferring `deep-audit` to a tool that may not be installed. This closes the
+last of the three delta-scoping holes this file records — `/cso` for dependency CVEs
+(2026-08-05; that entry carries a date and no version field), `quality` (0.17.0), and now
+`deep-audit`. **No axis on this gate is owned by a
+tool that might not be installed.**
+
+**It reverses a scoping decision this repo's own TODOS.md made the same day** (the 0.17.0
+quality-port entry, 2026-08-26), which said `/cso` is "orchestration, and the delta-scoping hole is therefore real and
+unfixed". That reasoning had one unexamined step: it treated *orchestration* and
+*portable* as opposites. `/cso` is orchestration expressed **entirely in prose** — phase
+order, exclusion rules, severity bars, a findings schema — and prose is exactly what
+forgeward already ports. What is genuinely unportable is the parts of `cso/SKILL.md` that
+are gstack plumbing (telemetry, config, its own UX), and those were not ported.
+
+**Why a skill and not a seventh reviewer, which is the decision that actually matters.**
+The quality port worked because a checklist *is* a reviewer — diff-scoped, fired from the
+Step 1 table, binding the gate. An audit is none of those things:
+
+1. **Scope.** The gate reviews `<base>...HEAD`. The audit reviews the repository, including
+   files no diff has touched in a year — git history, CI config, IaC, the dependency tree.
+   Running it per-gate would review the same 400 files on every three-line PR.
+2. **Cost.** It is fifteen phases with parallel verification. That is a deliberate,
+   occasional act — before a release, after an incident, on a schedule — not a per-push tax.
+3. **Falsifiability.** A gate FAIL must be about the diff in front of the user. A finding
+   in code the PR did not touch is a true finding and an unfair block, and the fastest way
+   to get a gate switched off is to fail it for something the author did not do.
+
+So `/forgeward:audit` carries `disable-model-invocation: true`, is not in the Step 1 table,
+and **is not fired by Step 2**. That is a design decision, not an omission, and the skill
+and `skills/gate/SKILL.md` both say so.
+
+**Why it is NOT the `/review` situation, even though it looks identical.** The gate cannot
+invoke `/review` because `/review` holds `Edit` and `Write`, and Step 2 proves the gate is
+read-only by snapshotting the tree and diffing it afterwards. `/forgeward:audit` holds
+neither, so it *could* run inside that envelope. It is excluded on scope and cost alone.
+Recording the difference matters because the two exclusions look the same from outside and
+have different futures: the `/review` one is structural and permanent, this one is a
+judgement that could be revisited if the audit ever grew a diff mode cheap enough to fire.
+
+**What the disclosure is keyed on, and why the obvious key is wrong.** Step 1c used to read
+the environment probe's `gstack_cso` field and disclose when it was absent. After the port
+that key is useless in the worst direction: the axis has an owner that ships *with
+forgeward*, so a presence check reads `present` on every machine and would license the
+sentence "deep-audit is covered" — which nothing checked. The line is keyed on **"not run
+by this gate"** instead. That is a fact about this gate's scope, it is true on every
+machine, and it cannot decay into a false claim. The probe still emits `gstack_cso`;
+**nothing in Step 1c reads it any more.**
+
+**Read-only is a discipline with a structural floor under it — not a structural property,
+and the first draft of this entry overstated it.** The skill declares `allowed-tools`
+without `Edit`, `Write`, `NotebookEdit` or `MultiEdit`, which removes every code-editing
+tool. It does not remove `Bash`, which writes arbitrarily and has to stay because the
+phases run git and scanners, nor `Agent`, whose subagents the list does not constrain.
+Phase 14 settles it: the audit writes its own report, and Bash is the only thing it could
+be writing it with. So what is enforced is that no *editing* tool was declared; the
+no-write-inside-the-repo rule is prose, backed by `/forgeward:gate` Step 2's worktree
+snapshot and by `forgeward-scan.sh`.
+
+A30 pins the checkable half, with a floor. The naive assertion — `grep -q Write
+skills/audit/SKILL.md` returns nothing — passes on the *worst* input, because a **missing**
+`allowed-tools` key grants every tool, so A30 requires at least three tools enumerated
+**and** no editing tool among them. Each item is normalized before it is judged: review
+found A30 fail-OPEN on `- Write ` (trailing space), `- Write<TAB>`, `- Write  # note`,
+`- "Write"` and `- Write(*)`, every one of them a legal spelling that declares the tool
+while a whole-line `grep -x` for the bare word misses it. Mutation-verified in both
+directions across twelve inputs, and against gawk, mawk and busybox awk.
+
+**Two divergences from the source, both deliberate and both stated in the skill.**
+
+- **It writes its report outside the repository.** `/cso` writes
+  `.gstack/security-reports/{date}.json` into the tree, which is what makes its trend
+  tracking work. forgeward will not write into a repo it is auditing, so it uses
+  `forgeward-artifact-dir.sh` — and that costs the trend feature, because the path carries
+  a per-process `$$` level. The skill says trend tracking is unreliable and names all four
+  reasons rather than promising it.
+- **It does not exempt forgeward from its own skill supply-chain phase.** `/cso` exempts
+  gstack there. A phase that audits installed skills for prompt injection and credential
+  access, and then skips the skill running it, is a check with a hole shaped like itself.
+
+**Blind spots, stated so the port is not read as more than it is.**
+
+1. **Nothing verifies it ran.** No marker, no state, no check. That is the same limit the
+   gate discloses about `/review`, arrived at from the other side, and it is *better* than
+   the deferral it replaces — the owner is always present — without being coverage. Filed.
+2. **Its provenance was recorded and unchecked; fixed at 0.20.0.** `forgeward-rubric-drift.sh`
+   iterated `agents/*-reviewer.md` only, so `skills/audit/SKILL.md`'s `source-sha256` was
+   compared to nothing. It could not ride along with this port because the positive control's
+   fixture is the file this port creates. It now globs `skills/*/SKILL.md` too, keys a ported
+   skill by its DIRECTORY (the basename is the constant `SKILL.md`, so a basename key reported
+   every skill as `SKILL`), and recognises a gstack checkout by `cso/` as well as by
+   `review/specialists/` — R14/R14b were verified to fail against the pre-fix script, and
+   R14c/R14d against the plausible wrong fix.
+
+   The second landmark then needed a **third** pass of its own, found by review and
+   reproduced before it was fixed. Landmark-major ordering stops a `cso`-only root
+   shadowing a `review/specialists` one, and does nothing in the other direction: the
+   first candidate holding `review/specialists` won outright, so a plugin-cache directory
+   sorting earlier (`1.10.0` sorts before `1.9.0`) that predates `cso/` was selected over
+   a complete checkout on the same machine, and the run printed `no longer exist ...
+   Upstream may have renamed or removed them` for the audit port while the file it names
+   sat one directory over. **A false claim about upstream is worse than the silence this
+   script defaults to**, which is why it was fixed rather than documented: a completeness
+   pass now runs first and takes the first candidate holding every landmark, with the
+   landmark-major scan kept as the fallback for a genuinely partial machine. Pinned by
+   R14e, verified to redden with the completeness pass removed. R14c was reworded in the
+   same commit — it had called one of its two partial fixture roots "complete", which is
+   how the asymmetry read as already covered.
+3. **Five of the fifteen phases are not hash-pinned.** Ten (Phases 2–11) come from
+   `cso/sections/audit-phases.md` and are covered by the recorded `source-sha256`. Phases
+   0, 1, 12, 13 and 14 come from `cso/SKILL.md`, which mixes the ported orchestration with
+   gstack plumbing, so a whole-file hash would report drift for reasons unrelated to them;
+   that is stated in the provenance block rather than papered over with a noisy hash. Phase
+   14 is in the same unpinned set: an earlier draft of this entry called it forgeward's own
+   because it writes through `forgeward-artifact-dir.sh`, but that is only the destination —
+   the report *schema* it specifies (`fingerprint`, `exploit_scenario`, `playbook`,
+   `filter_stats`, `trend`) is drawn from `cso/SKILL.md`, which is what
+   THIRD-PARTY-LICENSES.md has said all along. The attribution document was right and this
+   entry was wrong. The count and the enumeration at the head of this entry were corrected
+   with it — an earlier draft fixed the tail and left "four of the fifteen" and "0, 1, 12
+   and 13" standing eight lines above, which is the shape a universal quantifier fails in:
+   the sentence asserting the fix was itself the only place the fix had landed. No count of
+   the call sites is claimed here, deliberately; `grep -rn '0, 1, 12' --include='*.md'` is
+   the check, and it is cheaper to re-run than to keep a list current.
+4. **It reads the repository, not the running system.** No requests are made, and a webhook
+   or an IAM policy is audited as it is written down, never as it is deployed.
+
+**MIT attribution.** The port is adapted rather than verbatim, and gstack's notice is
+reproduced anyway — conservatively, in `THIRD-PARTY-LICENSES.md`, with one notice covering
+both port sections and a table naming which forgeward file came from which gstack file.
+
 ## DECISION — forgeward takes the quality axis, by porting gstack's five specialist checklists
 
 **Date:** 2026-08-26 · **Version:** 0.17.0
@@ -76,6 +212,36 @@ also its failure signal, so it needs a positive control the way E1 needs E2.
 2. **The drift check is blind on the machine the port exists to serve.** No gstack means
    nothing to compare, and it prints nothing — which is byte-identical to "no drift". Its
    silence there is not a clean bill, and `--verbose` is the only thing that separates them.
+
+   **The other silent zero was closed at 0.20.0, and the two are different cases.** When a
+   gstack checkout IS found and the script then reads zero ported rubrics, that used to
+   produce the same empty stdout and the same `exit 0` as a clean run — so "checked six,
+   all clean" and "checked none, because the reader broke" were one output. That is the
+   worst shape an advisory can take: its absence is indistinguishable from its success. A
+   `parsed` counter and an unconditional NOTE now separate them. Two ways to reach zero
+   were reproduced against the shipped script before either was fixed — a **CRLF checkout**,
+   where the trailing `\r` defeated the reader's ` *$` anchor and parsed zero ports out of
+   the whole plugin, and an **uppercase digest**, which PowerShell's `Get-FileHash` and
+   GitHub's blob view both emit on a plugin people install on Windows. Both readers were
+   made tolerant of everything that is not the value. The tolerant regex narrows the class
+   of misses; the counter is the backstop for the ones it does not anticipate, which is why
+   both landed and neither was treated as sufficient. Pinned by R14h (guard fires in quiet
+   mode) and R14i (CRLF plus uppercase parses clean), each verified to redden alone under
+   mutation. It stays silent on the no-gstack machine of the bullet above — deliberately,
+   since that machine is the design target and has nothing to compare.
+
+   Two things it does not do. It is informational and never fails a gate, so a fork that
+   deleted every ported rubric while keeping the script gets a line it cannot silence
+   except by deleting the script, which is the right remedy there. And `parsed` counts
+   files with a **readable provenance block**, not files that were compared: `checked` is
+   the second counter, and they diverge exactly when a port has gone missing upstream.
+
+   A third silent-zero of the same family was fixed alongside them: `here` was resolved
+   with bash's builtin `pwd`, which is **logical**, so invoking the script through a
+   symlinked `scripts/` directory resolved the plugin root to the symlink's parent, every
+   file fell through the `[ -f "$f" ] || continue` guard, and the run was byte-identical to
+   a clean one. `pwd -P` on both resolutions. Symlinking the whole plugin directory was
+   always safe and stays safe. Pinned by R14l.
 3. **Nothing verifies the ported prompts.** `agents/` is out of scope for `npm test` by
    design; reviewer prompts are judged by the live-test suite, and the five new ones have not
    been run live. D6 asserts the provenance blocks are complete, which is a property of the
