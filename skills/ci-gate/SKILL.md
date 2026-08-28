@@ -22,6 +22,14 @@ and **green-on-arrival** drafting (never emit a step that would fail in CI) — 
 half it was missing: it drafts the **security** pipeline too, and it offers to make the
 checks **required** so a red scan blocks the merge for everyone.
 
+## Runtime compatibility
+
+This skill is shared by Claude Code and Codex. Bundled commands use
+`${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`: Codex supplies `PLUGIN_ROOT`, while Claude
+Code supplies `CLAUDE_PLUGIN_ROOT`. If both are empty, stop and report that the plugin
+root is unavailable; never guess a cache path. Treat a path supplied in the invocation
+prompt as the scope; Claude Code may also expose that text as `$ARGUMENTS`.
+
 Two phases, clearly separated:
 - **Draft (advisory, default).** Detect the stack, write the CI that's missing, report the
   gaps. You review and commit the files.
@@ -44,7 +52,8 @@ Two phases, clearly separated:
 4. **Detect, don't impose.** Secrets manager, build step, non-Node runtimes, provider — surface
    them as decisions; don't force a tool the repo doesn't use.
 
-**Scope:** `$ARGUMENTS` if a path was given, else the repo root. State it in one line.
+**Scope:** the path given in the invocation prompt (Claude Code: `$ARGUMENTS`) if one
+was supplied, else the repo root. State it in one line.
 
 ## Step 0 — Detect the real default branch
 
@@ -238,7 +247,7 @@ Security scanning is now **in scope**, not deferred. CI runners have no forgewar
 
 ```bash
 mkdir -p .forgeward/rules
-cp "${CLAUDE_PLUGIN_ROOT}/rules/wp-security.yml" .forgeward/rules/wp-security.yml
+cp "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/rules/wp-security.yml" .forgeward/rules/wp-security.yml
 ```
 
 Pick the scanner set from the stack (base set every repo; WPCS added for WordPress/PHP), then write

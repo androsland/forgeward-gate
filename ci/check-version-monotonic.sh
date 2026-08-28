@@ -2,18 +2,19 @@
 # ci/check-version-monotonic.sh [<base-ref>]        default base-ref: origin/master
 #
 # Refuse a merge that would move the plugin version BACKWARD, and refuse one that
-# moves only some of the three manifests that carry it. Exit 0 and print a one-line
+# moves only some of the four manifests that carry it. Exit 0 and print a one-line
 # summary when the branch is safe to merge, exit 1 and name the offending file when
 # it is not.
 #
-# WHY THIS EXISTS. The version lives in three manifests -- package.json,
-# .claude-plugin/plugin.json and .claude-plugin/marketplace.json -- and nothing until
+# WHY THIS EXISTS. The version lives in four manifests -- package.json,
+# .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and
+# .codex-plugin/plugin.json -- and nothing until
 # now checked that a merge moved it forward, so merge ORDER was load-bearing whenever
 # two version-bumping PRs were open at once. On 2026-08-06 #17 bumped to 0.7.5 and #18
 # to 0.7.6; merging #17 second would have taken the marketplace manifest 0.7.6 -> 0.7.5,
 # and most plugin-manager update logic reads a backward version as no-op-or-worse rather
 # than as an upgrade. That instance was avoided by merging #17 first, BY HAND. The hazard
-# was never fixed, only dodged, and the only thing keeping three manifests monotonic was
+# was never fixed, only dodged, and the only thing keeping four manifests monotonic was
 # whoever happened to be paying attention at merge time.
 #
 # WHY CI AND NOT THE GATE. The gate is structurally the wrong layer and cannot be made
@@ -44,7 +45,7 @@
 #      changes, the refusal is a red CI run and a deliberate edit here -- not a silent
 #      mis-comparison, which is what a hand-rolled prerelease ordering would produce.
 #   3. It requires EXACTLY ONE `version` key per manifest, AT ANY DEPTH, and refuses
-#      ambiguity rather than guessing which one is the plugin's. All three files have
+#      ambiguity rather than guessing which one is the plugin's. All four files have
 #      exactly one today (marketplace.json's sits under `.plugins[]`). A nested version
 #      added later turns this red on the next PR, which is the intended way to find out.
 #      Duplicate keys within one object are refused separately and by name: a parser
@@ -53,7 +54,7 @@
 #   4. A manifest absent from the base ref is skipped for the backward comparison (there
 #      is no prior value to compare against) but still has to agree with the others on
 #      the head side. Adding a manifest is a legitimate configuration and must not fire.
-#      ALL THREE absent is the different case and is refused, not skipped: a run that
+#      ALL FOUR absent is the different case and is refused, not skipped: a run that
 #      compared nothing has no evidence to report a pass from, and "ok" on zero
 #      comparisons is the vacuous green this repo has been burned by before. The cost is
 #      that the one-time bootstrap PR introducing the manifests to a repo goes red and
@@ -127,7 +128,7 @@ export LC_ALL=C
 
 BASE="${1:-origin/master}"
 
-MANIFESTS="package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json"
+MANIFESTS="package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json"
 
 die() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -381,15 +382,15 @@ command -v python3 >/dev/null 2>&1 \
 git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1 \
   || die "base ref '$BASE' does not resolve -- CI needs a full-history checkout (fetch-depth: 0)"
 
-# --- head side: all three manifests must agree with each other --------------------
+# --- head side: all four manifests must agree with each other ---------------------
 # READ FROM THE OBJECT STORE, NOT THE WORKING TREE, and this is round 7's fix rather than
 # a tidiness preference. The loop used to be `[ -f "$f" ]` then `read_version "$f" < "$f"`.
 # A `<` redirect is a plain open(2), and open(2) FOLLOWS SYMLINKS -- while git natively
 # tracks symlinks as mode 120000, so a fork PR author can commit `package.json` as a link
 # to any absolute path on the CI runner and the check will dutifully parse whatever is
-# there. Reproduced end to end: three manifests committed as symlinks to a file OUTSIDE
+# there. Reproduced end to end: four manifests committed as symlinks to a file OUTSIDE
 # the checkout, base at 9.0.0, and the check printed `ok: version 13.37.0, not behind
-# master (3 manifest(s) compared, all three agree)` and exited 0 -- a PASS asserted about
+# master (4 manifest(s) compared, all four agree)` and exited 0 -- a PASS asserted about
 # a commit that contains no version field anywhere, on the strength of a file that is not
 # in the commit and never will be. Pointed at a file that merely EXISTS on the runner it
 # also reflects a fragment of it into a world-readable job log.
@@ -419,7 +420,7 @@ for f in $MANIFESTS; do
   if [ -z "$head_version" ]; then
     head_version="$v"
   elif [ "$v" != "$head_version" ]; then
-    die "manifests disagree: $f says $v, an earlier manifest says $head_version -- a release bumps all three together"
+    die "manifests disagree: $f says $v, an earlier manifest says $head_version -- a release bumps all four together"
   fi
 done
 
@@ -467,4 +468,4 @@ done
 
 [ "$compared" -gt 0 ] || die "no manifest on $BASE could be compared -- refusing to report a pass on zero evidence"
 
-printf 'ok: version %s, not behind %s (%d manifest(s) compared, all three agree)\n' "$head_version" "$BASE" "$compared"
+printf 'ok: version %s, not behind %s (%d manifest(s) compared, all four agree)\n' "$head_version" "$BASE" "$compared"

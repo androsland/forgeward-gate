@@ -1,0 +1,32 @@
+{
+  "name": "forgeward",
+  "version": "0.25.0",
+  "description": "Enforced, read-only conformance gate with diff-scoped reviewers and client-independent Git pre-push enforcement.",
+  "author": {
+    "name": "forgeward"
+  },
+  "repository": "https://github.com/androsland/forgeward-gate",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "code-review",
+    "quality-gate"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "Forgeward",
+    "shortDescription": "Read-only review gate before publishing",
+    "longDescription": "Run only the reviewers a diff needs, require explicit PASS verdicts, and write a marker consumed by Forgeward's standalone Git pre-push hook.",
+    "developerName": "forgeward",
+    "category": "Productivity",
+    "capabilities": [
+      "Read"
+    ],
+    "websiteURL": "https://github.com/androsland/forgeward-gate",
+    "defaultPrompt": [
+      "Run Forgeward's read-only gate on the current diff.",
+      "Audit this repository with Forgeward."
+    ]
+  }
+}

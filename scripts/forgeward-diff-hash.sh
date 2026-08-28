@@ -16,13 +16,18 @@
 #
 # VERSION-BEARING MANIFESTS are not excluded either — they are hashed as canonical
 # snapshots with ONLY the version field neutralized, so a pure version bump is
-# invisible while ANY other change to the same file still flips the hash. Three are
-# handled, because a Claude Code plugin carries its version in three places and a
+# invisible while ANY other change to the same file still flips the hash. Four are
+# handled, because this dual-client package carries its version in four places and a
 # release bumps all of them together:
 #
 #   package.json                      .version              (mode: top)
 #   .claude-plugin/plugin.json        .version              (mode: top)
 #   .claude-plugin/marketplace.json   .plugins[].version    (mode: plugins)
+#   .codex-plugin/plugin.json         .version              (mode: top)
+#
+# .agents/plugins/marketplace.json intentionally has no version in the current Codex
+# marketplace schema. It remains in the ordinary diff, so every substantive change to
+# installation policy or source metadata invalidates the marker.
 #
 # gstack's version bump (bin/gstack-version-bump writePkgVersion) sets ONLY
 # .version then re-serializes the whole file, which is why the canonical snapshot
@@ -30,7 +35,7 @@
 # dependency added between gate and push re-gates.
 #
 # Before this, only package.json was neutralized, so every release of a PLUGIN
-# repo flipped the hash on the other two manifests and forced a spurious re-gate —
+# repo flipped the hash on the other version-bearing manifests and forced a spurious re-gate —
 # the "cosmetic bookkeeping stays invisible" contract at line 12 held for ordinary
 # repos but not for a plugin, i.e. not for this repo itself.
 #
@@ -176,6 +181,7 @@ diff_part="$(git diff "${base}...${tip}" -- . \
   ':(exclude)package.json' \
   ':(exclude).claude-plugin/plugin.json' \
   ':(exclude).claude-plugin/marketplace.json' \
+  ':(exclude).codex-plugin/plugin.json' \
   2>/dev/null)"
 
 # Part 2 — canonical snapshots at <tip>, version neutralized per manifest.
@@ -228,6 +234,7 @@ diff_part="$(git diff "${base}...${tip}" -- . \
 pkg_part="$(snapshot_manifest package.json top)" || exit 1
 plugin_part="$(snapshot_manifest .claude-plugin/plugin.json top)" || exit 1
 market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)" || exit 1
+codex_plugin_part="$(snapshot_manifest .codex-plugin/plugin.json top)" || exit 1
 
 # Assembled so that a repo with neither plugin manifest produces the EXACT bytes
 # this script produced before they were handled — same sections, same separators,
@@ -235,5 +242,6 @@ market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)" || ex
 payload="${diff_part}"$'\n''--FORGEWARD-PKG--'$'\n'"${pkg_part}"
 [ -n "$plugin_part" ] && payload="${payload}"$'\n''--FORGEWARD-PLUGIN--'$'\n'"${plugin_part}"
 [ -n "$market_part" ] && payload="${payload}"$'\n''--FORGEWARD-MARKET--'$'\n'"${market_part}"
+[ -n "$codex_plugin_part" ] && payload="${payload}"$'\n''--FORGEWARD-CODEX-PLUGIN--'$'\n'"${codex_plugin_part}"
 
 printf '%s\n' "$payload" | sha256sum | awk '{print $1}'

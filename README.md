@@ -8,6 +8,10 @@ An **enforced, read-only conformance gate**. Nothing else has to be installed fo
 work; where [gstack](https://github.com/garrytan/gstack) is present it integrates with it
 rather than duplicating it.
 
+The same checkout is packaged for **Claude Code and Codex**. Each client selects its own
+manifest and lifecycle-hook file automatically; the skills, reviewer rubrics, scripts, marker,
+and standalone Git enforcement hook are shared.
+
 This plugin has **three distinct parts**:
 - **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
   hook that blocks an un-gated push. Everything below describes it.
@@ -195,12 +199,18 @@ seo:
   all-PASS writes a pass marker — then hands off to gstack's `/ship` in one motion if `/ship`
   is installed, or tells you to push and open the PR yourself if it is not. The marker is
   written either way, so the push hook allows the push regardless.
-- **Enforcement — fast feedback in Claude Code, and the real lock at `pre-push`:**
-  1. `UserPromptExpansion` on a typed ship command → halts immediately if there's no fresh PASS
-     for the current code, before any work runs. The matcher is `^([A-Za-z0-9_]+-)?ship$`, so it
-     fires on `ship` **and** any prefixed variant (`gstack-ship` and any custom gstack `--prefix`),
-     and not on lookalikes (`shipment`, `airship`).
-  2. `PreToolUse` on `Bash` → two things. A **best-effort reminder**: on a `git push` /
+- **Enforcement — client-specific fast feedback, and the real lock at `pre-push`:**
+  1. Claude Code loads `hooks/hooks.json`. Its `UserPromptExpansion` matcher selects a typed
+     ship command and blocks with exit 2 when the current code lacks a fresh PASS. The matcher
+     is `^([A-Za-z0-9_]+-)?ship$`, covering `ship`, `gstack-ship`, and custom prefixes without
+     catching `shipment` or `airship`.
+  2. Codex loads `hooks/codex-hooks.json` through `.codex-plugin/plugin.json`. Codex ignores
+     matchers for `UserPromptSubmit`, so the shared handler inspects `.prompt` itself and only
+     blocks a direct `/ship` or `$ship`-style invocation. It returns Codex's
+     `{"decision":"block","reason":"…"}` object; ordinary prompts are untouched.
+  3. Both clients run `PreToolUse` for `Bash`. The handler accepts each client's current
+     `tool_name` / `tool_input.command` payload and returns the modern `hookSpecificOutput`
+     deny object. It provides two guardrails. A **best-effort reminder**: on a `git push` /
      `gh pr create` / `glab mr create`, it denies when the current checkout's branch has no fresh
      marker. A push that can only **delete** remote refs is exempt — `git push origin --delete
      <branch>` and `git push origin :<branch>` publish no code, so no reviewer could ever have
@@ -215,7 +225,7 @@ seo:
      command *text*, so it is leaky by design — `git -C`, quoting, a script file, an alias all
      slip past. Treat it as fast feedback, **not** the boundary. (Four security reviews confirmed
      no text-matching hook can be both bypass-proof and usable.)
-  3. **`pre-push` hook — the enforcement.** `scripts/forgeward-pre-push.sh`, installed per repo
+  4. **`pre-push` hook — the enforcement.** `scripts/forgeward-pre-push.sh`, installed per repo
      with `scripts/forgeward-install-pre-push.sh`. Git runs it *inside* the push and hands it the
      exact refs + SHAs on stdin, after the shell has resolved `git -C` / quoting / `$vars` /
      `xargs` — so none of those can evade it. It blocks the push if any branch ref being pushed
@@ -227,12 +237,14 @@ seo:
 the marker is a local file that can be forged; git hooks are not cloned (re-install in a fresh
 clone, and after a plugin update — the enforcer path is baked into the installed hook). No
 purely-local gate escapes these. For an **unbypassable** boundary, gate the MERGE server-side
-with `/forgeward:ci-gate` (required checks + branch protection). Hooks 1–2 match the *publish
-command*, not the skill name, so they are prefix-independent across gstack install variants.
+with the CI-gate skill (required checks + branch protection). Lifecycle hooks are intentionally
+fast feedback, not a complete policy boundary: Codex does not expose every hosted tool through
+`PreToolUse`, and neither client can reliably infer resolved Git refs from shell command text.
 
 The marker pins a hash of the **reviewed code and dependencies** (`base...HEAD`), excluding
-only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and a
-package.json **version-field-only** bump. Any change to source **or dependencies** after the
+only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and exact
+version-field-only bumps in the four version-bearing package/client manifests. Any other
+manifest change, and any change to source **or dependencies** after the
 gate flips the hash and forces a re-gate — a dependency added between gate and push does
 **not** sail through.
 
@@ -243,20 +255,21 @@ that reminder is best-effort and leaky by design (see above). To actually **bloc
 push, install the `pre-push` hook once in each repo you want gated. From inside the repo:
 
 ```bash
-bash ~/.claude/plugins/marketplaces/forgeward-gate/scripts/forgeward-install-pre-push.sh .
+export FORGEWARD_PLUGIN_DIR="/absolute/path/to/forgeward-gate"
+bash "$FORGEWARD_PLUGIN_DIR/scripts/forgeward-install-pre-push.sh" .
 ```
 
 Pass a path instead of `.` to gate a repo you're not in:
 
 ```bash
-bash ~/.claude/plugins/marketplaces/forgeward-gate/scripts/forgeward-install-pre-push.sh /path/to/repo
+bash "$FORGEWARD_PLUGIN_DIR/scripts/forgeward-install-pre-push.sh" /path/to/repo
 ```
 
 (The script lives in the plugin's `scripts/` dir — adjust the path if your plugins live
 elsewhere.) It sets the per-repo opt-in (`git config forgeward.gate enabled`) and installs the
 hook into the repo's effective hooks dir (honoring `core.hooksPath`). From then on, **any**
-`git push` from that repo — Claude Code *or* a plain terminal — is blocked unless the branch has
-passed `/forgeward:gate`. Re-run it in a fresh clone and after a plugin update (git hooks aren't
+`git push` from that repo — Claude Code, Codex, or a plain terminal — is blocked unless the branch
+has passed the Forgeward gate. Re-run it in a fresh clone and after a plugin update (git hooks aren't
 cloned, and the enforcer path is baked into the installed hook).
 
 Turn it back **off** for a repo (leaves any shared hook in place; just no-ops there):
@@ -271,7 +284,8 @@ The three layers stack — pick per repo:
 
 | You want… | Do this | Still bypassable by |
 |---|---|---|
-| A heads-up in Claude Code before an ungated push | nothing — active on install | anything (it's only a reminder) |
+| A heads-up in Claude Code before an ungated push | install the plugin | anything (it's only a reminder) |
+| A heads-up in Codex before an ungated push | install the plugin and trust its hooks with `/hooks` | anything (it's only a reminder) |
 | Ungated pushes **blocked** on your machine | run the installer above (per repo) | `git push --no-verify`, or forging the local marker |
 | An **unbypassable** gate for everyone, any machine | `/forgeward:ci-gate` → GitHub required check + branch protection | only a deliberate repo-admin override |
 
@@ -344,74 +358,85 @@ below.)
 
 ## Install
 
-Two ways in. **Marketplace install** is the one-liner; **local install** (clone +
-`--plugin-dir`) is the no-marketplace path, handy for development or pinning to a working tree.
-This repo is public, so both work today.
-
-`<PLUGIN_DIR>` below = the absolute path to your clone of this repo (the directory containing
-`.claude-plugin/`). From the repo root you can grab it with `export PLUGIN_DIR="$(pwd)"`.
-
-### Local install (no marketplace required)
+Clone once for local development or to install the standalone Git hook:
 
 ```bash
 git clone https://github.com/androsland/forgeward-gate.git
 cd forgeward-gate
+export FORGEWARD_PLUGIN_DIR="$PWD"
 ```
 
-Then either load it for one session:
+### Claude Code
+
+Load the checkout for one session:
 
 ```bash
-claude --plugin-dir <PLUGIN_DIR>
+claude --plugin-dir "$FORGEWARD_PLUGIN_DIR"
 ```
 
-…or install it persistently under your skills dir (loads automatically next session):
-
-```bash
-cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
-```
-
-### Marketplace install (recommended)
-
-This repo ships a marketplace manifest (`.claude-plugin/marketplace.json`) and is public on
-GitHub, so anyone can add it as a marketplace and install in two commands. Replace
-`androsland/forgeward-gate` with your `owner/repo` if you forked it:
+Or install it from the Claude marketplace:
 
 ```bash
 claude plugin marketplace add androsland/forgeward-gate
 claude plugin install forgeward@forgeward-gate
 ```
 
-`forgeward` is the plugin name; `forgeward-gate` after the `@` is the marketplace name (the
-`name` field in `marketplace.json`). Per the [Claude Code plugin docs](https://code.claude.com/docs/en/discover-plugins),
-the install syntax is `plugin-name@marketplace-name` — **the `@forgeward-gate` suffix is
-required, not optional.** Bare `claude plugin install forgeward` does *not* resolve.
+Claude reads `.claude-plugin/plugin.json`, auto-discovers `hooks/hooks.json`, registers the
+namespaced skills (`/forgeward:gate`, `/forgeward:audit`, `/forgeward:ci-gate`), and registers
+the reviewer definitions under `agents/`.
 
-> **Note:** `claude plugin install forgeward` (no `@marketplace`) fails with *"Plugin forgeward
-> not found in any configured marketplace"* — both because it omits the required marketplace
-> suffix **and** because you must run `claude plugin marketplace add androsland/forgeward-gate`
-> first. Run the two commands above in order and it resolves.
+### Codex
 
-### After install
+Install the current checkout through an isolated/local marketplace:
 
-The plugin is `defaultEnabled` — reviewers, the `/forgeward:gate` skill, and the two
-in-editor hooks (the `/ship` halt and the `PreToolUse` reminder) activate on install with no
-`settings.json` edit. The **enforcement** hook (`pre-push`) is **not** auto-registered — turn it
-on per repo with one command; see [Turn on enforcement](#turn-on-enforcement-one-command-per-repo).
-The hooks read JSON with `jq` if present, else `python3`; if *neither* exists they fail open —
-see limits.
+```bash
+codex plugin marketplace add "$FORGEWARD_PLUGIN_DIR"
+codex plugin add forgeward@forgeward-gate
+```
+
+After this dual-client package has been published to the repository named in its manifests,
+the remote marketplace form is:
+
+```bash
+codex plugin marketplace add androsland/forgeward-gate
+codex plugin add forgeward@forgeward-gate
+```
+
+Codex reads `.agents/plugins/marketplace.json`, then `.codex-plugin/plugin.json`. That manifest
+points to `hooks/codex-hooks.json`, so Codex never consumes Claude's
+`UserPromptExpansion` definition. Shared skills are available through Codex's skill UI and
+`$gate`, `$audit`, and `$ci-gate` invocation forms.
+
+### Codex hook trust
+
+Codex does not execute newly installed non-managed hooks until you explicitly trust their exact
+definitions. Start a Codex session, run `/hooks`, review Forgeward's two command hooks and approve
+them. If the hook definitions change, their hash changes and Codex asks for trust again. The
+one-off `--dangerously-bypass-hook-trust` flag is not the recommended setup.
+
+Claude Code does not use this separate Codex hook-trust store; its normal plugin installation
+approval applies. In either client, the **standalone `pre-push` enforcement hook is not installed
+automatically**. Install it per repository as described in
+[Turn on enforcement](#turn-on-enforcement-one-command-per-repo).
+
+Lifecycle handlers read JSON with `jq` if present, then `python3`; if neither exists they fail
+open so a broken feedback hook cannot wedge the client. The Git `pre-push` hook independently
+checks the resolved refs and marker at push time, but it also fails open with an explicit warning
+if neither JSON parser or its diff-hash helper is available.
 
 ## Validation / what's tested
 
-**Automated suites — `npm test`.** Five suites, all framework-free, all exercising the
+**Automated suites — `npm test`.** Six suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
-repos: `gate-test.sh` (218), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`rules-test.sh` (39), `transcript-audit-test.sh` (37) — 360 assertions. Every suite prints
+repos: `gate-test.sh` (234), `pre-push-test.sh` (15), `version-check-test.sh` (51),
+`dual-client-test.sh` (24), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 400
+assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
-numbers here were last re-measured against a full run at 0.19.0, and `package.json`'s `test`
+numbers here were last re-measured against a full run at 0.25.0, and `package.json`'s `test`
 script, not this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
-requirement of `ci/check-version-monotonic.sh`: it reads the three manifests with the stdlib
+requirement of `ci/check-version-monotonic.sh`: it reads the four version-bearing manifests with the stdlib
 `json` module and has **no `jq` fallback by design**, because two readers of the same JSON
 that can disagree is a divergence this repo shipped once already (`DECISIONS.md`). A box
 without it gets a named failure, never a quiet skip. `semgrep` is optional — without it
@@ -420,7 +445,7 @@ green run that checked less than it appears to. Both differ from the **hooks**, 
 JSON with `jq` *or* `python3` and fail open when neither exists: for the hooks `python3` is
 optional, for the version check it is not.
 
-`test/gate-test.sh` (218 assertions) — the in-editor layer:
+`test/gate-test.sh` (234 assertions) — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
@@ -482,6 +507,12 @@ the case that must FAIL beside the neighbouring case that must PASS. An assertio
 ever checks the fail side cannot tell a working comparator from one that refuses everything,
 and a green "refuses everything" is how a required check gets deleted a week later.
 
+`test/dual-client-test.sh` (24 assertions) — the package split and current hook contracts:
+Claude `UserPromptExpansion`, Codex `UserPromptSubmit` prompt inspection, representative Claude
+and Codex `PreToolUse` payloads, deny/allow objects, malformed events, missing parsers, both
+plugin-root variables, fresh-marker allowance, four-manifest version agreement, version-only
+diff-hash neutrality, and substantive Codex manifest/marketplace invalidation.
+
 `test/rules-test.sh` (39 assertions) — the bundled Semgrep rulepack in `rules/env-config.yml`,
 in three classes: **positives** (each shape the rule exists to catch fires, one per line, so a
 regression names the shape it broke), **negatives** (each legitimate configuration it must
@@ -511,6 +542,11 @@ session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denie
 the hash — proving the actual plugin **hook dispatched**, not just that the scripts work in
 isolation. The `supply-chain-reviewer` caught the typosquat with registry evidence.
 
+Packaging is also validated with the installed Claude CLI and with a real Codex marketplace
+install under an isolated temporary `CODEX_HOME`; the cache inventory is checked for the shared
+skills, hooks, scripts, reviewer definitions, and both client manifests before that directory is
+removed.
+
 **What "validated" means here (honest boundary).** Tested means *tested-as-designed* — the
 deny/allow logic behaves as specified, and real pushes through the installed `pre-push` hook
 are blocked/allowed as expected. It does **not** mean tamper-proof (see limit 1). This raises
@@ -519,7 +555,7 @@ the floor; it is not a sandbox.
 ## Three honest limits
 
 1. **Strong, not tamper-proof — and local, not server-side.** The `pre-push` hook enforces on
-   any `git push` from that machine (Claude Code *or* a plain terminal), immune to command-text
+   any `git push` from that machine (Claude Code, Codex, or a plain terminal), immune to command-text
    tricks. But it is still client-side: `git push --no-verify` skips it, the marker is a local
    file that can be forged, git hooks aren't cloned (re-install per clone / after a plugin
    update), and disabling the plugin removes the reviewers. No purely-local gate escapes these —
@@ -534,9 +570,9 @@ the floor; it is not a sandbox.
    with `gstack-config set codex_reviews disabled`. forgeward's gate works fully either way —
    this is a gstack setting, not a forgeward one.
 
-3. **No mandatory paid-OpenAI dependency.** gstack's Codex steps degrade to Claude when no
-   OpenAI key is present, so the stack underneath this plugin runs fully on Claude alone. The
-   only paid dependency is the Claude access you already need to run Claude Code.
+3. **No cross-client subscription dependency.** The Claude package needs Claude Code access;
+   the Codex package needs Codex access. Forgeward itself adds no paid API dependency. Optional
+   gstack Codex review steps remain governed by gstack's own configuration.
 
 ## Security scope
 
@@ -821,9 +857,11 @@ fires — the line is tracked vs untracked, not the filename.
   idempotent-by-re-run, so recovery is native: after `/forgeward:gate` passes, re-run `/ship`.
 - **gstack's pre-push Codex review dispatch is out of scope.** It's review, not publishing, and
   gstack has a native switch for it (limit 2). We don't hook or block it.
-- **If neither `jq` nor `python3` is available, the enforcement hook fails open.** It allows
-  the push rather than wedging your Bash. Virtually every dev machine has one; install `jq`
-  or `python3` for the gate to enforce.
+- **If neither `jq` nor `python3` is available, lifecycle and Git hooks fail open.** They allow
+  the client action or push rather than wedging Claude Code, Codex, or Git; the Git hook prints
+  that enforcement is unavailable. Install `jq` or `python3`. With a parser present, the
+  standalone Git `pre-push` hook is the client-independent enforcement boundary and validates
+  resolved refs rather than shell text.
 
 ## License
 

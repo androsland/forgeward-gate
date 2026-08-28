@@ -1,0 +1,30 @@
+{
+  "description": "Fast Forgeward feedback for Codex. The standalone Git pre-push hook remains the enforcement boundary.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh prompt-submit",
+            "timeout": 10,
+            "statusMessage": "Checking Forgeward gate marker"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh pretooluse",
+            "timeout": 10,
+            "statusMessage": "Checking Forgeward publish guardrail"
+          }
+        ]
+      }
+    ]
+  }
+}

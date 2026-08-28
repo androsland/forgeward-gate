@@ -23,15 +23,16 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/forgeward-vc-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # setv <repo> <package-version> <plugin-version> <marketplace-version>
-# Written as three separate arguments ON PURPOSE. The realistic failure is a release
+# Written as three version arguments ON PURPOSE. The realistic failure is a release
 # that moves some manifests and not others, so the fixture has to be able to express a
 # disagreement -- a single-version helper could not produce the R4 case at all.
 setv() {
   local r="$1"
-  mkdir -p "$r/.claude-plugin"
+  mkdir -p "$r/.claude-plugin" "$r/.codex-plugin"
   printf '{\n  "name": "forgeward-gate",\n  "version": "%s",\n  "private": true\n}\n' "$2" > "$r/package.json"
   printf '{\n  "name": "forgeward",\n  "version": "%s",\n  "defaultEnabled": true\n}\n' "$3" > "$r/.claude-plugin/plugin.json"
   printf '{\n  "name": "forgeward-gate",\n  "plugins": [\n    { "name": "forgeward", "version": "%s" }\n  ]\n}\n' "$4" > "$r/.claude-plugin/marketplace.json"
+  printf '{\n  "name": "forgeward",\n  "version": "%s",\n  "hooks": "./hooks/codex-hooks.json"\n}\n' "$3" > "$r/.codex-plugin/plugin.json"
 }
 
 # mkfixture <name> <base-versions...> -> repo path with master at base, feature checked out
@@ -67,7 +68,7 @@ run "$R"
 R="$(mkfixture forward 0.9.0 0.9.0 0.9.0)"
 setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
 run "$R"
-[ "$st" -eq 0 ] && ok "R2 forward bump on all three -> PASS" || nok "R2 forward bump passes" "st=$st out=$out"
+[ "$st" -eq 0 ] && ok "R2 forward bump on all four -> PASS" || nok "R2 forward bump passes" "st=$st out=$out"
 
 # --- R3: the hazard itself -------------------------------------------------------
 # The live case: #17 bumped to 0.7.5 and #18 to 0.7.6, and merging #17 second would
@@ -80,7 +81,7 @@ run "$R"
   && ok "R3 backward bump -> FAIL, and the message says BACKWARD" \
   || nok "R3 backward bump fails" "st=$st out=$out"
 
-# --- R4: a release moves all three together --------------------------------------
+# --- R4: a release moves all four together ---------------------------------------
 # The half-bumped release. marketplace.json is the file a plugin manager actually
 # reads, so a bump that lands everywhere except there ships an unchanged version to
 # every user while the repo believes it released.
@@ -93,7 +94,7 @@ run "$R"
 R="$(mkfixture agree 0.9.0 0.9.0 0.9.0)"
 setv "$R" 0.9.1 0.9.1 0.9.1; commit_head "$R"
 run "$R"
-[ "$st" -eq 0 ] && ok "R4b all three agree -> PASS (R4 is not just refusing everything)" \
+[ "$st" -eq 0 ] && ok "R4b all four agree -> PASS (R4 is not just refusing everything)" \
   || nok "R4b agreement passes" "st=$st out=$out"
 
 # --- R5: 0.10.0 is AHEAD of 0.9.0 ------------------------------------------------
@@ -360,7 +361,7 @@ mkpoison() { # mkpoison <name> <python-expr-for-the-head-version>
   local name="$1"
   local expr="$2"
   local r="$TMP/$name"
-  mkdir -p "$r/.claude-plugin"
+  mkdir -p "$r/.claude-plugin" "$r/.codex-plugin"
   ( cd "$r" && git init -q . \
       && git config user.email t@t && git config user.name t \
       && git config commit.gpgsign false ) >/dev/null 2>&1
@@ -368,7 +369,7 @@ mkpoison() { # mkpoison <name> <python-expr-for-the-head-version>
 import json, os
 r = os.environ["POISON_DIR"]
 def write(v):
-    for p in ["package.json", ".claude-plugin/plugin.json"]:
+    for p in ["package.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]:
         open(os.path.join(r, p), "w").write(json.dumps({"name": "p", "version": v}))
     open(os.path.join(r, ".claude-plugin/marketplace.json"), "w").write(
         json.dumps({"plugins": [{"version": v}]}))
@@ -380,7 +381,7 @@ PY
 import json, os
 r, expr = os.environ["POISON_DIR"], os.environ["POISON_EXPR"]
 v = eval(expr)
-for p in ["package.json", ".claude-plugin/plugin.json"]:
+for p in ["package.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]:
     open(os.path.join(r, p), "w").write(json.dumps({"name": "p", "version": v}))
 open(os.path.join(r, ".claude-plugin/marketplace.json"), "w").write(
     json.dumps({"plugins": [{"version": v}]}))
@@ -551,8 +552,8 @@ esac
 # follows symlinks, while git tracks symlinks natively as mode 120000 -- so a fork PR
 # author could commit `package.json` as a link to any absolute path on the CI runner and
 # have the check parse a file that is not in the commit. R23 is the forged-PASS case and
-# it is the one that matters: with all three manifests linked to an out-of-repo file, the
-# pre-fix script printed `ok: version 13.37.0 ... all three agree` and exited 0 for a
+# it is the one that matters: with all four manifests linked to an out-of-repo file, the
+# pre-fix script printed `ok: version 13.37.0 ... all four agree` and exited 0 for a
 # commit containing no version field at all.
 #
 # These assert the MESSAGE, not just the exit status -- for the standing reason (every
@@ -576,10 +577,10 @@ mklink() { # mklink <name> <target> <manifests...>   -> repo path, head committe
 OUTSIDE="$TMP/outside-the-repo.json"
 printf '{"version":"13.37.0"}\n' > "$OUTSIDE"
 
-R="$(mklink link-all "$OUTSIDE" package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json)"
+R="$(mklink link-all "$OUTSIDE" package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json)"
 run "$R"
 case "$out" in
-  *'package.json is a symlink'*) ok "R23 three manifests linked outside the repo are refused (was a forged PASS)" ;;
+  *'package.json is a symlink'*) ok "R23 four manifests linked outside the repo are refused (was a forged PASS)" ;;
   *) nok "R23 out-of-repo symlink refused" "st=$st out=$out" ;;
 esac
 
@@ -720,7 +721,7 @@ case "$se" in
   *) nok "R25 absent-manifest note on stderr" "st=$st stderr=$se" ;;
 esac
 case "$so" in
-  ok:*'2 manifest(s) compared'*) ok "R25b stdout holds the verdict alone (the note is not on it)" ;;
+  ok:*'3 manifest(s) compared'*) ok "R25b stdout holds the verdict alone (the note is not on it)" ;;
   *) nok "R25b stdout is verdict-only" "st=$st stdout=$so" ;;
 esac
 

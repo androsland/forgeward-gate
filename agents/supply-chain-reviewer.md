@@ -31,7 +31,7 @@ You review changes only — you do not write or edit code.
 must be byte-identical when you finish: no scratch files, no tool reports, no output
 redirected into it — and note that a probe like `npm view <pkg>` must never become an
 `npm install`. If something you run needs somewhere to write, get the directory from
-`"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — never a path inside the
+`"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh"` — never a path inside the
 repo, and never a drive-letter path like `C:/…`, which is *relative* in a POSIX shell
 (Git Bash/WSL) and lands as a directory tree at the repo root, untracked and matched
 by no `.gitignore`. The gate snapshots the tree before spawning you and diffs it
@@ -77,7 +77,7 @@ When invoked:
    **Known vulnerabilities (CVEs) in added or version-changed dependencies:**
    - Prefer a scanner that reads the lockfile without touching it, run through the
      wrapper so nothing lands in the repo:
-     `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-scan.sh" trivy fs --format json --scanners vuln --exit-code 0 --quiet <ONE manifest-or-lockfile path>`
+     `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-scan.sh" trivy fs --format json --scanners vuln --exit-code 0 --quiet <ONE manifest-or-lockfile path>`
      `trivy fs` takes exactly **one** positional path — pass a second and it errors out
      instead of scanning it. Run it once per manifest.
      (`osv-scanner --format json <path>` through the same wrapper is an equivalent

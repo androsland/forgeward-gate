@@ -5,8 +5,10 @@
 #   mode "pretooluse" : on a publish command (git push / gh pr create / glab mr
 #                       create), remind/deny when the current checkout's branch
 #                       has not passed /forgeward:gate.
-#   mode "expansion"  : block a user-typed /ship expansion unless a fresh PASS
-#                       marker exists (fast halt before any wasted work).
+#   mode "expansion"    : block a Claude user-typed /ship expansion unless a
+#                         fresh PASS marker exists.
+#   mode "prompt-submit": inspect a Codex UserPromptSubmit payload and block a
+#                         direct /ship or $ship-style invocation unless fresh.
 #
 # This is a SOFT GUARDRAIL, not the enforcement boundary. A PreToolUse hook only
 # sees the command TEXT, and no amount of parsing can reliably tell what an
@@ -180,6 +182,30 @@ JSON
   exit 0
 }
 
+# Block a direct ship invocation using the output contract for the event that called
+# us. Claude's UserPromptExpansion uses exit 2 + stderr. Codex UserPromptSubmit accepts
+# the top-level decision/reason shape and keeps exit 0 for a handled decision.
+block_ship() {
+  local r="forgeward gate: ship halted — the reviewers have not returned VERDICT: PASS on the current code. Run the forgeward gate first; on PASS it writes the marker, then hands off to ship when that skill is installed."
+  if [ "$mode" = "prompt-submit" ]; then
+    r="${r//\\/\\\\}"; r="${r//\"/\\\"}"
+    printf '{"decision":"block","reason":"%s"}\n' "$r"
+    exit 0
+  fi
+  echo "forgeward gate: /ship halted — the reviewers have not returned VERDICT: PASS on the current code." >&2
+  echo "Run /forgeward:gate first. It fires the relevant read-only reviewers and, on PASS, writes the marker — then ships in the same motion if gstack's /ship is installed." >&2
+  exit 2
+}
+
+# Codex does not apply a matcher to UserPromptSubmit, so the handler must narrow the
+# event itself. Match only a direct skill/command invocation at the start of the prompt,
+# never prose that merely mentions shipping. Both slash and dollar forms are accepted
+# because Codex uses $skill while converted/legacy workflows may still submit /ship.
+is_ship_prompt() {
+  local re='^[[:space:]]*[/\$](([A-Za-z0-9_]+[-:])?ship)([[:space:]]|$)'
+  [[ "$1" =~ $re ]]
+}
+
 # best-effort: if the command starts with `cd <path> &&|;`, print <path> so the
 # common "cd into a worktree then push" case is evaluated in that worktree. Not a
 # security control (this layer isn't one) — just makes the reminder accurate.
@@ -192,7 +218,17 @@ _unreadable=0
 cwd="$(json_get '.cwd')" || _unreadable=1
 [ -n "$cwd" ] && cd "$cwd" 2>/dev/null || true
 
-if [ "$mode" = "expansion" ]; then
+if [ "$mode" = "expansion" ] || [ "$mode" = "prompt-submit" ]; then
+  if [ "$mode" = "prompt-submit" ]; then
+    prompt="$(json_get '.prompt')" || _unreadable=1
+    if [ "$_unreadable" = 0 ]; then
+      is_ship_prompt "$prompt" || exit 0
+    else
+      # This hook sees every prompt. On malformed input, refuse only when the raw
+      # payload mentions the publish action; unrelated prompts must not be wedged.
+      case "$input" in *ship*) : ;; *) exit 0 ;; esac
+    fi
+  fi
   # Unreadable input means we do not know WHICH REPO this /ship is for. `cwd` came back
   # empty, so no cd happened, and is_fresh() would answer for whatever directory the hook
   # process happened to inherit — a fresh marker in an unrelated repo would let the ship
@@ -203,20 +239,16 @@ if [ "$mode" = "expansion" ]; then
   # is one retry rather than a wedged session. The pretooluse path below has to be
   # narrower for exactly that reason, and the asymmetry is the point, not an oversight.
   if [ "$_unreadable" = 1 ]; then
+    if [ "$mode" = "prompt-submit" ]; then
+      block_ship
+    fi
     echo "forgeward gate: /ship halted — the hook input could not be parsed, so which repo this applies to is unknown." >&2
     echo "Re-run it; if this repeats, check that jq/python3 work (\`jq --version\`, \`python3 -V\`)." >&2
     exit 2
   fi
   git rev-parse --git-dir >/dev/null 2>&1 || exit 0
   if is_fresh "$(current_branch)" "HEAD"; then exit 0; fi
-  echo "forgeward gate: /ship halted — the reviewers have not returned VERDICT: PASS on the current code." >&2
-  # Phrased to be true on a machine with no gstack too. The old wording promised it
-  # "ships in one motion", which is only the gstack-installed branch of Step 3; the
-  # standalone branch writes the marker and hands back. Deliberately NOT probing for
-  # gstack here to tailor the sentence: this is the /ship halt path, it must stay fast
-  # and dependency-free, and a wording that holds either way costs nothing.
-  echo "Run /forgeward:gate first. It fires the relevant read-only reviewers and, on PASS, writes the marker — then ships in the same motion if gstack's /ship is installed." >&2
-  exit 2
+  block_ship
 fi
 
 # --- pretooluse ---
@@ -277,7 +309,7 @@ case "$cmd" in
     _out_re='(^|[[:space:]])(-o|--output|--output-file|--outfile|--out-file|--report-file|--report-path|--sarif-output|--json-output|--sarif-file)([[:space:]]+|=)("|'"'"')?[A-Za-z]:[\\/]'
     _cuddle_re='(^|[[:space:]])-[A-Za-z][A-Za-z-]*=?("|'"'"')?[A-Za-z]:[\\/]'
     if [[ "$cmd" =~ $_out_re ]] || [[ "$cmd" =~ $_cuddle_re ]]; then
-      deny "forgeward: refusing to run a scanner with a drive-letter output path. This shell is POSIX (Git Bash/WSL), where 'C:/...' is a RELATIVE path — the scanner would create a 'C:' directory tree inside the repo under review, untracked and matched by no .gitignore, and 'git add -A' would commit it. Reviewers are read-only: drop the output flag and capture the report from STDOUT (add --json and read the output), or run it through \"\${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-scan.sh, which enforces this. If a file is genuinely unavoidable, put it under \$(\"\${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-artifact-dir.sh)."
+      deny "forgeward: refusing to run a scanner with a drive-letter output path. This shell is POSIX (Git Bash/WSL), where 'C:/...' is a RELATIVE path — the scanner would create a 'C:' directory tree inside the repo under review, untracked and matched by no .gitignore, and 'git add -A' would commit it. Reviewers are read-only: drop the output flag and capture the report from STDOUT (add --json and read the output), or run it through \"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-scan.sh\", which enforces this. If a file is genuinely unavoidable, put it under \$(\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh\")."
     fi
     ;;
 esac

@@ -19,9 +19,22 @@ code ships. You ORCHESTRATE reviewers and decide; **you never edit code yourself
 reviews). If a reviewer finds problems, you report them and stop; the user fixes and
 re-runs the gate.
 
-The two enforcement hooks (`UserPromptExpansion` on `/ship`, `PreToolUse` on the
-push/PR) are the backstop for someone who skips this skill. This skill is the
-intended happy path: review once, then ship in the same motion with no double cost.
+## Runtime compatibility
+
+This skill is shared by Claude Code and Codex. Bundled commands use
+`${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`: Codex supplies `PLUGIN_ROOT`, while Claude
+Code supplies `CLAUDE_PLUGIN_ROOT`. If both are empty, stop and report that the plugin
+root is unavailable; never guess a cache path.
+
+Claude Code registers the Markdown files under `agents/` as plugin subagent types.
+Codex keeps those same files in the installed plugin and uses them as the authoritative
+rubrics for spawned subagents. The Step 2 instructions below select the correct path
+without requiring the user to edit the plugin.
+
+The two lifecycle guardrails are selected by the installing client: Claude Code uses
+`UserPromptExpansion` plus `PreToolUse`; Codex uses `UserPromptSubmit` plus
+`PreToolUse`. They are fast feedback for someone who skips this skill. The installed
+Git `pre-push` hook remains the enforcement boundary.
 
 ## Step 0 — Detect the base ref (the publish boundary)
 
@@ -29,7 +42,7 @@ Detect what this work will be published against. Base detection lives in a teste
 script so it always resolves to a real, CURRENT ref:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-base.sh"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-base.sh"
 ```
 
 Call the result `<base>` and use it **verbatim** — it is a REF, and it is often a
@@ -180,7 +193,7 @@ Run the probe anyway — Step 1a needs its `seo_posture`, Step 3's marker valida
 full JSON shape, and Step 3's handoff needs `gstack_ship`:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-environment.sh"
 ```
 
 It prints one line of JSON and always exits 0 — it is informational, and must never stop
@@ -233,7 +246,7 @@ on disk (the five reviewers and `/forgeward:audit`), it prints nothing when ther
 news, and it always exits 0:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-rubric-drift.sh"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-rubric-drift.sh"
 ```
 
 If it prints, **relay it verbatim and carry on gating.** Drift means gstack improved a
@@ -342,19 +355,27 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
 
 ```bash
-ART="$("${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh")"
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
+ART="$("${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh")"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
 ```
 
-For each fired reviewer, spawn it with the **Agent** tool (one message, multiple Agent
-calls, so they run in parallel). Use the matching `subagent_type`
+For each fired reviewer, spawn it in parallel. Select the runtime path automatically:
+
+- **Claude Code:** use the **Agent** tool (one message, multiple Agent calls). Use the matching `subagent_type`
 (`forgeward:privacy-reviewer`, `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
 `forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`,
 `forgeward:maintainability-reviewer`, `forgeward:testing-reviewer`,
 `forgeward:performance-reviewer`, `forgeward:api-contract-reviewer`,
-`forgeward:data-migration-reviewer`). Tell each to review
-the diff of `<base>...HEAD`, passing `<base>` exactly as Step 0 produced it.
+`forgeward:data-migration-reviewer`).
+- **Codex:** use its subagent/collaboration facility. For each reviewer, tell the
+  subagent to read and follow the complete authoritative rubric at
+  `${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/agents/<reviewer>.md`. Do not paraphrase or
+  copy only part of the rubric into the spawn prompt.
+
+In either runtime, tell each reviewer to review the diff of `<base>...HEAD`, passing
+`<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
+reviewers, stop without writing a marker; an unmeasured axis cannot return PASS.
 
 `maintainability` and `testing` are always-on, so on any diff carrying code the parallel
 batch is at least three reviewers wide. That is the intended cost: the quality axis used
@@ -366,7 +387,7 @@ Collect every verdict line. Do not edit any code in response to findings.
 **Then check the contract held:**
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
 ```
 
 Non-zero means a reviewer wrote into the repo it was auditing. That has happened: a
@@ -391,19 +412,21 @@ than the one it cleans up. Print the paths and let the user run
 - **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
   ```bash
-  "${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
+  "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
   ```
 
   Then hand off — **but only if there is something to hand off to.** Use
   `gstack_ship` from the Step 1c probe (re-run it if you skipped Step 1c):
 
-  - **`gstack_ship: present`** → invoke the `ship` skill via the **Skill** tool. This
+  - **Claude Code with `gstack_ship: present`** → invoke the `ship` skill via the
+    **Skill** tool. This
     model-initiated invocation is not a user-typed expansion, so the
     `UserPromptExpansion` halt does not fire; the `PreToolUse` push hook will find the
     fresh marker and allow the push.
     Report: `forgeward gate: PASS (fired: …). Marker written. Handing off to /ship.`
 
-  - **`gstack_ship: absent`** → **do not attempt the Skill call.** Stop here and report:
+  - **Codex, or Claude Code with `gstack_ship: absent`** → **do not attempt a
+    Claude Skill call.** Stop here and report:
     `forgeward gate: PASS (fired: …). Marker written. gstack /ship is not installed — commit, push and open the PR yourself; the marker is already in place, so the push hook will allow it.`
     **Add nothing about quality here.** Until 0.17.0 this branch carried a second line
     telling the user to run `/review` before merging, because taking no handoff meant the

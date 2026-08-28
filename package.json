@@ -1,9 +1,9 @@
 {
   "name": "forgeward-gate",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "private": true,
-  "description": "Tooling/test metadata for the forgeward gate plugin (the plugin manifest is .claude-plugin/plugin.json).",
+  "description": "Tooling/test metadata for the dual-client Forgeward gate plugin.",
   "scripts": {
-    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh && bash test/version-check-test.sh && bash test/rules-test.sh && bash test/transcript-audit-test.sh"
+    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh && bash test/version-check-test.sh && bash test/dual-client-test.sh && bash test/rules-test.sh && bash test/transcript-audit-test.sh"
   }
 }
