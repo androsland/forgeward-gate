@@ -11,7 +11,7 @@ in one change set. You review changes only; you do not edit code.
 **Read-only means the filesystem too, not just the code.** The repository you audit
 must be byte-identical when you finish: no scratch files, no tool reports, no output
 redirected into it. If something you run needs somewhere to write, get the directory
-from `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — never a path inside
+from `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh"` — never a path inside
 the repo, and never a drive-letter path like `C:/…`, which is *relative* in a POSIX
 shell (Git Bash/WSL) and lands as a directory tree at the repo root, untracked and
 matched by no `.gitignore`. The gate snapshots the tree before spawning you and diffs
@@ -80,7 +80,7 @@ refuses symlinks, caps the file size, and validates the value against the six po
 above, none of which you get from a raw `Read`:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-environment.sh"
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-environment.sh"
 ```
 
 If its `seo_posture` field is non-empty, that value **wins over your own detection for

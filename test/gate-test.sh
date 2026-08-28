@@ -679,7 +679,7 @@ fi
 # fails at runtime made every marker read empty, so every gated branch re-gated forever
 # and the python3 fallback sitting beside it was unreachable. Safe, and still a bug.
 #
-# Its own repo, and deliberately WITHOUT any of the three version-bearing manifests:
+# Its own repo, and deliberately WITHOUT any of the four version-bearing manifests:
 # forgeward-diff-hash.sh consults jq only to canonicalize those, so a manifest-free repo
 # leaves marker_get as the single jq consumer on this path. Shadowing jq then changes
 # exactly one thing, and a red result has exactly one cause.
@@ -2016,7 +2016,7 @@ MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgew
   || nok "marker GC ate a live worktree branch's marker" "wtfeat/wtspace marker missing"
 
 # --- V1..V5: version-bearing manifests -----------------------------------------
-# A Claude Code plugin carries its version in THREE files, and a release bumps all
+# This dual-client plugin carries its version in FOUR files, and a release bumps all
 # of them together. Neutralizing only package.json meant every release flipped the
 # substantive-diff hash and forced a spurious re-gate, so the "cosmetic bookkeeping
 # stays invisible" contract held for ordinary repos but not for a plugin.
@@ -2028,10 +2028,11 @@ MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgew
 RV="$TMP/repo-manifests"
 mkrepo "$RV"
 ( cd "$RV"
-  mkdir -p .claude-plugin
+  mkdir -p .claude-plugin .codex-plugin
   printf '{\n  "name": "u",\n  "version": "1.0.0"\n}\n' > package.json
   printf '{\n  "name": "p",\n  "version": "1.0.0",\n  "defaultEnabled": true\n}\n' > .claude-plugin/plugin.json
   printf '{\n  "name": "m",\n  "plugins": [\n    { "name": "p", "version": "1.0.0" }\n  ]\n}\n' > .claude-plugin/marketplace.json
+  printf '{\n  "name": "p",\n  "version": "1.0.0",\n  "hooks": "./hooks/codex-hooks.json"\n}\n' > .codex-plugin/plugin.json
   echo ok > src.js
   git add -A; git commit -qm base; git branch -M main
   git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
@@ -2045,14 +2046,15 @@ open('$2','w').write(json.dumps(d,indent=2)+chr(10))" )
 
 v_base="$(cd "$RV" && "$HASH" main)"
 
-# V1: a version-only bump across ALL THREE manifests leaves the hash alone.
+# V1: a version-only bump across ALL FOUR manifests leaves the hash alone.
 setjson "$RV" package.json                      "d['version']='1.0.1'"
 setjson "$RV" .claude-plugin/plugin.json        "d['version']='1.0.1'"
 setjson "$RV" .claude-plugin/marketplace.json   "d['plugins'][0]['version']='1.0.1'"
+setjson "$RV" .codex-plugin/plugin.json         "d['version']='1.0.1'"
 ( cd "$RV" && git add -A && git commit -qm "chore: bump version" ) >/dev/null 2>&1
 v_bump="$(cd "$RV" && "$HASH" main)"
-[ "$v_base" = "$v_bump" ] && ok "manifests: version-only bump across all three -> hash UNCHANGED (no spurious re-gate on release)" \
-  || nok "three-manifest bump invariance" "$v_base vs $v_bump"
+[ "$v_base" = "$v_bump" ] && ok "manifests: version-only bump across all four -> hash UNCHANGED (no spurious re-gate on release)" \
+  || nok "four-manifest bump invariance" "$v_base vs $v_bump"
 
 # V2: a SUBSTANTIVE change to plugin.json must still flip the hash. plugin.json
 # declares hooks, permissions and entrypoints — going blind to it is a false PASS,

@@ -10,7 +10,7 @@ You review one change set for what its migrations do to data that already exists
 **Read-only means the filesystem too, not just the code.** The repository you audit
 must be byte-identical when you finish: no scratch files, no tool reports, no output
 redirected into it. If something you run needs somewhere to write, get the directory
-from `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — never a path inside
+from `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh"` — never a path inside
 the repo, and never a drive-letter path like `C:/…`, which is *relative* in a POSIX
 shell (Git Bash/WSL) and lands as a directory tree at the repo root, untracked and
 matched by no `.gitignore`. The gate snapshots the tree before spawning you and diffs

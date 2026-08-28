@@ -25,7 +25,7 @@ other.
 ## Step 1 — Scope the diff
 
 Run `git diff --name-only "<base>...HEAD"` (the caller scopes `<base>`; if it did not,
-get it from `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-detect-base.sh"`, which resolves
+get it from `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-base.sh"`, which resolves
 the **publish boundary** — the remote-tracking ref when one exists. Never substitute a
 bare branch name: a local branch drifts from its remote in both directions, and one of
 them silently shrinks the diff below what the push publishes). Keep only executable
@@ -48,7 +48,7 @@ Detect the stack from the changed files and repo root (`composer.json`/`wp-confi
 Run **every** scanner through the wrapper, never as a bare command:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-scan.sh" <tool> [args…]
+"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-scan.sh" <tool> [args…]
 ```
 
 It puts the report on **stdout** — read it from there. Exit `127` means the tool is
@@ -76,7 +76,7 @@ outside the repository. An instruction is not a control, so:
 - **Never** pass a path starting with a drive letter (`C:/…`, `D:\…`). In the shell
   you are running in, that is a relative path, whatever it looks like.
 - If a file on disk is genuinely unavoidable, get the directory from
-  `"${CLAUDE_PLUGIN_ROOT}/scripts/forgeward-artifact-dir.sh"` — it always returns a
+  `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh"` — it always returns a
   path that is absolute *in this shell* and outside the repo.
 - The gate snapshots the repo before spawning you and diffs it after. Anything you
   leave behind is reported to the user against your name, and halts the ship.
@@ -115,13 +115,13 @@ report, and the only remedy left is rotation. So:
 
 - **Semgrep**, always when present:
   - Bundled forgeward security rules (catch the framework sinks stock packs miss):
-    `forgeward-scan.sh semgrep scan --config "${CLAUDE_PLUGIN_ROOT}/rules/wp-security.yml" --error --metrics=off --json <changed-files>`
+    `forgeward-scan.sh semgrep scan --config "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/rules/wp-security.yml" --error --metrics=off --json <changed-files>`
   - Stock security packs for breadth:
     `forgeward-scan.sh semgrep scan --config p/security-audit --config p/secrets --metrics=off --json <changed-files>`
     (add `--config p/php`, `p/javascript`, `p/python`, `p/golang` … matching the stack).
   - Bundled forgeward **env/config** rules — only when the diff touches
     `.js/.jsx/.mjs/.cjs/.ts/.tsx`, and skip the pack entirely when it does not:
-    `forgeward-scan.sh semgrep scan --config "${CLAUDE_PLUGIN_ROOT}/rules/env-config.yml" --metrics=off --json <changed JS/TS files>`
+    `forgeward-scan.sh semgrep scan --config "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/rules/env-config.yml" --metrics=off --json <changed JS/TS files>`
     **No `--error` here, deliberately** — unlike `wp-security.yml` this pack is advisory, and
     a non-zero exit would make an advisory finding read as a scan failure.
     **Report every finding from this pack at Low**, tagged
