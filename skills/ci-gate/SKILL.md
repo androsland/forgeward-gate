@@ -24,11 +24,19 @@ checks **required** so a red scan blocks the merge for everyone.
 
 ## Runtime compatibility
 
-This skill is shared by Claude Code and Codex. Bundled commands use
-`${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`: Codex supplies `PLUGIN_ROOT`, while Claude
-Code supplies `CLAUDE_PLUGIN_ROOT`. If both are empty, stop and report that the plugin
-root is unavailable; never guess a cache path. Treat a path supplied in the invocation
-prompt as the scope; Claude Code may also expose that text as `$ARGUMENTS`.
+This skill is shared by Claude Code and Codex. Resolve `<forgeward-root>` once before
+running any bundled command. Use a non-empty `PLUGIN_ROOT` or `CLAUDE_PLUGIN_ROOT` when
+available. Otherwise, in Codex, derive it from the exact absolute path of this loaded
+`SKILL.md` shown in the available-skills catalog: remove the exact suffix
+`/skills/ci-gate/SKILL.md` and canonicalize the result. This is deterministic path
+derivation from the selected skill, not a cache-path guess. Verify that the result
+contains `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json` and every bundled
+file a command needs. Use the resolved absolute path literally for
+`<forgeward-root>` below; do not assume a shell export persists across tool calls.
+Codex guarantees `PLUGIN_ROOT` to plugin hook processes, not ordinary skill commands.
+
+Treat a path supplied in the invocation prompt as the scope; Claude Code may also
+expose that text as `$ARGUMENTS`.
 
 Two phases, clearly separated:
 - **Draft (advisory, default).** Detect the stack, write the CI that's missing, report the
@@ -247,7 +255,7 @@ Security scanning is now **in scope**, not deferred. CI runners have no forgewar
 
 ```bash
 mkdir -p .forgeward/rules
-cp "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/rules/wp-security.yml" .forgeward/rules/wp-security.yml
+cp "<forgeward-root>/rules/wp-security.yml" .forgeward/rules/wp-security.yml
 ```
 
 Pick the scanner set from the stack (base set every repo; WPCS added for WordPress/PHP), then write

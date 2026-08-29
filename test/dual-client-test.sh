@@ -32,6 +32,31 @@ else
   nok "client hook routing" "claude=$claude_event codex=$codex_event manifest=$codex_hooks"
 fi
 
+# Codex documents PLUGIN_ROOT for plugin hook processes, not for ordinary skill
+# commands. Each skill must therefore be able to recover the plugin root from its own
+# catalogued SKILL.md path without searching the versioned cache.
+skill_roots_ok=true
+for skill in gate audit ci-gate; do
+  skill_file="$PLUGIN/skills/$skill/SKILL.md"
+  skill_root="$(cd "$(dirname "$skill_file")/../.." && pwd)"
+  [ "$skill_root" = "$PLUGIN" ] \
+    && [ -x "$skill_root/scripts/forgeward-detect-environment.sh" ] \
+    || skill_roots_ok=false
+done
+[ "$skill_roots_ok" = true ] \
+  && ok "normal Codex skills derive the installed plugin root from their SKILL.md paths" \
+  || nok "normal Codex skill root derivation"
+
+resolved_root="$(cd "$(dirname "$PLUGIN/skills/gate/SKILL.md")/../.." && pwd)"
+out="$(env -u PLUGIN_ROOT -u CLAUDE_PLUGIN_ROOT "$resolved_root/scripts/forgeward-detect-environment.sh" 2>&1)"; st=$?
+if [ "$st" -eq 0 ] \
+  && [ "$(json_value "$out" 'has("gstack_ship")')" = true ] \
+  && ! grep -R -F '${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}' "$PLUGIN/skills" >/dev/null; then
+  ok "normal skill commands run without hook-only plugin-root variables"
+else
+  nok "normal skill runtime is independent of hook-only variables" "st=$st out=$out"
+fi
+
 # Codex ignores UserPromptSubmit matchers. Absence is intentional and handler-side
 # prompt inspection is what keeps ordinary prompts out of the gate path.
 if [ "$(jq -r '.hooks.UserPromptSubmit[0] | has("matcher")' "$PLUGIN/hooks/codex-hooks.json")" = false ]; then

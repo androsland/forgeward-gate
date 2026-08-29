@@ -21,10 +21,22 @@ re-runs the gate.
 
 ## Runtime compatibility
 
-This skill is shared by Claude Code and Codex. Bundled commands use
-`${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`: Codex supplies `PLUGIN_ROOT`, while Claude
-Code supplies `CLAUDE_PLUGIN_ROOT`. If both are empty, stop and report that the plugin
-root is unavailable; never guess a cache path.
+This skill is shared by Claude Code and Codex. Resolve `<forgeward-root>` once before
+running any bundled command:
+
+- If `PLUGIN_ROOT` or `CLAUDE_PLUGIN_ROOT` is non-empty, use that value.
+- Otherwise, in Codex, derive it from the exact absolute path of this loaded `SKILL.md`
+  shown in Codex's available-skills catalog. This file is
+  `<forgeward-root>/skills/gate/SKILL.md`, so remove that exact suffix and canonicalize
+  the result. This is deterministic path derivation from the selected skill, not a
+  search of or guess about Codex's plugin cache.
+
+Verify that the result contains `.codex-plugin/plugin.json` or
+`.claude-plugin/plugin.json` and the required `scripts/` and `agents/` entries. If it
+does not, stop and report the resolved path and failed check. Use the resolved absolute
+path literally wherever `<forgeward-root>` appears below; do not assume a shell export
+will persist across tool calls. `PLUGIN_ROOT` is guaranteed for Codex plugin **hook
+processes**, but ordinary skill shell commands do not inherit that hook-only environment.
 
 Claude Code registers the Markdown files under `agents/` as plugin subagent types.
 Codex keeps those same files in the installed plugin and uses them as the authoritative
@@ -42,7 +54,7 @@ Detect what this work will be published against. Base detection lives in a teste
 script so it always resolves to a real, CURRENT ref:
 
 ```bash
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-base.sh"
+"<forgeward-root>/scripts/forgeward-detect-base.sh"
 ```
 
 Call the result `<base>` and use it **verbatim** — it is a REF, and it is often a
@@ -193,7 +205,7 @@ Run the probe anyway — Step 1a needs its `seo_posture`, Step 3's marker valida
 full JSON shape, and Step 3's handoff needs `gstack_ship`:
 
 ```bash
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-environment.sh"
+"<forgeward-root>/scripts/forgeward-detect-environment.sh"
 ```
 
 It prints one line of JSON and always exits 0 — it is informational, and must never stop
@@ -246,7 +258,7 @@ on disk (the five reviewers and `/forgeward:audit`), it prints nothing when ther
 news, and it always exits 0:
 
 ```bash
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-rubric-drift.sh"
+"<forgeward-root>/scripts/forgeward-rubric-drift.sh"
 ```
 
 If it prints, **relay it verbatim and carry on gating.** Drift means gstack improved a
@@ -355,8 +367,8 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
 
 ```bash
-ART="$("${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh")"
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
+ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")"
+"<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
 ```
 
 For each fired reviewer, spawn it in parallel. Select the runtime path automatically:
@@ -370,8 +382,11 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
 `forgeward:data-migration-reviewer`).
 - **Codex:** use its subagent/collaboration facility. For each reviewer, tell the
   subagent to read and follow the complete authoritative rubric at
-  `${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/agents/<reviewer>.md`. Do not paraphrase or
-  copy only part of the rubric into the spawn prompt.
+  `<forgeward-root>/agents/<reviewer>.md`. Pass the resolved absolute
+  `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
+  any plugin-root expression in the rubric; normal Codex shell commands do not inherit
+  the plugin hook environment. Do not paraphrase or copy only part of the rubric into
+  the spawn prompt.
 
 In either runtime, tell each reviewer to review the diff of `<base>...HEAD`, passing
 `<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
@@ -387,7 +402,7 @@ Collect every verdict line. Do not edit any code in response to findings.
 **Then check the contract held:**
 
 ```bash
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
+"<forgeward-root>/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
 ```
 
 Non-zero means a reviewer wrote into the repo it was auditing. That has happened: a
@@ -412,7 +427,7 @@ than the one it cleans up. Print the paths and let the user run
 - **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
   ```bash
-  "${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
   ```
 
   Then hand off — **but only if there is something to hand off to.** Use

@@ -407,6 +407,12 @@ points to `hooks/codex-hooks.json`, so Codex never consumes Claude's
 `UserPromptExpansion` definition. Shared skills are available through Codex's skill UI and
 `$gate`, `$audit`, and `$ci-gate` invocation forms.
 
+Codex supplies `PLUGIN_ROOT` to the plugin's lifecycle **hook processes**. Ordinary shell
+commands issued while following a skill do not inherit that hook environment. Forgeward's
+skills therefore derive the installed root from the exact `SKILL.md` path Codex includes in
+its skills catalog, verify the plugin layout, and use that absolute path for bundled scripts.
+They do not search for or pin a versioned cache directory.
+
 ### Codex hook trust
 
 Codex does not execute newly installed non-managed hooks until you explicitly trust their exact
@@ -429,7 +435,7 @@ if neither JSON parser or its diff-hash helper is available.
 **Automated suites — `npm test`.** Six suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
 repos: `gate-test.sh` (234), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`dual-client-test.sh` (24), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 400
+`dual-client-test.sh` (26), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 402
 assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
 numbers here were last re-measured against a full run at 0.25.0, and `package.json`'s `test`
@@ -507,11 +513,12 @@ the case that must FAIL beside the neighbouring case that must PASS. An assertio
 ever checks the fail side cannot tell a working comparator from one that refuses everything,
 and a green "refuses everything" is how a required check gets deleted a week later.
 
-`test/dual-client-test.sh` (24 assertions) — the package split and current hook contracts:
+`test/dual-client-test.sh` (26 assertions) — the package split and current hook contracts:
 Claude `UserPromptExpansion`, Codex `UserPromptSubmit` prompt inspection, representative Claude
 and Codex `PreToolUse` payloads, deny/allow objects, malformed events, missing parsers, both
-plugin-root variables, fresh-marker allowance, four-manifest version agreement, version-only
-diff-hash neutrality, and substantive Codex manifest/marketplace invalidation.
+plugin-root variables, normal Codex skill execution without those hook-only variables,
+fresh-marker allowance, four-manifest version agreement, version-only diff-hash neutrality,
+and substantive Codex manifest/marketplace invalidation.
 
 `test/rules-test.sh` (39 assertions) — the bundled Semgrep rulepack in `rules/env-config.yml`,
 in three classes: **positives** (each shape the rule exists to catch fires, one per line, so a
