@@ -421,6 +421,11 @@ commit that was fixing it — a line number cannot survive its own fix.
 
 ## Docs
 
+- **Codex's `PLUGIN_ROOT` contract belongs to plugin hook processes, not ordinary skill
+  shell commands.** Hook manifests should keep using the injected variable. Skill
+  instructions must derive the root from their own exact catalogued `SKILL.md` path,
+  verify the plugin layout, and use the resulting absolute path; they must never stop
+  merely because the hook-only environment is absent or pin a versioned cache path.
 - **A doc that describes gate behaviour is part of the gate's surface — change it in
   the same commit as the code.** The `/ship`-handoff gap survived because three
   documents described behaviour the code did not have (`live-test/LIVE-TEST.md`,

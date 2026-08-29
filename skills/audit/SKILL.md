@@ -31,12 +31,20 @@ Everything you write goes outside the repository — see *Where the report goes*
 
 ## Runtime compatibility
 
-This skill is shared by Claude Code and Codex. Bundled commands use
-`${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`: Codex supplies `PLUGIN_ROOT`, while Claude
-Code supplies `CLAUDE_PLUGIN_ROOT`. If both are empty, stop and report that the plugin
-root is unavailable; never guess a cache path. Where this skill says to use the Agent
-tool, use Claude Code's Agent tool or Codex's subagent/collaboration facility. If neither
-is available, use the documented self-verification fallback and label it honestly.
+This skill is shared by Claude Code and Codex. Resolve `<forgeward-root>` once before
+running any bundled command. Use a non-empty `PLUGIN_ROOT` or `CLAUDE_PLUGIN_ROOT` when
+available. Otherwise, in Codex, derive it from the exact absolute path of this loaded
+`SKILL.md` shown in the available-skills catalog: remove the exact suffix
+`/skills/audit/SKILL.md` and canonicalize the result. This is deterministic path
+derivation from the selected skill, not a cache-path guess. Verify that the result
+contains `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json` and every bundled
+file a command needs. Use the resolved absolute path literally for
+`<forgeward-root>` below; do not assume a shell export persists across tool calls.
+Codex guarantees `PLUGIN_ROOT` to plugin hook processes, not ordinary skill commands.
+
+Where this skill says to use the Agent tool, use Claude Code's Agent tool or Codex's
+subagent/collaboration facility. If neither is available, use the documented
+self-verification fallback and label it honestly.
 
 This skill's `allowed-tools` deliberately exclude `Edit` and `Write`, which removes the
 direct write path. **It does not close the surface, and reading it as "structurally
@@ -96,7 +104,7 @@ inherit a repo, or on a schedule.
 guaranteed to be outside it:
 
 ```bash
-ART="$("${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-artifact-dir.sh")"
+ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")"
 ```
 
 **Run that ONCE, at the start of the audit, and carry `$ART` to Phase 14.** The script
@@ -137,7 +145,7 @@ one. A trend line is a convenience when the sibling happens to be there.
 Any deterministic scanner goes through the wrapper, never invoked directly:
 
 ```bash
-"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-scan.sh" <tool> [args...]
+"<forgeward-root>/scripts/forgeward-scan.sh" <tool> [args...]
 ```
 
 It refuses output-file flags, refuses drive-letter arguments, and reports anything new
@@ -173,12 +181,12 @@ as unperformed.
 4. `--diff` combines with any scope flag and with `--comprehensive`. Under `--diff` each
    phase constrains itself to what changed on this branch against its base, and Phase 2
    reads only this branch's commits. Resolve the base with
-   `"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-base.sh"` and use its output
+   `"<forgeward-root>/scripts/forgeward-detect-base.sh"` and use its output
    **verbatim** — it is a ref, often `origin/main`, and the bare branch name resolves to a
    local branch that may be stale in either direction. Capture it once, into a variable
    the later phases quote:
    ```bash
-   base="$("${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-detect-base.sh")"
+   base="$("<forgeward-root>/scripts/forgeward-detect-base.sh")"
    ```
    It is a ref name the audited project's remote controls, and `git check-ref-format
    --branch` accepts shell metacharacters inside one — so every later use is `"$base"`,
@@ -316,7 +324,7 @@ git log --oneline --name-only --all -G "password|secret|token|api_key" -- "*.env
 
 If one hunk genuinely has to be read byte-for-byte to classify a shape, route it through
 the wrapper rather than through `git log -p`:
-`"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/scripts/forgeward-scan.sh" gitleaks git --log-opts="$base...HEAD" --no-banner --redact -f json -r -`
+`"<forgeward-root>/scripts/forgeward-scan.sh" gitleaks git --log-opts="$base...HEAD" --no-banner --redact -f json -r -`
 
 **`.env` files tracked by git:**
 ```bash
@@ -475,7 +483,7 @@ Published-skill security is measurably poor, and a `SKILL.md` is not documentati
 - any `skills/`, `agents/` or `hooks/` directory at the repo root — a plugin repository
   keeps its skill files there, not under `.claude/`, and a scan keyed only on `.claude/`
   reads a plugin repo as having no skills at all;
-- **`"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"` — forgeward's own installed tree**, which is where this very
+- **`"<forgeward-root>"` — forgeward's own installed tree**, which is where this very
   skill is running from.
 
 The patterns: network exfiltration (`curl`, `wget`, `fetch`, `http`, `exfiltrat`);
@@ -502,7 +510,7 @@ its own vendor is worth less than one that does not — the exemption is precise
 an attacker would want. Tier 1's third bullet is what makes that true rather than
 aspirational, and it was added because the claim shipped once with no execution path
 behind it: Tier 1 globbed `.claude/skills/` alone, forgeward's own files sit at
-`"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"` and at `skills/` in its repo, and so the audit asserted it had
+`"<forgeward-root>"` and at `skills/` in its repo, and so the audit asserted it had
 scanned its vendor while structurally never looking. A no-self-exemption rule with no glob
 that reaches self is worse than an honest exemption, because it is reported as coverage.
 
