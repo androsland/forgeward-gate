@@ -41,7 +41,9 @@ processes**, but ordinary skill shell commands do not inherit that hook-only env
 Claude Code registers the Markdown files under `agents/` as plugin subagent types.
 Codex keeps those same files in the installed plugin and uses them as the authoritative
 rubrics for spawned subagents. The Step 2 instructions below select the correct path
-without requiring the user to edit the plugin.
+without requiring the user to edit the plugin. Forgeward currently supports these two
+reviewer runtimes. An unrecognised runtime follows the existing cannot-spawn halt in
+Step 2; never guess a model alias or silently fall back to parent-session settings.
 
 The two lifecycle guardrails are selected by the installing client: Claude Code uses
 `UserPromptExpansion` plus `PreToolUse`; Codex uses `UserPromptSubmit` plus
@@ -371,26 +373,51 @@ ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")"
 "<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
 ```
 
+Resolve the repository and head once as well:
+
+```bash
+REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+HEAD_SHA="$(git rev-parse HEAD)"
+```
+
+The launch context is intentionally small. Every reviewer gets its complete applicable
+rubric, the absolute repository root, the resolved forgeward root when the rubric needs
+it, `<base>` exactly as Step 0 returned it, `HEAD` plus `$HEAD_SHA`, the review range
+`<base>...HEAD`, the read-only instruction, and the required verdict format. Do not pass
+the parent conversation, implementation discussion, suspected findings, or a summary of
+the rubric. Those add anchoring and cost without adding review evidence.
+
 For each fired reviewer, spawn it in parallel. Select the runtime path automatically:
 
-- **Claude Code:** use the **Agent** tool (one message, multiple Agent calls). Use the matching `subagent_type`
-(`forgeward:privacy-reviewer`, `forgeward:accessibility-reviewer`,
+- **Claude Code:** use the **Agent** tool (one message, multiple Agent calls). Every
+  plugin agent definition under `agents/` declares `model: sonnet` and `effort: medium`;
+  those native frontmatter fields are mandatory and prevent inheritance from the parent
+  session. Use the matching `subagent_type` (`forgeward:privacy-reviewer`,
+  `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
 `forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`,
 `forgeward:maintainability-reviewer`, `forgeward:testing-reviewer`,
 `forgeward:performance-reviewer`, `forgeward:api-contract-reviewer`,
-`forgeward:data-migration-reviewer`).
-- **Codex:** use its subagent/collaboration facility. For each reviewer, tell the
-  subagent to read and follow the complete authoritative rubric at
+`forgeward:data-migration-reviewer`). The selected plugin agent supplies the complete
+  rubric as its agent definition. Give the Agent only the launch context listed above.
+- **Codex:** use its subagent/collaboration facility. Every reviewer spawn call MUST
+  explicitly pass `model: "gpt-5.6-terra"`, `reasoning_effort: "medium"`, and
+  `fork_turns: "none"`. These are per-launch settings: do not omit them even when the
+  parent already uses Terra/medium, and do not translate them from a parent running
+  `gpt-5.6-sol`, high reasoning, or any other configuration. For each reviewer, tell the
+  isolated subagent to read the complete authoritative rubric at
   `<forgeward-root>/agents/<reviewer>.md`. Pass the resolved absolute
   `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
   any plugin-root expression in the rubric; normal Codex shell commands do not inherit
-  the plugin hook environment. Do not paraphrase or copy only part of the rubric into
-  the spawn prompt.
+  the plugin hook environment. The prompt must also carry `$REPOSITORY_ROOT`, `<base>`,
+  `HEAD`, `$HEAD_SHA`, `<base>...HEAD`, the read-only instruction, and the rubric's
+  verdict format. Do not paraphrase or copy only part of the rubric into the prompt.
 
 In either runtime, tell each reviewer to review the diff of `<base>...HEAD`, passing
 `<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
-reviewers, stop without writing a marker; an unmeasured axis cannot return PASS.
+reviewers with the explicit runtime policy above, stop without writing a marker; an
+unmeasured axis cannot return PASS. This is also the fallback for any other runtime,
+preserving the existing fail-closed reviewer-launch behavior.
 
 `maintainability` and `testing` are always-on, so on any diff carrying code the parallel
 batch is at least three reviewers wide. That is the intended cost: the quality axis used

@@ -3,6 +3,7 @@ name: ai-output-reviewer
 description: Read-only reviewer for AI/LLM integration in the forgeward gate. Fires ONLY when the diff adds or modifies a call to an LLM or other paid-AI endpoint. Audits output reliability, eval coverage, and cost safety. Never modifies code.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: medium
 ---
 
 You review the AI/LLM-calling code in one change set. You only run when the change
