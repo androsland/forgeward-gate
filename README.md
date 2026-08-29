@@ -12,6 +12,37 @@ The same checkout is packaged for **Claude Code and Codex**. Each client selects
 manifest and lifecycle-hook file automatically; the skills, reviewer rubrics, scripts, marker,
 and standalone Git enforcement hook are shared.
 
+### Reviewer runtime policy
+
+Reviewer selection is explicit per runtime so a costly parent session cannot silently
+raise the cost of every parallel review. Under Claude Code, all eleven plugin agents pin
+`model: sonnet` and `effort: medium` in their native frontmatter. Under Codex, every
+reviewer spawn pins `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
+`fork_turns: none`. Audit's independent finding verifiers use the same selections.
+
+The isolation is deliberate: a Gate reviewer receives its complete authoritative rubric,
+the absolute repository and Forgeward roots, the exact base ref, `HEAD` and its resolved
+commit, the `<base>...HEAD` range, and the read-only/verdict instructions—nothing from the
+parent conversation. In concrete terms, a Claude agent definition contains:
+
+```yaml
+model: sonnet
+effort: medium
+```
+
+and the equivalent Codex spawn explicitly supplies:
+
+```text
+model: gpt-5.6-terra
+reasoning_effort: medium
+fork_turns: none
+```
+
+Claude Code and Codex are the supported reviewer runtimes. If Forgeward cannot launch a
+reviewer with the explicit policy, Gate keeps its existing fail-closed behavior: it writes
+no marker. Audit keeps its existing labeled self-verification fallback when no subagent
+facility is available.
+
 This plugin has **three distinct parts**:
 - **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
   hook that blocks an un-gated push. Everything below describes it.
@@ -435,10 +466,10 @@ if neither JSON parser or its diff-hash helper is available.
 **Automated suites — `npm test`.** Six suites, all framework-free, all exercising the
 **real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
 repos: `gate-test.sh` (234), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`dual-client-test.sh` (26), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 402
+`dual-client-test.sh` (35), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 411
 assertions. Every suite prints
 its own count on its last line, so these are re-measurable rather than taken on trust; the
-numbers here were last re-measured against a full run at 0.25.0, and `package.json`'s `test`
+numbers here were last re-measured against a full run at 0.26.0, and `package.json`'s `test`
 script, not this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
@@ -513,8 +544,11 @@ the case that must FAIL beside the neighbouring case that must PASS. An assertio
 ever checks the fail side cannot tell a working comparator from one that refuses everything,
 and a green "refuses everything" is how a required check gets deleted a week later.
 
-`test/dual-client-test.sh` (26 assertions) — the package split and current hook contracts:
-Claude `UserPromptExpansion`, Codex `UserPromptSubmit` prompt inspection, representative Claude
+`test/dual-client-test.sh` (35 assertions) — the package split, reviewer runtime policy,
+and current hook contracts. It enumerates every canonical reviewer, pins Claude's
+Sonnet/medium frontmatter and Codex's Terra/medium isolated spawn contract, verifies the
+minimal complete-rubric/repository/diff launch context and preserves the non-native
+fallbacks. It also covers Claude `UserPromptExpansion`, Codex `UserPromptSubmit` prompt inspection, representative Claude
 and Codex `PreToolUse` payloads, deny/allow objects, malformed events, missing parsers, both
 plugin-root variables, normal Codex skill execution without those hook-only variables,
 fresh-marker allowance, four-manifest version agreement, version-only diff-hash neutrality,

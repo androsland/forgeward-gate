@@ -43,8 +43,15 @@ file a command needs. Use the resolved absolute path literally for
 Codex guarantees `PLUGIN_ROOT` to plugin hook processes, not ordinary skill commands.
 
 Where this skill says to use the Agent tool, use Claude Code's Agent tool or Codex's
-subagent/collaboration facility. If neither is available, use the documented
-self-verification fallback and label it honestly.
+subagent/collaboration facility with the same cost-conscious policy as the gate:
+
+- Claude Code verifier calls explicitly use `model: sonnet` and `effort: medium`.
+- Codex verifier calls explicitly use `model: gpt-5.6-terra`,
+  `reasoning_effort: medium`, and `fork_turns: none`.
+
+Never inherit either setting from the parent session. If neither facility is available,
+use the documented self-verification fallback and label it honestly; that fallback is
+intentionally unchanged.
 
 This skill's `allowed-tools` deliberately exclude `Edit` and `Write`, which removes the
 direct write path. **It does not close the surface, and reading it as "structurally
@@ -680,11 +687,16 @@ pattern. One confirmed SSRF usually means more. Report variants as separate find
 linked to the original.
 
 **Parallel verification.** For each candidate, spawn an independent verifier with the
-runtime's subagent facility (Claude Code Agent or Codex collaboration). Give it the file
-path and line **only** — not your reasoning, which anchors it
-— plus the FP rules, and ask: *read the code at this location; is there a real
-vulnerability here; score 1-10; below 8, explain why not.* Launch them in one message so
-they run in parallel.
+runtime's subagent facility (Claude Code Agent or Codex collaboration), using the exact
+runtime policy above on every call. A Claude Agent call explicitly passes
+`model: sonnet` and `effort: medium`. A Codex collaboration spawn explicitly passes
+`model: gpt-5.6-terra`, `reasoning_effort: medium`, and `fork_turns: none` even when
+those match the parent. Give it the absolute repository root, then the candidate file
+path and line **only** — not your reasoning, which anchors it — plus the complete FP
+rules and verification instructions, and ask: *read the code at this location; is there
+a real vulnerability here; score 1-10; below 8, explain why not.* Launch them in one
+message so they run in parallel. Audit verifiers are whole-repo candidate checks, not
+gate reviewers, so do not add an irrelevant gate base/head range to their context.
 
 **Give the verifier the anti-manipulation rule too, verbatim** — it is the one agent that
 can make a finding disappear, and you are pointing it at content written by whoever wrote

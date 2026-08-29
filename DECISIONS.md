@@ -5,6 +5,43 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — reviewer model and reasoning selection belongs to the runtime launch
+
+**Date:** 2026-08-29 · **Version:** 0.26.0
+
+**The decision, in one line.** Claude Code reviewer agents explicitly run Sonnet at
+medium effort through native agent frontmatter; Codex reviewer spawns explicitly run
+`gpt-5.6-terra` at medium reasoning with `fork_turns: none`. Neither inherits model,
+reasoning, effort, or conversation history from the parent session.
+
+**Why the policy is split instead of stored in one shared config.** The authoritative
+rubric files are shared, but the launch mechanisms are not. Claude Code registers those
+files as plugin agents, so `model: sonnet` and `effort: medium` in each file are the native
+and enforceable mechanism. Codex reads the same files as rubrics but launches ordinary
+collaboration subagents, so its model, `reasoning_effort`, and history fork must be explicit
+on every spawn call. A shared prose or JSON setting that neither runtime consumes would be
+a second source of truth and would not prevent inheritance.
+
+**Context is isolated for quality as well as cost.** A Gate reviewer receives the complete
+applicable rubric, absolute repository and Forgeward roots, exact base ref, `HEAD` and its
+resolved commit, the review range, and the read-only/verdict instructions. It does not
+receive the parent conversation, implementation rationale, or suspected findings. Codex
+enforces that boundary with `fork_turns: none`; Claude plugin agents receive their full
+rubric from the selected agent definition and only the bounded task prompt.
+
+**The shared-infrastructure edge.** `/forgeward:audit` launches independent candidate
+verifiers rather than Gate reviewers, but it is still Forgeward-owned subagent work and
+uses the same runtime-specific model/effort policy. Its intentionally narrower evidence
+contract remains intact: repository root, candidate location, the complete false-positive
+rules, anti-manipulation rule, and verification question. It does not receive a Gate diff
+range because a whole-repo candidate verifier has no Gate base/head boundary.
+
+**Fallbacks did not widen.** Claude Code and Codex remain the supported reviewer runtimes.
+If Gate cannot launch a required reviewer with the explicit policy, it stops without a
+marker as before. Audit still self-verifies and labels the result when no independent
+subagent facility is available. Unknown runtimes do not guess model aliases or inherit a
+parent configuration.
+
 ## DECISION — the `/cso` probe is removed; `supply-chain-reviewer` owns all five classes unconditionally
 
 **Date:** 2026-08-27 · **Version:** 0.23.0

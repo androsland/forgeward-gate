@@ -20,6 +20,107 @@ run_hook() { # run_hook <mode> <payload> -> sets out/st
   out="$(printf '%s' "$2" | "$CHECK" "$1" 2>&1)"; st=$?
 }
 
+frontmatter_value() { # frontmatter_value <file> <key>
+  awk -v key="$2" '
+    NR == 1 && $0 == "---" { frontmatter = 1; next }
+    frontmatter && $0 == "---" { exit }
+    frontmatter && index($0, key ":") == 1 {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$1"
+}
+
+frontmatter_key_count() { # frontmatter_key_count <file> <key>
+  awk -v key="$2" '
+    NR == 1 && $0 == "---" { frontmatter = 1; next }
+    frontmatter && $0 == "---" { exit }
+    frontmatter && index($0, key ":") == 1 { count++ }
+    END { print count + 0 }
+  ' "$1"
+}
+
+# Reviewer launch policy is split along the runtimes' native boundaries: Claude
+# plugin-agent frontmatter owns Claude selection, while the Codex gate spawn owns
+# Codex selection and context isolation. Enumerate the canonical agent directory so a
+# newly added reviewer cannot inherit merely because this test's list went stale.
+expected_reviewers="accessibility-reviewer
+ai-output-reviewer
+api-contract-reviewer
+data-migration-reviewer
+maintainability-reviewer
+performance-reviewer
+privacy-reviewer
+security-reviewer
+seo-reviewer
+supply-chain-reviewer
+testing-reviewer"
+actual_reviewers="$(for reviewer_file in "$PLUGIN"/agents/*-reviewer.md; do
+  frontmatter_value "$reviewer_file" name
+done | sort)"
+[ "$actual_reviewers" = "$expected_reviewers" ] \
+  && ok "reviewer inventory covers every canonical Forgeward reviewer" \
+  || nok "reviewer inventory" "actual=$actual_reviewers"
+
+claude_models_ok=true
+claude_efforts_ok=true
+for reviewer_file in "$PLUGIN"/agents/*-reviewer.md; do
+  [ "$(frontmatter_value "$reviewer_file" model)" = sonnet ] \
+    && [ "$(frontmatter_key_count "$reviewer_file" model)" -eq 1 ] \
+    || claude_models_ok=false
+  [ "$(frontmatter_value "$reviewer_file" effort)" = medium ] \
+    && [ "$(frontmatter_key_count "$reviewer_file" effort)" -eq 1 ] \
+    || claude_efforts_ok=false
+done
+[ "$claude_models_ok" = true ] \
+  && ok "Claude reviewer agents explicitly select Sonnet instead of inheriting the parent model" \
+  || nok "Claude reviewer model policy"
+[ "$claude_efforts_ok" = true ] \
+  && ok "Claude reviewer agents explicitly select medium effort instead of inheriting parent effort" \
+  || nok "Claude reviewer effort policy"
+
+gate_step2="$(sed -n '/^## Step 2 — Run the fired reviewers/,/^## Step 3 — Decide/p' "$PLUGIN/skills/gate/SKILL.md")"
+case "$gate_step2" in
+  *'model: "gpt-5.6-terra"'*'reasoning_effort: "medium"'*)
+    ok "Codex reviewer launches explicitly select gpt-5.6-terra with medium reasoning" ;;
+  *) nok "Codex reviewer model and reasoning policy" ;;
+esac
+case "$gate_step2" in
+  *'fork_turns: "none"'*'gpt-5.6-sol'*'high reasoning'*'any other configuration'*)
+    ok "Codex reviewer launches isolate context and cannot inherit another parent configuration" ;;
+  *) nok "Codex reviewer parent isolation policy" ;;
+esac
+
+gate_reviewers_ok=true
+while IFS= read -r reviewer; do
+  case "$gate_step2" in *"forgeward:$reviewer"*) ;; *) gate_reviewers_ok=false ;; esac
+done <<EOF
+$expected_reviewers
+EOF
+[ "$gate_reviewers_ok" = true ] \
+  && ok "Gate dispatch applies the runtime policy to every Forgeward reviewer type" \
+  || nok "Gate reviewer dispatch coverage"
+
+case "$gate_step2" in
+  *'complete applicable'*'absolute repository root'*'`<base>` exactly'*'`HEAD` plus `$HEAD_SHA`'*'<base>...HEAD'*'required verdict format'*'Do not pass'*'the parent conversation'*)
+    ok "reviewer launch context keeps the complete rubric and required repository/diff instructions" ;;
+  *) nok "reviewer launch context contract" ;;
+esac
+
+audit_policy="$(sed -n '/^## Runtime compatibility/,/^<!-- PORTED AUDIT PHASES/p' "$PLUGIN/skills/audit/SKILL.md"; sed -n '/^\*\*Parallel verification\.\*\*/,/^\*\*Give the verifier/p' "$PLUGIN/skills/audit/SKILL.md")"
+case "$audit_policy" in
+  *'model: sonnet'*'effort: medium'*'model: gpt-5.6-terra'*'reasoning_effort: medium'*'fork_turns: none'*'absolute repository root'*)
+    ok "Audit verifier launches share the explicit Claude and Codex runtime policy" ;;
+  *) nok "Audit verifier runtime policy" ;;
+esac
+
+case "$gate_step2|$audit_policy" in
+  *'fallback for any other runtime'*'self-verification fallback'*'intentionally unchanged'*)
+    ok "non-Claude/Codex launch fallbacks remain explicit and unchanged" ;;
+  *) nok "other-runtime fallback policy" ;;
+esac
+
 # Package routing: Codex must not consume the Claude-only event definitions.
 claude_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/hooks.json")"
 codex_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/codex-hooks.json")"
@@ -199,7 +300,7 @@ run_hook pretooluse "$codex_pre"
 # Version agreement across every version-bearing manifest. The Codex marketplace has
 # no version field in the current schema and points to the local plugin manifest.
 versions="$(jq -r '.version' "$PLUGIN/package.json" "$PLUGIN/.claude-plugin/plugin.json" "$PLUGIN/.codex-plugin/plugin.json"; jq -r '.plugins[0].version' "$PLUGIN/.claude-plugin/marketplace.json")"
-if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.25.0 ] \
+if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.26.0 ] \
   && [ "$(jq -r '.plugins[0].source.path' "$PLUGIN/.agents/plugins/marketplace.json")" = './' ] \
   && [ "$(jq -r '.plugins[0].name' "$PLUGIN/.agents/plugins/marketplace.json")" = forgeward ]; then
   ok "all four version-bearing manifests agree and Codex marketplace resolves locally"

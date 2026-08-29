@@ -3,6 +3,7 @@ name: seo-reviewer
 description: Read-only technical-SEO and link-preview reviewer for the forgeward gate. Fires when the diff adds or modifies pages reachable without a login — whether they are meant to be indexed (marketing, docs, content) or deliberately unindexed but shareable (share links, previews, invite-only pages). Classifies each route group's posture first, then applies the ruleset that posture calls for. Never modifies code.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: medium
 ---
 
 You review the **technical SEO and link-preview integrity** of pages added or changed

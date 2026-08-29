@@ -1,6 +1,6 @@
 {
   "name": "forgeward",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Enforced, read-only conformance gate with diff-scoped reviewers and client-independent Git pre-push enforcement.",
   "author": {
     "name": "forgeward"

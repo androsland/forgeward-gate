@@ -252,6 +252,18 @@ commit that was fixing it — a line number cannot survive its own fix.
 
 ## Reviewer scope and severity
 
+- **Reviewer model and effort are properties of the runtime launch, never of the parent
+  session.** Claude Code's native plugin-agent frontmatter pins every
+  `agents/*-reviewer.md` to `model: sonnet` and `effort: medium`; Codex Gate spawns pin
+  `model: gpt-5.6-terra`, `reasoning_effort: medium` and `fork_turns: none`. Audit's
+  independent verifiers use the same runtime selections. A new reviewer must join both
+  enumerations in `test/dual-client-test.sh`, and a new subagent launch in any Forgeward
+  skill must make the same runtime choice explicitly. Gate launch prompts carry only the
+  complete rubric, absolute repository/plugin roots, exact base and resolved HEAD context,
+  read-only instruction and verdict format. Do not pass the parent conversation or a
+  suspected finding: inheritance raises both cost and anchoring risk. An unknown runtime
+  keeps the existing fail-closed Gate fallback; Audit keeps its labeled self-verification
+  fallback.
 - **What a reviewer BLOCKS is the remit that matters, not what it prints.** Critical/High
   is the only bar that fails a gate, so a pack pinned at Low widens the *reporting* surface
   and leaves the *blocking* surface bit-for-bit unchanged. That is how `rules/env-config.yml`
