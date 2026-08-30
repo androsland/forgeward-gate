@@ -67,3 +67,17 @@ jobs:
       # first failing suite, so a red run reports one suite's failures and not the rest.
       - name: npm test (gate, pre-push, version-check, rules)
         run: npm test
+
+  windows-hooks:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: native cmd.exe Codex hooks
+        run: bash test/windows-hooks-test.sh

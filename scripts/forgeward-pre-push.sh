@@ -21,7 +21,7 @@
 # branch protection — see /forgeward:ci-gate). This hook stops the common/accidental
 # ungated push, robustly, on the developer's machine.
 #
-# Fails OPEN only on missing tooling (no jq/python3, no diff-hash script) — never
+# Fails OPEN only on missing tooling (no working jq/Python, no diff-hash script) — never
 # wedge a push because the gate's own dependencies are absent. It fails CLOSED on an
 # ungated ref.
 set -uo pipefail
@@ -42,9 +42,25 @@ ZERO='0000000000000000000000000000000000000000'
 
 [ -x "$DIFF_HASH" ] || { echo "forgeward pre-push: diff-hash helper missing ($DIFF_HASH) — allowing push (gate not enforced)." >&2; exit 0; }
 
-_HAVE_JQ=0; command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
-_HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
-[ "$_HAVE_JQ" = 0 ] && [ "$_HAVE_PY" = 0 ] && { echo "forgeward pre-push: no jq/python3 — allowing push (gate not enforced)." >&2; exit 0; }
+_HAVE_JQ=0; _JQ_BIN=""; _probe=""
+if _JQ_BIN="$(command -v jq 2>/dev/null)" \
+  && _probe="$("$_JQ_BIN" -n -j '"forgeward-json-ok"' 2>/dev/null)" \
+  && [ "$_probe" = "forgeward-json-ok" ]; then
+  _HAVE_JQ=1
+else
+  _JQ_BIN=""
+fi
+_JSON_PY=""
+for _py_name in python3 python; do
+  _py_path="$(command -v "$_py_name" 2>/dev/null)" || continue
+  [ -n "$_py_path" ] || continue
+  _probe="$("$_py_path" -I -c 'import json,sys;sys.stdout.buffer.write(b"forgeward-json-ok")' 2>/dev/null)" || continue
+  if [ "$_probe" = "forgeward-json-ok" ]; then
+    _JSON_PY="$_py_path"
+    break
+  fi
+done
+[ "$_HAVE_JQ" = 0 ] && [ -z "$_JSON_PY" ] && { echo "forgeward pre-push: no working jq/python3/python — allowing push (gate not enforced)." >&2; exit 0; }
 
 # The twin of gate-check.sh's marker_get, and it had drifted from it in TWO ways.
 #
@@ -68,14 +84,14 @@ _HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
 marker_get() { # marker_get <file> <dotpath>
   local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    if _out="$(jq -r "$2 // empty" "$1" 2>/dev/null)"; then
+    if _out="$("$_JQ_BIN" -r "$2 // empty" "$1" 2>/dev/null)"; then
       printf '%s' "$_out"
       return 0
     fi
-    : # jq is installed but did not run — fall through and let python3 answer
+    : # jq passed its probe but this read failed — let the verified Python answer
   fi
-  [ "$_HAVE_PY" = 1 ] || return 1
-  python3 -I -c 'import json,sys
+  [ -n "$_JSON_PY" ] || return 1
+  "$_JSON_PY" -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))

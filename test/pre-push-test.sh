@@ -155,6 +155,23 @@ ppjq "$R3" "refs/heads/ungated $SHA_MGU refs/heads/ungated $RSHA"$'\n'; RC_CONTR
   || nok "marker_get discards jq's exit status (a broken jq refuses every push, gated or not)" \
          "healthy=$RC_HEALTHY broken=$RC_BROKEN control=$RC_CONTROL (want 0/0/1)"
 
+# P15: interpreter discovery must probe, not merely find, python3. This mirrors the
+# native-Windows Microsoft Store alias shape with a deterministic shim: jq and python3
+# are both present but unusable, while `python` is a working interpreter. Exercise both
+# verdict directions so an early fail-open cannot satisfy the fresh-marker control.
+PYFALLBACK="$TMP/python-fallback"; mkdir -p "$PYFALLBACK"
+printf '#!/bin/sh\nexit 1\n' > "$PYFALLBACK/jq"
+printf '#!/bin/sh\nexit 1\n' > "$PYFALLBACK/python3"
+ln -s "$(command -v python3)" "$PYFALLBACK/python"
+chmod +x "$PYFALLBACK/jq" "$PYFALLBACK/python3"
+pppy() { OUT="$( cd "$1" && printf '%s' "$2" | PATH="$PYFALLBACK:$PATH" "$PREPUSH" origin /nonexistent.git 2>&1 )"; RC=$?; }
+
+pppy "$R3" "refs/heads/gated $SHA_MG refs/heads/gated $RSHA"$'\n';       RC_PY_GATED=$RC
+pppy "$R3" "refs/heads/ungated $SHA_MGU refs/heads/ungated $RSHA"$'\n'; RC_PY_UNGATED=$RC
+{ [ "$RC_PY_GATED" = 0 ] && [ "$RC_PY_UNGATED" = 1 ]; } \
+  && ok "unusable python3 falls through to working python (gated allowed, ungated blocked)" \
+  || nok "pre-push functional Python fallback" "gated=$RC_PY_GATED ungated=$RC_PY_UNGATED (want 0/1)"
+
 # P10 (opt-in safety): a repo that never enabled the gate is a NO-OP, even for an
 # ungated ref — so a shared/global pre-push hook can't block unrelated repos.
 R2="$TMP/repo2"; git init -q "$R2"
