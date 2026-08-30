@@ -456,21 +456,34 @@ approval applies. In either client, the **standalone `pre-push` enforcement hook
 automatically**. Install it per repository as described in
 [Turn on enforcement](#turn-on-enforcement-one-command-per-repo).
 
-Lifecycle handlers read JSON with `jq` if present, then `python3`; if neither exists they fail
-open so a broken feedback hook cannot wedge the client. The Git `pre-push` hook independently
-checks the resolved refs and marker at push time, but it also fails open with an explicit warning
-if neither JSON parser or its diff-hash helper is available.
+On native Windows, each Codex handler uses `commandWindows` to call the tracked
+`forgeward-gate-check.cmd` adapter with `%PLUGIN_ROOT%` quoted for paths containing spaces. The
+adapter resolves `bash.exe` relative to `git.exe` installations on `PATH`; it never invokes bare
+`bash`, which may be the WSL launcher. The served layouts are standard Git for Windows and custom
+Git distributions with the same `cmd`/`bin` or shared-`bin` relationship, including the
+Laragon-style layout covered by the Windows suite. Ordinary non-publish Bash commands remain a
+legitimate allow. A system with no Git-Bash-compatible shell is a deliberate blind spot: the
+adapter exits 0 without claiming the guard ran, because wedging every Codex prompt/tool call would
+violate Forgeward's fail-open lifecycle-hook policy. This is not a claim about other Windows Git
+or POSIX compatibility layers.
+
+Lifecycle handlers probe and read JSON with working `jq` first, then a functional `python3`, then
+`python`. PATH presence alone is not treated as proof that the Microsoft Store `python3` alias can
+execute. If none works they fail open so a broken feedback hook cannot wedge the client. The Git
+`pre-push` hook independently checks the resolved refs and marker at push time, but it also fails
+open with an explicit warning if neither JSON parser or its diff-hash helper is available.
 
 ## Validation / what's tested
 
-**Automated suites — `npm test`.** Six suites, all framework-free, all exercising the
-**real plugin scripts** in `scripts/` and `ci/` (not mocks or copies) against throwaway git
-repos: `gate-test.sh` (234), `pre-push-test.sh` (15), `version-check-test.sh` (51),
-`dual-client-test.sh` (35), `rules-test.sh` (39), `transcript-audit-test.sh` (37) — 411
-assertions. Every suite prints
-its own count on its last line, so these are re-measurable rather than taken on trust; the
-numbers here were last re-measured against a full run at 0.26.0, and `package.json`'s `test`
-script, not this paragraph, is the roster.
+**Automated suites — `npm test`.** Seven suites, all framework-free, all exercising the
+committed plugin scripts in `scripts/` and `ci/` against throwaway git
+repos: `gate-test.sh`, `pre-push-test.sh`, `version-check-test.sh`,
+`dual-client-test.sh`, `windows-hooks-test.sh`, `rules-test.sh`, and `transcript-audit-test.sh`.
+The Windows suite stages the scripts unchanged under a spaced Windows temp path and invokes the
+committed `commandWindows` strings through native `cmd.exe`; on a non-Windows host it reports an
+explicit skip rather than claiming Windows coverage. Every suite prints its own count on its last
+line, so these are re-measurable rather than taken on trust; the `package.json` test script, not
+this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
 requirement of `ci/check-version-monotonic.sh`: it reads the four version-bearing manifests with the stdlib
@@ -479,7 +492,7 @@ that can disagree is a divergence this repo shipped once already (`DECISIONS.md`
 without it gets a named failure, never a quiet skip. `semgrep` is optional — without it
 `rules-test.sh` prints `1..0 # SKIP` and says the rulepack was **not** verified, which is a
 green run that checked less than it appears to. Both differ from the **hooks**, which read
-JSON with `jq` *or* `python3` and fail open when neither exists: for the hooks `python3` is
+JSON with working `jq`, `python3`, or `python` and fail open when none works: for the hooks Python is
 optional, for the version check it is not.
 
 `test/gate-test.sh` (234 assertions) — the in-editor layer:
@@ -898,9 +911,9 @@ fires — the line is tracked vs untracked, not the filename.
   idempotent-by-re-run, so recovery is native: after `/forgeward:gate` passes, re-run `/ship`.
 - **gstack's pre-push Codex review dispatch is out of scope.** It's review, not publishing, and
   gstack has a native switch for it (limit 2). We don't hook or block it.
-- **If neither `jq` nor `python3` is available, lifecycle and Git hooks fail open.** They allow
+- **If no working `jq`, `python3`, or `python` is available, lifecycle and Git hooks fail open.** They allow
   the client action or push rather than wedging Claude Code, Codex, or Git; the Git hook prints
-  that enforcement is unavailable. Install `jq` or `python3`. With a parser present, the
+  that enforcement is unavailable. Install `jq` or Python. With a parser present, the
   standalone Git `pre-push` hook is the client-independent enforcement boundary and validates
   resolved refs rather than shell text.
 

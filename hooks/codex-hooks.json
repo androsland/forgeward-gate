@@ -7,6 +7,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh prompt-submit",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\forgeward-gate-check.cmd\" prompt-submit",
             "timeout": 10,
             "statusMessage": "Checking Forgeward gate marker"
           }
@@ -20,6 +21,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh pretooluse",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\forgeward-gate-check.cmd\" pretooluse",
             "timeout": 10,
             "statusMessage": "Checking Forgeward publish guardrail"
           }

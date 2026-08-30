@@ -3796,7 +3796,7 @@ EOF
 # worth having — it shows what one missing flag actually costs.
 # =============================================================================
 
-# A25: no `python3 -c` in shipped code without `-I`.
+# A25: no direct or selected Python `-c` in shipped code without `-I`.
 #
 # Counted as the UNFLAGGED form, never the flagged one. "Four sites carry -I" goes green
 # the day a fifth is added without it — which is the exact regression this exists to
@@ -3810,11 +3810,11 @@ EOF
 # this assertion cannot see it. Scoped to shipped code (`scripts/`, `ci/`); this suite's
 # own `python3 -c` fixture mutations are deliberately out of scope, since they run in a
 # scratch repo whose contents the test wrote.
-_a25_bad="$(grep -rn --include='*.sh' -E '^[^#]*python3 -c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null || true)"
-_a25_good="$(grep -rc --include='*.sh' -E '^[^#]*python3 -I -c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null \
+_a25_bad="$(grep -rn --include='*.sh' -E '^[^#]*(python3|python|"\$_JSON_PY")[[:space:]]+-c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null || true)"
+_a25_good="$(grep -rc --include='*.sh' -E '^[^#]*(python3|python|"\$_JSON_PY")[[:space:]]+-I[[:space:]]+-c' "$PLUGIN/scripts" "$PLUGIN/ci" 2>/dev/null \
              | awk -F: '{n+=$2} END{print n+0}')"
 if [ -z "$_a25_bad" ] && [ "$_a25_good" -ge 5 ]; then
-  ok "A25: every python3 -c in shipped code carries -I ($_a25_good sites flagged, 0 unflagged)"
+  ok "A25: every Python -c in shipped code carries -I ($_a25_good sites flagged, 0 unflagged)"
 else
   nok "A25: a python3 -c in shipped code is missing -I, so the repo under review is on its sys.path" \
       "unflagged: ${_a25_bad:-none} | flagged sites: $_a25_good (expected >= 5)"
@@ -3875,7 +3875,9 @@ A26PY
   # neighbour and leg 3 would read that as health.
   _a26_mut="$TMP/a26-mutant"; mkdir -p "$_a26_mut"
   cp "$PLUGIN/scripts/"*.sh "$_a26_mut/"
-  sed 's/python3 -I -c/python3 -c/g' "$PLUGIN/scripts/forgeward-gate-check.sh" > "$_a26_mut/forgeward-gate-check.sh"
+  sed -e 's/python3 -I -c/python3 -c/g' \
+      -e 's/"\$_JSON_PY" -I -c/"\$_JSON_PY" -c/g' \
+      "$PLUGIN/scripts/forgeward-gate-check.sh" > "$_a26_mut/forgeward-gate-check.sh"
   chmod +x "$_a26_mut"/*.sh
 
   _a26_shipped="$(_a26_run "$PLUGIN/scripts/forgeward-gate-check.sh")"

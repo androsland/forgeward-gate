@@ -36,11 +36,31 @@ mode="${1:-pretooluse}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 input="$(cat)"
 
-_HAVE_JQ=0; command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
-_HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
-[ "$_HAVE_JQ" = 0 ] && [ "$_HAVE_PY" = 0 ] && exit 0
+_HAVE_JQ=0; _JQ_BIN=""; _probe=""
+if _JQ_BIN="$(command -v jq 2>/dev/null)" \
+  && _probe="$("$_JQ_BIN" -n -j '"forgeward-json-ok"' 2>/dev/null)" \
+  && [ "$_probe" = "forgeward-json-ok" ]; then
+  _HAVE_JQ=1
+else
+  _JQ_BIN=""
+fi
 
-# NOTE the python3 branch writes BYTES rather than using print(). On Windows, python's
+# Windows' Microsoft Store aliases can satisfy `command -v python3` but still be
+# unusable by a non-interactive hook. Probe the actual JSON runtime, prefer python3,
+# then retain and invoke a working python.exe when that is the interpreter installed.
+_JSON_PY=""
+for _py_name in python3 python; do
+  _py_path="$(command -v "$_py_name" 2>/dev/null)" || continue
+  [ -n "$_py_path" ] || continue
+  _probe="$("$_py_path" -I -c 'import json,sys;sys.stdout.buffer.write(b"forgeward-json-ok")' 2>/dev/null)" || continue
+  if [ "$_probe" = "forgeward-json-ok" ]; then
+    _JSON_PY="$_py_path"
+    break
+  fi
+done
+[ "$_HAVE_JQ" = 0 ] && [ -z "$_JSON_PY" ] && exit 0
+
+# NOTE the Python branch writes BYTES rather than using print(). On Windows, python's
 # stdout is a text stream and translates every "\n" to "\r\n", so a multi-line command
 # came back with a CR that is not in the command the shell will actually run. That is
 # invisible in most single-line cases and quietly breaks anything matching across a line
@@ -58,18 +78,18 @@ _HAVE_PY=0; command -v python3 >/dev/null 2>&1 && _HAVE_PY=1
 # A13/A14), and the failure this layer's header says it must never take.
 #
 # The pipe itself is safe here even under pipefail, unlike the one that used to be in
-# the test harness's denies(): jq and python3 both drain stdin to EOF, so the writer is
+# the test harness's denies(): jq and Python both drain stdin to EOF, so the writer is
 # never orphaned. Only an EARLY-EXIT reader (`grep -q`, `head`) can SIGPIPE its writer.
 json_get() {
   local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    if _out="$(printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null)"; then
+    if _out="$(printf '%s' "$input" | "$_JQ_BIN" -r "$1 // empty" 2>/dev/null)"; then
       printf '%s' "$_out"
       return 0
     fi
-    : # jq is installed but did not run — fall through and let python3 answer
+    : # jq passed its probe but this read failed — let the verified Python answer
   fi
-  [ "$_HAVE_PY" = 1 ] || return 1
+  [ -n "$_JSON_PY" ] || return 1
   # TWO try blocks, not one, and the split is the whole point. A single
   # `except Exception: pass` around both the load and the traversal made
   # "the input is not JSON" and "the field is not in it" the same observation —
@@ -80,7 +100,7 @@ json_get() {
   # truncated payload carrying a real publish verb was ALLOWED.
   #   parse failure  -> exit 1, so the caller can tell it learned nothing
   #   absent field   -> exit 0 with empty stdout, which is the legitimate answer
-  printf '%s' "$input" | python3 -I -c 'import json,sys
+  printf '%s' "$input" | "$_JSON_PY" -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(sys.stdin)
@@ -117,14 +137,14 @@ except Exception: pass' "$1"
 marker_get() {
   local _out
   if [ "$_HAVE_JQ" = 1 ]; then
-    if _out="$(jq -r "$2 // empty" "$1" 2>/dev/null)"; then
+    if _out="$("$_JQ_BIN" -r "$2 // empty" "$1" 2>/dev/null)"; then
       printf '%s' "$_out"
       return 0
     fi
-    : # jq is installed but did not run — fall through and let python3 answer
+    : # jq passed its probe but this read failed — let the verified Python answer
   fi
-  [ "$_HAVE_PY" = 1 ] || return 1
-  python3 -I -c 'import json,sys
+  [ -n "$_JSON_PY" ] || return 1
+  "$_JSON_PY" -I -c 'import json,sys
 path=sys.argv[1].lstrip(".").split(".")
 try:
     d=json.load(open(sys.argv[2]))
@@ -243,7 +263,7 @@ if [ "$mode" = "expansion" ] || [ "$mode" = "prompt-submit" ]; then
       block_ship
     fi
     echo "forgeward gate: /ship halted — the hook input could not be parsed, so which repo this applies to is unknown." >&2
-    echo "Re-run it; if this repeats, check that jq/python3 work (\`jq --version\`, \`python3 -V\`)." >&2
+    echo "Re-run it; if this repeats, check that jq or Python work (\`jq --version\`, \`python3 -V\`, \`python -V\`)." >&2
     exit 2
   fi
   git rev-parse --git-dir >/dev/null 2>&1 || exit 0
@@ -271,7 +291,7 @@ cmd="$(json_get '.tool_input.command')" || _unreadable=1
 if [ "$_unreadable" = 1 ]; then
   case "$input" in
     *push*|*create*)
-      deny "forgeward gate: the hook input could not be parsed, and its raw text mentions a publish verb. Refusing rather than guessing. Re-run the command; if this repeats, check that jq/python3 work (\`jq --version\`, \`python3 -V\`)." ;;
+      deny "forgeward gate: the hook input could not be parsed, and its raw text mentions a publish verb. Refusing rather than guessing. Re-run the command; if this repeats, check that jq or Python work (\`jq --version\`, \`python3 -V\`, \`python -V\`)." ;;
   esac
   exit 0
 fi

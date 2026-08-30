@@ -259,13 +259,13 @@ ln -s "$(command -v dirname)" "$NOPARSER/dirname"
 ln -s "$(command -v git)" "$NOPARSER/git"
 out="$(printf '%s' "$codex_ship" | PATH="$NOPARSER" /bin/bash "$CHECK" prompt-submit 2>&1)"; st=$?
 [ "$st" -eq 0 ] && [ -z "$out" ] \
-  && ok "missing jq and python3 fails open without wedging the client" \
+  && ok "missing jq and Python fail open without wedging the client" \
   || nok "missing JSON parsers" "st=$st out=$out"
 
 git -C "$R" config forgeward.gate enabled
 feature_sha="$(git -C "$R" rev-parse HEAD)"
 out="$(printf 'refs/heads/feature %s refs/heads/feature %040d\n' "$feature_sha" 0 | (cd "$R" && PATH="$NOPARSER" /bin/bash "$PREPUSH" origin example.invalid) 2>&1)"; st=$?
-[ "$st" -eq 0 ] && case "$out" in *'no jq/python3'*'gate not enforced'*) true;; *) false;; esac \
+[ "$st" -eq 0 ] && case "$out" in *'no working jq/python3/python'*'gate not enforced'*) true;; *) false;; esac \
   && ok "standalone pre-push hook names its fail-open when JSON parsers are missing" \
   || nok "pre-push missing JSON parsers" "st=$st out=$out"
 
