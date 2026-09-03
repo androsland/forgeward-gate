@@ -134,7 +134,6 @@ is keyed to HEAD, so an amend invalidates it.
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
 | 18 | **PR #55's content is on `master`.** The `osv-scanner` fail-open it fixed is still live in the shipped `agents/supply-chain-reviewer.md`, because the PR merged into a branch that had already merged. Re-land the prompt change from the orphaned commit against today's tree — four manifests now, not the three that commit assumed — and drop the 774-line `TODOS.md` half of that diff rather than forcing it. Topmost because it is the only entry in this file describing a defect that is live in what installers run. Its own PR under the executable-behaviour rule: it changes a reviewer prompt. | Reviewers ×1 | prompts |
-| 19 | **A merged PR that never reached `master` is caught by something other than a person noticing.** A scheduled check keys on `baseRefName` against the default branch and on ancestry of `mergeCommit.oid` — never `headRefOid`, which after a squash merge is never an ancestor and reports 45 of 59 orphaned (against `origin/master` at `be6a01d`) on a repo where two are. Scheduled rather than `pull_request`, since the condition only becomes true after the base merges. | Housekeeping ×1 | CI |
 | 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; its three accepted limits are each closed or carried in the script header; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4, Deep-audit axis ×1 | test |
 | 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, the update path is written down, and the two residuals around it — the `item2-wip` tag that is not an archive and Dependabot's grouping — are each resolved or re-disclosed. | Housekeeping ×3 | docs |
 | 20 | **gstack detection resolves the ACTIVE version, not "a copy is on disk".** The plugin-cache arm's remaining false POSITIVE — a cached but uninstalled plugin — is closed or re-disclosed under a test built the way D8b is, and the deepened glob's ~75× cost is measured rather than estimated. Successor to retired goal 2, which shipped the glob and filed both residuals rather than fixing them. | Quality axis ×2 | code |
@@ -145,7 +144,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 8 | **PARTLY DONE (0.24.0, 2026-08-27) — the `basename` leg is closed and has moved to the not-work list as an accepted, tested limit.** Still open: layer 1 reads flag values (`--log-opts` is now a recommended flag), layer 4 stops using TRACKED as a proxy for "in the reviewed diff" and defines its behaviour when the var is absent, layer 4's TOCTOU target check is closed or re-disclosed, and the fourth forgery shape — a bare command name resolved through PATH — is under test. The first two change *enforcement* rather than tests. | Reviewers ×4 | code |
 | 9 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
 | 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, `gate-test.sh` stops reporting a skip through `ok()` so a run with nothing installed cannot read as a pass, `live-test/setup.sh` stops defaulting its scaffold inside the repo, and the open half of the `grep`-returns-nothing entry is closed. | Housekeeping ×6 | test |
-| 21 | **CI runs what it claims to run.** The gated-e2e chain is proven in one continuous run; the no-scanner CI configuration is fixed or stated where a green run is read; the suites' deliberately-not-required status is re-decided now that the flake evidence is older than the workflow that replaced it; and `rules/env-config.yml`'s exclusion from the security workflow is re-disclosed or given the non-blocking advisory lane the entry names as its own precondition. Split out of goal 11 at pass 6, which had grown to ten entries across two unrelated exits. | ci-gate ×3, Housekeeping ×1 | CI |
+| 21 | **CI runs what it claims to run.** The gated-e2e chain is proven in one continuous run; the no-scanner CI configuration is fixed or stated where a green run is read; the suites' deliberately-not-required status is re-decided now that the flake evidence is older than the workflow that replaced it; `rules/env-config.yml`'s exclusion from the security workflow is re-disclosed or given the non-blocking advisory lane the entry names as its own precondition; and the weekly `orphaned-merges` schedule has been **observed** to fire, with its four unexercised legs checked. Split out of goal 11 at pass 6, which had grown to ten entries across two unrelated exits. The fifth clause arrived with goal 19 rather than with the split, because a workflow nobody has watched run is the same defect as a suite whose not-required status nobody has re-decided. | ci-gate ×3, Housekeeping ×2 | CI |
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, the probe/marker coupling is either broken or asserted by an oracle stronger than key presence, and manifest *completeness* is covered by something rather than validity arriving as a side effect. | Standalone posture ×3, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, the layer-3 containment assertion exists once rather than copy-pasted between P8l and P8m leg C, `CLAUDE.md` stops shipping to installers unexamined, the rule-extraction step is verified, and the git history's three stripped PR bodies are counted rather than assumed. | Housekeeping ×3, Docs hygiene ×2 | docs |
 | 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27). The other half is NOT done and the row must not be struck for it.** **forgeward stops describing itself as a gate *for gstack*.** The `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first; `/review` never writing `VERSION` reopens a cheaper handoff than `/ship`; the two remaining couplings in the identity entry are closed; and `/forgeward:audit` gets the run-verification it says is blocked on the same decision. Decide those together, or split this goal. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
@@ -164,12 +163,27 @@ archived, 10 because two of its three were, and 15 because the pass it names is 
 that ran — its two entries are still live under goal 24. The narrative for each is in
 [`TODOS-DONE.md`](TODOS-DONE.md).
 
+**19 was struck outside a pass**, by the branch that satisfied it, which is the shape the
+loop above actually describes: a goal is retired by the PR that closes its entries, and an
+archive pass is only how a backlog of un-struck ones gets caught up. Four rows arriving at
+once is what a pass looks like, not what striking a goal looks like.
+
+**Goal 19 closed leaving three entries drawn by nothing**, and they are named here rather
+than left for a sum to discover: the acknowledgment file's absent expiry, the `PR_LIMIT`
+truncation wall, and the unpinned `isinstance` guard, all under `## Housekeeping`. The
+fourth thing it filed — the unobserved schedule — was drawn into goal 21, whose exit was
+widened to name it. Residuals outliving the goal that filed them is the shape goal 2 had
+when it retired into goal 20 — two there, three here — and the difference is that these are
+recorded as undrawn at the moment they were filed, which is the only moment anyone knows it
+for certain.
+
 | # | Goal | Closed |
 |---|---|---|
 | 2 | gstack detection sees a plugin-installed gstack | 0.18.0, 2026-08-26 — the two residuals it filed continue as goal 20 |
 | 10 | Scanner arities are verified against real binaries | 2026-08-27 — four installed to `~/.local/bin` without root and `phpcs` via a `php:8.1-cli` container, every arity and `-o` claim re-tested, all held |
 | 15 | The archive is current, and the open half is measured rather than guessed | archive pass 6, 2026-09-03 — continues as goal 24 |
 | 17 | Every ported file is checked by the same instrument | 0.20.0, 2026-08-26 — `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` too |
+| 19 | A merged PR that never reached `master` is caught by something other than a person noticing | 2026-09-04 — `ci/check-merged-prs-landed.sh` on a weekly schedule; the entry it drew is in `## Completed`, along with the two things that entry got wrong and the base filter the review that gated the branch deleted |
 
 **Goal 10's row retires a claim this section made about it, and that is worth keeping.**
 The non-goals below said it was "blocked by tooling that no ordering can unblock" and
@@ -1333,48 +1347,65 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
-- **Nothing checks that a merged PR reached `master`: 2 of 59 merge commits are
-  unreachable from it, and one of the two took its content with it.** (archive pass
-  6, 2026-09-03) Swept every merged PR by testing its `mergeCommit.oid` against
-  `git merge-base --is-ancestor <oid> origin/master`: 57 land, **#51 and #55 do not**.
-  Both were stacked PRs whose base was another branch rather than `master`, and both were
-  merged into that base *after* the base had itself merged — so the merge commit sits on a
-  ref nothing points at. #51 was caught by a human and re-landed as #52 about ten minutes
-  later — #51 merged 08:06:12Z, #52 opened 08:16:01Z and merged 08:17:39Z; the title still
-  says "Re-land #51" — while **#55 was not caught for seven days** and is filed as P1 under
-  `## Reviewers`. One caught and one missed out of two occurrences is not a control, it is
-  a coin. **That re-land is also why the ancestry test over-reports by one:** #51's merge
-  commit is orphaned, but its head commit `f118e8f` IS on `master`, so its content landed
-  and only #55's is genuinely missing. Any check built on `mergeCommit.oid` false-positives
-  on every re-landed PR — fall back to the head commit before alerting, never make it the
-  primary test. **Priority:** P2
+- **Nothing expires an acknowledgment in `ci/relanded-prs.txt`, and an expired one is
+  silently green.** The file maps an orphaned PR to the PR that re-landed it, and the check
+  validates the claim by resolving the named PR's own merge commit and requiring it to be an
+  ancestor of the default ref. That resolution stays true forever — including after the
+  re-landed work is reverted, when the merge commit is still an ancestor and the content is
+  gone. It is the same limit the check itself carries, inherited one layer up: ancestry
+  answers "did this merge commit land", never "is this work present". Wanted, if anything:
+  a review path that re-reads the file rather than a mechanism that expires an entry, since
+  nothing here can tell a stale acknowledgment from a correct one. (goal 19, 2026-09-04)
+  **Priority:** P3
 
-  **The obvious check is the wrong one, and it is wrong loudly.** Testing `headRefOid`
-  instead of `mergeCommit.oid` flags **45 of 59** PRs as orphaned — measured against
-  `origin/master` at `be6a01d` — because a squash merge never leaves the head commit as an
-  ancestor of anything. That first sweep was run here and its output looked like a
-  catastrophe; the same repo, measured correctly, has two cases. A check that reports a
-  76% failure rate on a healthy repo does not get run twice. **The figure moves with
-  `master`, so it is quoted against a ref:** an earlier draft said 46, which is what the
-  same sweep returns against `be6a01d^1` — one merge older, and inconsistent with a 59-PR
-  list that already contains #60.
+- **The orphaned-merge check refuses at exactly `PR_LIMIT`, so it goes red on the 200th
+  merged PR and the fix is a paginating reader, not a bigger number.** `gh pr list --limit
+  200` returning 200 records is indistinguishable from a truncated list, so the script dies
+  rather than answering partially — which is the right direction and a scheduled failure
+  waiting on a counter. This repo is at 60. Raising the limit moves the wall; reading pages
+  until the list is exhausted removes it, at the cost of the guard that currently makes
+  truncation impossible to miss. (goal 19, 2026-09-04) **Priority:** P3
 
-  **What a real check would key on**, if one is ever built: a merged PR whose `baseRefName`
-  is not the default branch is the entire population at risk — every other PR merges onto
-  `master` by construction — so the check is cheap and its scope is knowable. It belongs in
-  `ci/`, on a schedule rather than on `pull_request`, since the condition is created *after*
-  a merge and no PR event fires when it happens. **What it cannot see:** a PR that landed
-  and was then reverted, and a PR whose content reached `master` by some other commit — the
-  ancestry test answers "did this merge commit land", never "is this work present". #52 is
-  exactly that second case, and it would be reported as a finding on every run until
-  somebody suppressed it.
+- **That guard fires at the limit and nowhere below it, so a partially paginated `gh` reads
+  as a clean sweep.** `PR_LIMIT` catches `gh pr list` returning exactly 200; it says nothing
+  about a `gh` that exits 0 having paginated only part of the list — a transient API error
+  or a secondary rate limit on a middle page yields a short, syntactically valid array, and
+  the script reports `ok: N merged PR(s) examined` on an undercount with no indication
+  anything was missed. Left unfixed deliberately: reproducing it needs a real
+  mid-pagination failure against the API, and the plausible remedies (cross-check `N`
+  against a `gh pr list --state merged --json number --jq length`, or against the search
+  API's `total_count`) are each a second call that can fail the same way. Filed rather than
+  guessed at, and stated as blind spot 3 in the script's own header so the limit is not
+  read as coverage. Wanted first: evidence that `gh` ever does this, which nobody here has
+  observed. (goal 19, 2026-09-04) **Priority:** P4
 
-  **Nothing in `~/.claude/CLAUDE.md` covers this shape.** The stack-merge paragraph there
-  is about the reverse hazard — `--delete-branch` on a base that an open PR still names,
-  which *closes* the dependent loudly. This one is silent: the dependent merges, reports
-  success, and lands nowhere. The retarget step the global rule already mandates is what
-  prevents it, so the gap is that the rule states the step without stating what skipping it
-  costs.
+- **The `isinstance(prs, list)` guard in the orphaned-merge check's JSON reader is pinned by
+  nothing, and the assertion written for it does not cover it.** M10 feeds the script
+  `{"not":"a list"}` and asserts the named failure — which it gets with the guard removed
+  too, because iterating a dict yields its keys and `"not".get(...)` raises `AttributeError`,
+  producing the same non-zero exit and the same `die` message. So the guard buys a better
+  diagnostic on stderr and nothing in the file notices if it goes. Verified by mutation and
+  recorded in M10's own comment, so a reader does not mistake a green line for a control.
+  There may be no input that discriminates: a JSON object iterates to its keys, a string to
+  its characters, an array of non-objects to its elements, and every one of those reaches the
+  same `AttributeError`. If that holds, the guard is a *message*, not a behaviour, and the
+  only thing that can pin it is an assertion on the specific stderr text — which is what the
+  repo's own rule about asserting on the message rather than the status already prescribes. (goal 19, 2026-09-04) **Priority:** P4
+
+- **The weekly `orphaned-merges` workflow has never fired, so it is a claim rather than a
+  control.** `CLAUDE.md` already carries the rule from Dependabot — an automation nobody has
+  watched run is unverified in every part a local invocation cannot exercise: the schedule
+  firing at all, `pull-requests: read` sufficing for `gh pr list` under `GITHUB_TOKEN`,
+  `fetch-depth: 0` actually defeating the shallow-clone refusal, and
+  `github.event.repository.default_branch` resolving on a `schedule` event where there is no
+  PR context — which since the review on this branch is load-bearing rather than cosmetic,
+  because the workflow now passes it as `--default-branch` and an empty value there makes
+  every PR count as at-risk on the ok line. And a fifth, added by the same review: GitHub
+  disables a `schedule` trigger after 60 days with no push activity, silently, so a workflow
+  that stops running and a workflow that finds nothing are indistinguishable from outside.
+  The script and its 31 assertions were run locally against the real repository; none of
+  those five were. The check that settles it is one glance at the Actions tab after
+  the first Monday, and it must be repeated after any 60-day quiet stretch. (goal 19, 2026-09-04) **Priority:** P2
 
 - **`test/gate-test.sh` reports a skip through `ok()`, so a run with nothing installed is
   indistinguishable from a run that checked everything.** The tally is
@@ -2031,6 +2062,183 @@ never about `master`.**
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
+
+- **A merged PR that never reached `master` is caught by a scheduled check rather than by
+  a person noticing.** (goal 19; branch `ci/detect-orphaned-merges`, 2026-09-04 — **not
+  merged at the time of writing**, which is the exact claim this entry's own subject says
+  not to make. Settle it with
+  `git merge-base --is-ancestor "$(gh pr view N --json mergeCommit -q .mergeCommit.oid)" origin/master`
+  before reading this as landed.) `ci/check-merged-prs-landed.sh` and
+  `.github/workflows/orphaned-merges.yml` — weekly plus `workflow_dispatch` — with
+  `test/merged-prs-landed-test.sh` behind them and the suite added to `npm test`.
+
+  **What it keys on.** A merged PR whose `baseRefName` is not the default branch is the
+  entire population at risk, and the test is ancestry of `mergeCommit.oid`. `headRefOid`
+  is a **suppressor, never the primary**: a squash merge never leaves the head commit an
+  ancestor of anything, so keying on it reports most of the repo as orphaned.
+
+  Three different quantities live in that sentence and the entry this replaces ran them
+  together, so they are named separately here. Measured on `origin/master` at `d9fa699`,
+  60 merged PRs: **3 at risk** (#49, #51, #55 — a non-default base), **2 genuinely
+  orphaned** by the merge-commit test (#51, #55), and **45 that keying on `headRefOid`
+  would report**, which is the whole repo minus its merge-commit merges. The archived
+  entry quoted the middle and the last figure against `be6a01d` as 2 of 59 and 45 of 59;
+  both hold with the denominator moved by one merge. It warned that the figure moves with
+  `master`, and it does — quoting the ref beside the number is the only reason the two
+  measurements are reconcilable rather than contradictory. What it did not do is
+  distinguish the at-risk count from the orphaned count, and 3 and 2 read as a discrepancy
+  when they are answers to different questions.
+
+  **The entry named the wrong PR for the case that alerts forever.** It said "#52 is exactly
+  that second case, and it would be reported as a finding on every run until somebody
+  suppressed it". #52's base is `master`, so it is outside the at-risk population and can
+  never be reported at all. The case meant is **#51** — and #51 is already silent, because
+  it shares head commit `f118e8f` with #52 and the head-commit fallback the entry's own
+  first paragraph mandates suppresses it. The PR that genuinely alerts forever is **#55**,
+  re-landed by hand as #62 with different commits, which no ancestry test can connect. So
+  the entry was right that a suppression mechanism is needed and wrong about which case
+  needs it, and the fallback it specified is not sufficient on its own.
+
+  **The remedy is an acknowledgment that is validated rather than believed.**
+  `ci/relanded-prs.txt` maps an orphaned PR to the PR that re-landed it; the check resolves
+  that PR's own merge commit and requires it to be an ancestor before downgrading anything.
+  An acknowledgment naming work that never landed suppresses nothing and produces a
+  distinctly worded failure. A suppressed finding is still **printed**, as a note — the file
+  can make a finding non-fatal, never invisible. `55 62` was entered *before* #62 merged,
+  deliberately: until then the check fails saying the acknowledgment does not hold, which is
+  true, and it turns green by itself the moment #62 lands.
+
+  **No assertion in the new suite is a pre-fix control, and the suite header says so in as
+  many words.** The script is new, so `git show HEAD:ci/check-merged-prs-landed.sh` has
+  nothing to redden against; all thirty-one are wrong-fix controls. Two carry real
+  information and both work by mutation: M7 rewrites the primary test to `headRefOid` and
+  asserts the mutant goes **silent** about an orphaned merge commit rather than merely
+  failing differently, and M4's count line (`3 with a non-default base`) is the only
+  assertion that notices a dropped `baseRefName` filter. Two earlier drafts were vacuous and
+  were **deleted rather than repaired**: an absence-based filter control that stayed green
+  with the filter gone, because the PRs whose absence it checked all land and so pass
+  silently either way; and a malformed-acknowledgment fixture whose bad lines named no real
+  PR, so a lax parser produced byte-identical output. Both were found by running the
+  mutation battery, not by reading the assertions.
+
+  **The first thirteen all drove the script with both `--pr-json` and `--ack`, and the
+  workflow passes neither.** The review that gated this branch found it: production runs
+  `bash ci/check-merged-prs-landed.sh --default-branch "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"`
+  and neither of those two flags, so the
+  `gh pr list` call, the temp file, the `mktemp` guard and — the one that matters — the
+  resolution of the ack file **beside the script** were untested, which means the shipped
+  `ci/relanded-prs.txt` and its live `55 62` entry were read by no assertion at all. A suite
+  can be thorough about every shape except the one that ships. M14 runs the no-flag form
+  against a stubbed `gh`, from a working directory that is **not** the script's own, so the
+  plausible wrong default (`ACK_FILE="ci/relanded-prs.txt"`, cwd-relative) reddens; M14b
+  pins the four `--json` fields as the API contract they are. M15, M16, M17/b/c and M18
+  cover the mktemp guard, the `--flag=value` arms, the argv refusals and the fail-closed
+  `python3` requirement.
+
+  **M19 is the one whose comment had to be corrected by its own mutation.** It asserts that
+  an acknowledgment naming a PR absent from the list suppresses nothing, and it was written
+  claiming to pin `landed`'s `[ -n "$1" ]` guard. Deleting that guard leaves it **green**:
+  `git merge-base --is-ancestor "" master` exits 128 on git 2.34.1, so git refuses the empty
+  revision without help. The assertion pins the outcome and the comment now says so. Seven
+  of the eight new guards reddened their named assertion under mutation; this is the eighth,
+  and it is recorded rather than quietly re-worded, because an assertion whose comment
+  claims a guard it does not cover is exactly how a deleted guard reads as tested.
+
+  **The adversarial pass deleted the filter it was asked to defend.** The check keyed its
+  sweep on `baseRefName != <default>`, on the reasoning that a PR based on the default
+  branch lands there by construction. That is an assumption about history never being
+  rewritten, not a property: a force-push to the default branch drops merge commits, and
+  the filtered check would exclude exactly those PRs **by construction** — never tested,
+  never mentioned, invisible in the output. Measured 2026-09-04,
+  `gh api repos/androsland/forgeward-gate/branches/master/protection` returns 404 Branch
+  not protected, so on this repo that is an available accident rather than a hypothetical.
+  Testing every merged PR turned out to be free: at `origin/master` = `d9fa699`, 60 merged
+  PRs, and the merge-commit test finds the same two (#51, #55) whether it examines 3 or 60
+  — 57 extra `git merge-base --is-ancestor` calls on local objects. There was never a cost
+  to trade the coverage against, so the filter became a **counter**: the non-default-base
+  figure is still reported on the ok line, because it is the useful statistic, and it
+  decides nothing. M20 is the wrong-fix control that reddens if the filter comes back;
+  M20b pins that the counter did not become a restatement of the total.
+
+  **Three of the other findings were operator bugs, and one was a wording change that
+  costs a run.** A CRLF acknowledgment file silently voided every entry — the default IFS
+  does not split on `\r`, so `62\r` fails the all-digit test and the PR number never
+  reaches the lookup, producing not "the acknowledgment does not hold" but the generic
+  finding, worded as though no ack file existed, in front of the maintainer looking at the
+  ack file. This repo has no `.gitattributes` and the file is hand-edited, so a Windows
+  editor reaches it by ordinary means (M21). A repeated key is now fatal rather than
+  resolved, because the lookup takes the first match and appending a correction without
+  deleting the mistake keeps trusting the mistake — validation survives a machine bug and
+  not an operator one (M22). And CI now passes `--default-branch` rather than letting the
+  script strip the ref to its last path segment, which is wrong the day a default branch
+  contains a slash (M23). All three reddened their named assertion under mutation, as did
+  the filter removal, in both directions.
+
+  **Two holes were written down instead of guessed at.** `gh pr list --limit 200` is
+  guarded at the limit and **nowhere below it**: a `gh` that exits 0 having paginated only
+  part of the list yields a short, syntactically valid array and the script reports `ok: N
+  examined` on an undercount. Reproducing that needs a real mid-pagination API failure, so
+  it is stated as an open hole rather than fixed on a guess about behaviour nobody here has
+  observed. Separately, GitHub disables a `schedule` trigger after 60 days with no push
+  activity, quietly — no run, no failure, no notification — so "the check is green" and
+  "the check has stopped existing" look identical from outside, and identical for exactly
+  the repos where a stale-merge problem would sit longest. `workflow_dispatch` is the
+  recovery, not the detection; nothing in the workflow can detect it, which is why it is an
+  entry below rather than a claim here.
+
+  **The suite header named the wrong assertion for two revisions.** It said "M5 and M7 are
+  the two that carry real information, and both work by mutation"; M5 is a plain content
+  assertion with no mutation control anywhere near it, and the pair is M4 and M7 — which is
+  what this entry said all along, so the file and the doc describing it disagreed. Found by
+  the maintainability reviewer on this branch, not by the suite. A prose claim about which
+  assertions carry information is not itself an assertion, and nothing re-runs it.
+  **The three fail-closed paths the suite reached last were the three it never took.**
+  The gate's testing reviewer found that `gh is required`, `gh pr list failed` and
+  `--default-branch needs a name argument` were the only documented fail-closed paths in
+  the script without an assertion, while every sibling — the `mktemp` guard, the shallow
+  clone, the unresolvable ref, the absent `python3`, the two other value-taking flags —
+  had had one since the first commit. The asymmetry was not a decision: 27 of the 30
+  assertions then in the suite passed `--pr-json`, so the `gh` branch was structurally unreachable from the
+  suite, and the two flags that gate it are the two CI actually passes. M25 is the one
+  that matters — `gh` writes its diagnostic to stderr and exits non-zero while the
+  redirection still creates `$PR_JSON`, so a script that ignored the status would parse an
+  **empty** file and report `ok: 0 merged PR(s) examined`, a clean bill from a run that
+  listed nothing. All three reddened under mutation. The blind-spot list was numbered
+  1,2,3,4,5,7,6 in the same pass — item 7 was inserted above item 6 and nothing renumbered
+  — which matters only because two comments elsewhere in the file cite blind spots by
+  number. Both citations were re-checked against the corrected list; the shipped header
+  reads 1-7 in order.
+
+  **The second gate round found the sentence the first gate round had made false.** M14's
+  comment said the workflow runs `bash ci/check-merged-prs-landed.sh "origin/$DEFAULT_BRANCH"`
+  *and nothing else*. That was true when it was written and stopped being true inside the
+  same branch, because the `/review` pass that preceded the gate added `--default-branch` to
+  the workflow and updated neither the comment, the script's own usage synopsis on line 2,
+  nor this entry — three copies of one sentence, all stale, none of them anything a test
+  reads. The fix is the invocation rather than the sentence: M14 now runs the flag the
+  workflow passes, so the mirror is checked by the suite instead of by a reader. **It buys
+  no coverage** — the fixture's derived and passed names are both `master`, so M14 stays
+  green if the flag is ignored; M23 and M26 are the assertions with an opinion about it, and
+  M14's comment now says so. A gate that runs twice on one branch is not redundancy: the
+  first round's own fixes are what the second round read.
+
+  **The third gate round found the field the parser sanitizes and no fixture ever sent.**
+  `PARSE_PY` collapses whitespace in a PR title (`" ".join(str(...).split())`) because the
+  reader emits TSV and the loop reads it with `IFS=$'\t' read -r num base mergeoid headoid
+  title` — the title is the only field that is both **last** and **attacker-chosen**, so a
+  newline inside it ends the record early and the remainder is read as a new one. Every one
+  of the 30 fixtures used a plain one-word title, so removing the sanitization broke
+  nothing. M27 sends a title carrying a tab, a newline, and then a complete well-formed
+  record for a PR **#999** with all-zero merge and head OIDs; unsanitized, the loop reads a
+  seventh PR GitHub never reported and fails naming it. That is the shape worth pinning:
+  not a garbled diagnostic but a **fabricated finding** — actionable, and with nothing to
+  act on. Verified by mutation, and the failure message names the forged number rather than
+  only a status, so the assertion cannot pass for the wrong reason. **The severity is
+  bounded by who writes the input:** a title is chosen by whoever opens a PR against this
+  repo, and the script is a scheduled read-only diagnostic with `contents: read` and
+  `pull-requests: read`, so the ceiling is a wasted investigation, never a false clean bill
+  — the count line and the findings both come from the same forged record, so an injected
+  PR can only ADD noise, not hide a real orphan.
 
 - **The runtime pentest/DAST axis is filed, and the `/prove` shape that preceded it is
   rejected in writing.** (PR #60, merged 2026-09-03) A **filing-only PR** — it leaves
