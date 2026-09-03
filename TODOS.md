@@ -31,10 +31,17 @@ is a dated measurement rather than a live fact, and step 6 is the only thing tha
 refreshes any of them.
 
 The re-measurement is why this section reads differently from the pass that wrote it.
-Archive pass 6 moved fourteen entries out, emptying **four** goals of everything they
-drew — 2, 10, 15 and 17, the first three already marked done in the table and the fourth
-being the pass itself — and it filed two new entries no goal drew, one of them the first
-P1 this file has carried. Rebasing the table textually would have shipped four dead rows,
+Archive pass 6 moved fourteen entries out and retired **four** goals — 2, 10, 15 and 17.
+The done markers were on 2, 10 and **17**; **15** is the pass itself, and it is also why
+"emptied of everything they drew" is the wrong summary. Only 2 and 17 emptied. Goal 15's
+two drawn entries (Docs hygiene ×1, Housekeeping ×1) are both still live and re-drawn by
+goal 24 — it retired because the pass it names *ran*, not because its column went to
+zero — and goal 10 lost two of the three it drew, not three. The pass also filed two new
+entries no goal drew, one of them the only P1 **now open**; it is not the first this file
+has carried, and saying so was a claim its own history refutes
+(`git log -S'**Priority:** P1' -- TODOS.md` finds one in the commit that created the file
+on 2026-08-03, another on 2026-08-05 and a third on 2026-08-14, each since resolved).
+Rebasing the table textually would have shipped four dead rows,
 so it was re-derived entry by entry from the 81 rather than edited. **The re-derivation is
 the only thing that has ever summed the `Draws from` column, and the column was wrong:**
 on `origin/master` it drew 63 entries and the not-work list named 5, against 87 entries
@@ -52,8 +59,14 @@ running something, not when its entries "feel handled."
 
 **The `#` column is a stable ID, not a rank — the row order is the order.** Goal numbers
 are cited from inside entries (`goal 8`, `goal 14`), from `## Completed` and from
-`TODOS-DONE.md`, so a goal keeps its number for the life of the file and a retired number
-is never reused. Read the table top to bottom; the numbers say nothing about what is next.
+`TODOS-DONE.md`, so a goal keeps its number and a retired number is not reused. Read the
+table top to bottom; the numbers say nothing about what is next. **That is a rule held
+since `02bca81` (2026-08-26), not a property the file has always had:** the table was
+renumbered wholesale one commit after it was created, every ID from 2 up shifting by one,
+so `| 2 |` named the goal now numbered 3 at `c392bcd` and names a retired goal today. The
+three `goal N` citations live across that window were rewritten with the table, so nothing
+dangles — but a citation copied out of a pre-`02bca81` commit resolves against the old
+numbering and means a different goal.
 
 ### The loop
 
@@ -78,7 +91,7 @@ is never reused. Read the table top to bottom; the numbers say nothing about wha
    `✅`/`❌` entry keeps its `**Priority:**` line right up until the archive pass moves it:
 
    ```bash
-   awk '/^## Completed/{exit} /^- \*\*(✅|❌)/{s=1;next} /^- \*\*/{s=0} !s' TODOS.md \
+   awk '/^## Completed/{exit} /^- \*\*(✅|❌|CLOSED)/{s=1;next} /^- \*\*/{s=0} !s' TODOS.md \
      | grep -c '\*\*Priority:\*\* P3'
    ```
 
@@ -87,14 +100,24 @@ is never reused. Read the table top to bottom; the numbers say nothing about wha
    whole mechanism: the offset between a plain `grep -c` and the census is exactly the
    struck entries the archive has not collected yet, counted at each priority
    independently and absent where there are none. It measures how stale the archive is; it
-   is not a constant to subtract. Three earlier drafts of this paragraph each wrote the
+   is not a constant to subtract. **The alternation is the limit, and it is a vocabulary
+   list — the shape that fails silently.** `CLOSED` is in it because this file uses that
+   prefix: two of the eight entries pass 6 moved out led with `CLOSED 2026-08-27`, and the
+   original `(✅|❌)` census could not see either. Both carried `**Priority:** —`, so the
+   offset came out right by luck; a `CLOSED`-prefixed P3 entry would have made the two
+   commands agree while the archive was behind, which is the one reading this step tells
+   you to rule out. A strike form nobody has coined yet fails the same way.
+   Three earlier drafts of this paragraph each wrote the
    day's offset down as though it were a rule — "exactly the three struck entries", then
    four, then "over by four against a census of 45" — and each was true when measured and
    false by the next merge. Run both commands. If they disagree, the archive is behind by
    the difference.
-   **Neither produces the live-entry total (81) nor the P4/P2/P1/no-priority split**;
-   those come from `measure.mjs` or from counting by hand, so a fallback re-measure
-   refreshes two of this section's numbers and leaves the rest dated.
+   **Neither produces the live-entry total (81) nor the P4/P2/P1/no-priority split.**
+   The total does have a one-liner — the `awk` at the top of this file prints `48/81` —
+   but its P3 half counts naively, so quote it for the denominator and the census for the
+   priority. The split itself comes from `measure.mjs` or from counting by hand, so a
+   fallback re-measure refreshes two of this section's numbers and leaves the rest
+   dated.
 
 **Cut a goal early** when it reaches ~800 diff lines or ~6 entries, whichever comes
 first, and open the PR at that point rather than finishing the list. **Do not cut
@@ -111,7 +134,7 @@ is keyed to HEAD, so an amend invalidates it.
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
 | 18 | **PR #55's content is on `master`.** The `osv-scanner` fail-open it fixed is still live in the shipped `agents/supply-chain-reviewer.md`, because the PR merged into a branch that had already merged. Re-land the prompt change from the orphaned commit against today's tree — four manifests now, not the three that commit assumed — and drop the 774-line `TODOS.md` half of that diff rather than forcing it. Topmost because it is the only entry in this file describing a defect that is live in what installers run. Its own PR under the executable-behaviour rule: it changes a reviewer prompt. | Reviewers ×1 | prompts |
-| 19 | **A merged PR that never reached `master` is caught by something other than a person noticing.** A scheduled check keys on `baseRefName` against the default branch and on ancestry of `mergeCommit.oid` — never `headRefOid`, which after a squash merge is never an ancestor and reports 46 of 59 orphaned on a repo where two are. Scheduled rather than `pull_request`, since the condition only becomes true after the base merges. | Housekeeping ×1 | CI |
+| 19 | **A merged PR that never reached `master` is caught by something other than a person noticing.** A scheduled check keys on `baseRefName` against the default branch and on ancestry of `mergeCommit.oid` — never `headRefOid`, which after a squash merge is never an ancestor and reports 45 of 59 orphaned (against `origin/master` at `be6a01d`) on a repo where two are. Scheduled rather than `pull_request`, since the condition only becomes true after the base merges. | Housekeeping ×1 | CI |
 | 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; its three accepted limits are each closed or carried in the script header; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4, Deep-audit axis ×1 | test |
 | 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, the update path is written down, and the two residuals around it — the `item2-wip` tag that is not an archive and Dependabot's grouping — are each resolved or re-disclosed. | Housekeeping ×3 | docs |
 | 20 | **gstack detection resolves the ACTIVE version, not "a copy is on disk".** The plugin-cache arm's remaining false POSITIVE — a cached but uninstalled plugin — is closed or re-disclosed under a test built the way D8b is, and the deepened glob's ~75× cost is measured rather than estimated. Successor to retired goal 2, which shipped the glob and filed both residuals rather than fixing them. | Quality axis ×2 | code |
@@ -126,30 +149,36 @@ is keyed to HEAD, so an amend invalidates it.
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, the probe/marker coupling is either broken or asserted by an oracle stronger than key presence, and manifest *completeness* is covered by something rather than validity arriving as a side effect. | Standalone posture ×3, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, the layer-3 containment assertion exists once rather than copy-pasted between P8l and P8m leg C, `CLAUDE.md` stops shipping to installers unexamined, the rule-extraction step is verified, and the git history's three stripped PR bodies are counted rather than assumed. | Housekeeping ×3, Docs hygiene ×2 | docs |
 | 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27). The other half is NOT done and the row must not be struck for it.** **forgeward stops describing itself as a gate *for gstack*.** The `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first; `/review` never writing `VERSION` reopens a cheaper handoff than `/ship`; the two remaining couplings in the identity entry are closed; and `/forgeward:audit` gets the run-verification it says is blocked on the same decision. Decide those together, or split this goal. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
-| 22 | **`/forgeward:audit` is checked by something other than its own prose.** Its report schema, Phase 12's `filter_stats` and confidence-band table, the five phases ported from `cso/SKILL.md`, and its trend tracking are each asserted, dropped, or carried in the skill as explicitly unpinned. **The axis had no goal at all until pass 6** — four of its entries drawn by nothing, in a column that was short by 19 and summed by no one. | Deep-audit axis ×4 | test |
+| 22 | **`/forgeward:audit` is checked by something other than its own prose.** Its report schema, Phase 12's `filter_stats` and confidence-band table, the five phases ported from `cso/SKILL.md`, and its trend tracking are each asserted, dropped, or carried in the skill as explicitly unpinned. **The axis had no goal of its own until pass 6** — goals 14 and 17 drew one entry each and the other five of its seven were drawn by nothing, in a column that was short by 19 and summed by no one. This goal takes four of those five; goal 1 takes the fifth. | Deep-audit axis ×4 | test |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 | 23 | **The runtime axis is decided, either way.** `/forgeward:prove` is already rejected in writing; what is open is a P4 design entry that says a runtime axis is buildable and is not decided. Deciding is the work — a `DECISIONS.md` entry saying built, deferred behind a named trigger, or out of scope — so it stops being carried as an open item nothing can act on. Last because it is the only goal here whose output is a paragraph. | Runtime axis ×1 | decision |
-| 24 | **Archive pass 7, and the first expiry triage.** Pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of the file — so the next pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
+| 24 | **Archive pass 7, and the first expiry triage.** Measured at `f0ce0dd`, pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of *that commit's* file. The next commit on this same branch invalidated both, which is why the ref is quoted with them and why the pass re-measures before acting rather than reading this row. The pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
 
 ### Retired goals
 
-A goal keeps its number after it is struck and the number is never reused, because
-entries, `## Completed` and `TODOS-DONE.md` all cite them by number. Four retired at
-archive pass 6 (2026-09-03), when the entries they drew were archived; the narrative for
-each is in [`TODOS-DONE.md`](TODOS-DONE.md).
+A goal keeps its number after it is struck and the number is not reused, because entries,
+`## Completed` and `TODOS-DONE.md` all cite them by number — a rule held since `02bca81`,
+not a property the file has always had, per the note under **The goals** above. Four
+retired at archive pass 6 (2026-09-03): 2 and 17 because everything they drew was
+archived, 10 because two of its three were, and 15 because the pass it names is the one
+that ran — its two entries are still live under goal 24. The narrative for each is in
+[`TODOS-DONE.md`](TODOS-DONE.md).
 
 | # | Goal | Closed |
 |---|---|---|
 | 2 | gstack detection sees a plugin-installed gstack | 0.18.0, 2026-08-26 — the two residuals it filed continue as goal 20 |
-| 10 | Scanner arities are verified against real binaries | 2026-08-27 — all five installed without root, every arity and `-o` claim re-tested, all held |
+| 10 | Scanner arities are verified against real binaries | 2026-08-27 — four installed to `~/.local/bin` without root and `phpcs` via a `php:8.1-cli` container, every arity and `-o` claim re-tested, all held |
 | 15 | The archive is current, and the open half is measured rather than guessed | archive pass 6, 2026-09-03 — continues as goal 24 |
 | 17 | Every ported file is checked by the same instrument | 0.20.0, 2026-08-26 — `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` too |
 
 **Goal 10's row retires a claim this section made about it, and that is worth keeping.**
 The non-goals below said it was "blocked by tooling that no ordering can unblock" and
-that reaching it would be the signal to build a container. It unblocked itself: the five
-scanners installed to `~/.local/bin` from release tarballs and only `phpcs` needed a
-container at all. **An ordering that names a blocker is asserting the blocker** — and an
+that reaching it would be the signal to build a container. It unblocked itself, though
+not as cleanly as the retired row once claimed: four of the five scanners installed to
+`~/.local/bin` from release tarballs, and `phpcs` needed the `php:8.1-cli` container
+after all — the host PHP 8.1 lacks `xmlwriter` and `SimpleXML`, and installing them is
+the one step in the pass that wanted root. **An ordering that names a blocker is
+asserting the blocker** — and an
 asserted blocker is the one kind of claim in this section that nothing re-derives on the
 way past, because a goal nobody reaches is a goal nobody re-checks.
 
@@ -170,7 +199,8 @@ entry now says how it was caught.
 
 **Three of the eight were not on the previous list of five, and not one of the three was
 a new observation.** `Route postures are capped on purpose` has ended with "Recorded as a
-decision, not work" since PR #5 in July; the `basename` exemption became
+decision, not work" since this file was created on 2026-08-03, recording a decision taken
+in PR #5 the previous July; the `basename` exemption became
 accepted-and-under-test at 0.24.0 and the list was not revisited; and the `/prove`
 rejection was already written down, just filed after this list was. The old column drew
 12 of the 13 `## Reviewers` entries, so at least one of the first two was being counted as
@@ -215,7 +245,9 @@ goal 8's exit named two of the four it drew, found while re-deriving. Three goal
 defect, and the count was right in all three — which is why a sum cannot find this one.
 **Read a goal's section, not only its row, before striking it** — and widen the exit text
 rather than trimming the count, because trimming is what makes an entry belong to no goal
-at all, which is how the whole `## Deep-audit axis` went ungoaled until pass 6.
+at all, which is how five of the seven entries in `## Deep-audit axis` were drawn by
+nothing until pass 6. The section was never *wholly* ungoaled — goals 14 and 17 each drew
+one — and saying it was overstated a real gap into a false one.
 
 **And a `test` type is a claim about the exit, not a guarantee one exists**: goal 1's
 first clause is a `live-test/LIVE-TEST.md` section, which no assertion in `test/*.sh` can
@@ -410,9 +442,15 @@ preferring to delete a weightless detail rather than correct it.
   **twelve seconds later, into a base branch that had already landed** — so GitHub recorded
   a merge onto a ref nothing points at any more. Every visible signal reads normal: the PR
   is green, its state is `MERGED`, its body describes shipped work, and the branch still
-  exists. The version would be the loudest tell and it is silent too — `master` went
-  `0.24.0 → 0.26.0`, and `ci/check-version-monotonic.sh` is happy with that, because
-  skipping a minor is not walking backwards.
+  exists. The version would be the loudest tell and it is silent too — quieter, in fact,
+  than a skipped minor would have been. `master` went `0.24.0 → 0.25.0 → 0.26.0` with no
+  gap at all: #55 would have bumped `0.24.0 → 0.25.0`, and once it fell off the ref, #56
+  took `0.25.0` for its own work the next day (#57 held it, #58 went to `0.26.0`).
+  `ci/check-version-monotonic.sh` sees a clean monotonic sequence because there IS one.
+  **The number was reused, not skipped, so there is no hole for a version check to find**
+  — an earlier draft of this entry said `master` went `0.24.0 → 0.26.0` and argued that
+  skipping a minor is not walking backwards, which `git log --first-parent` refutes and
+  which understated the problem: a gap is at least visible.
 
   **Re-landing is its own PR** under the executable-behaviour rule — it changes a reviewer
   prompt — and it is not a `git cherry-pick`. Take `agents/supply-chain-reviewer.md` and
@@ -1295,21 +1333,31 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
-- **Nothing checks that a merged PR reached `master`, and 2 of 59 did not.** (archive pass
+- **Nothing checks that a merged PR reached `master`: 2 of 59 merge commits are
+  unreachable from it, and one of the two took its content with it.** (archive pass
   6, 2026-09-03) Swept every merged PR by testing its `mergeCommit.oid` against
   `git merge-base --is-ancestor <oid> origin/master`: 57 land, **#51 and #55 do not**.
   Both were stacked PRs whose base was another branch rather than `master`, and both were
   merged into that base *after* the base had itself merged — so the merge commit sits on a
-  ref nothing points at. #51 was caught by a human within two minutes and re-landed as #52
-  (the title still says "Re-land #51"); **#55 was not caught for seven days** and is filed
-  as P1 under `## Reviewers`. One caught and one missed out of two occurrences is not a
-  control, it is a coin. **Priority:** P2
+  ref nothing points at. #51 was caught by a human and re-landed as #52 about ten minutes
+  later — #51 merged 08:06:12Z, #52 opened 08:16:01Z and merged 08:17:39Z; the title still
+  says "Re-land #51" — while **#55 was not caught for seven days** and is filed as P1 under
+  `## Reviewers`. One caught and one missed out of two occurrences is not a control, it is
+  a coin. **That re-land is also why the ancestry test over-reports by one:** #51's merge
+  commit is orphaned, but its head commit `f118e8f` IS on `master`, so its content landed
+  and only #55's is genuinely missing. Any check built on `mergeCommit.oid` false-positives
+  on every re-landed PR — fall back to the head commit before alerting, never make it the
+  primary test. **Priority:** P2
 
   **The obvious check is the wrong one, and it is wrong loudly.** Testing `headRefOid`
-  instead of `mergeCommit.oid` flags **46 of 59** PRs as orphaned, because a squash merge
-  never leaves the head commit as an ancestor of anything. That first sweep was run here
-  and its output looked like a catastrophe; the same repo, measured correctly, has two
-  cases. A check that reports a 78% failure rate on a healthy repo does not get run twice.
+  instead of `mergeCommit.oid` flags **45 of 59** PRs as orphaned — measured against
+  `origin/master` at `be6a01d` — because a squash merge never leaves the head commit as an
+  ancestor of anything. That first sweep was run here and its output looked like a
+  catastrophe; the same repo, measured correctly, has two cases. A check that reports a
+  76% failure rate on a healthy repo does not get run twice. **The figure moves with
+  `master`, so it is quoted against a ref:** an earlier draft said 46, which is what the
+  same sweep returns against `be6a01d^1` — one merge older, and inconsistent with a 59-PR
+  list that already contains #60.
 
   **What a real check would key on**, if one is ever built: a merged PR whose `baseRefName`
   is not the default branch is the entire population at risk — every other PR merges onto

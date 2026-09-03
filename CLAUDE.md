@@ -450,7 +450,8 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **A pre-fix control and a wrong-fix control are different assertions, and a fix needs
   both.** An assertion that fails against the old script proves the bug existed; it says
   nothing about the fix being the RIGHT one, because the obvious wrong fix usually fails
-  that assertion too. 0.20.0 shipped four: R14 and R14b were verified to fail against
+  that assertion too. 0.20.0 shipped four of these controls — four of the twelve R14-family
+  assertions that one commit added: R14 and R14b were verified to fail against
   `git show HEAD:scripts/forgeward-rubric-drift.sh`, while R14c and R14d are green against
   the pre-fix script **by construction** and exist to pin the plausible wrong fix — R14c
   that candidate selection is landmark-major rather than candidate-major, verified by
@@ -493,8 +494,11 @@ commit that was fixing it — a line number cannot survive its own fix.
   a base branch twelve seconds after that base had itself merged. **Before writing "merged"
   into a durable entry, check the tree** — `git merge-base --is-ancestor <mergeCommit>
   origin/master`. Test the MERGE commit, not the head: a squash merge never leaves the head
-  commit as an ancestor of anything, so the head-commit form of that check reports 46 of 59
-  PRs orphaned on a repo where two are.
+  commit as an ancestor of anything, so the head-commit form of that check reports 45 of 59
+  PRs orphaned on a repo where two are — a figure that moves with `master`, measured here
+  against `be6a01d`, so quote the ref with it. **The merge-commit test has a false positive
+  of its own**: a re-landed PR keeps an orphaned merge commit while its content is on
+  `master` (#51, re-landed as #52), so fall back to the head commit before alerting.
 - **Extract a rule WITH its exception, or don't extract it.** When the `-I` rule was
   lifted, only one of five sites carried the flag and the gap was already filed; stating
   the rule bare would have converted a filed hole into a claim of coverage. If the
