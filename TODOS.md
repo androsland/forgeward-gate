@@ -2115,10 +2115,140 @@ six standing, plus the three entries the pass wrote itself, two of them for work
 merged with no entry at all. The section drifts above five between archive passes and is
 cut back at the next one; it is not trimmed entry-by-entry.
 
+**Pass 6's currency check found the worst gap yet: six merged PRs and no entry for any of
+them.** #55 through #60 — two releases (0.25.0, 0.26.0), the dual Claude/Codex packaging,
+the native-Windows hook fix and the runtime-axis filing — shipped between 2026-08-27 and
+2026-09-03 while `## Completed`'s newest entry stayed at 0.24.0. **Four of the six never
+touched `TODOS.md` at all**, which is the shape to watch for: a PR that files nothing
+leaves no trace in this file, and the section reads current because its most recent entry
+is recent, not because it is complete. The four entries below were written from the PR
+bodies before anything was cut — had the cut run first, "the five most recent" would have
+kept five entries from before 0.25.0 and archived nothing that was actually recent.
+
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **The runtime pentest/DAST axis is filed, and the `/prove` shape that preceded it is
+  rejected in writing.** (PR #60, merged 2026-09-03) A **filing-only PR** — it leaves
+  nothing in the tree but the entry, which is why it gets a `## Completed` entry at all:
+  the two design resolutions below are the only durable thing it produced, and the next
+  pass would otherwise re-derive them from scratch.
+
+  **Who emits the nuclei templates.** Measured 2026-09-03: all 11 `agents/*-reviewer.md`
+  carry the byte-identical line `tools: Read, Grep, Glob, Bash`, and of the three skills
+  only `ci-gate` declares `Write`/`Edit`. **Declaring is not the same as being unable** —
+  every reviewer holds `Bash` — which is why the gate proves it left the tree alone by
+  snapshotting and diffing rather than by trusting frontmatter. So the reviewer *emits*
+  the template inside its finding, in the `exploit_scenario` slot the schema already has,
+  and the runtime skill materializes and fires it.
+
+  **Who boots the app.** Handing the boot to the user reads as the safer option and is the
+  less safe one: a user-booted dev server carries that user's real `.env`, and once ZAP is
+  pointed at it nothing can see or stop what the app does outbound. **The envelope is the
+  boot** — the user *declares* the boot command, port and health-check URL in
+  `.forgeward/config.yml` and the skill *executes* it scrubbed and confined. That also
+  closes the portability gap the earlier shape carried: Docker is the envelope on all
+  three platforms, and a network namespace is a Linux optimisation rather than the design.
+
+  **What it does not buy, written into the entry rather than left implied.** An emitted
+  template is unvalidated text inside a verdict, so a malformed one is a runtime failure
+  and the gate stays green on it; the boot block is user-authored, so the skill can verify
+  the process it started answers on the health-check URL and cannot verify that URL is the
+  app the user meant; and where no envelope can be built the skill refuses active scanning
+  and offers passive-only (ZAP `baseline`) against a user-supplied URL, saying plainly
+  that nothing is being confined.
+
+- **Forgeward ships as one repository emitting two plugins, and the second one had to
+  survive native Windows.** (PRs #56, #57 and #59; 2026-08-28 → 2026-08-30) Three PRs on
+  one theme, recorded together because #57 and #59 are both fixes to what #56 shipped.
+
+  **#56 — dual packaging.** One repository now emits a native Claude Code plugin and a
+  Codex plugin. Claude and Codex lifecycle hook definitions stay **separate** while gate
+  policy and the standalone pre-push hook are **shared**; the Codex `UserPromptSubmit`
+  adapter, PreToolUse response handling and plugin-root compatibility land with them, and
+  `ci/check-version-monotonic.sh` gains the fourth manifest so the version cannot drift
+  across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
+  and `.codex-plugin/plugin.json`. `test/dual-client-test.sh` is the new suite.
+  (`.agents/plugins/marketplace.json` carries no version field and is not one of the four.)
+
+  **#57 — a skill is not a hook, and the plugin-root contract differs.** Codex injects
+  `PLUGIN_ROOT` into plugin **hook processes**, not into an ordinary skill's shell
+  commands, so the gate, audit and ci-gate skills derive the installed root from their own
+  catalogued `SKILL.md` path and verify the plugin layout rather than stopping when the
+  hook-only variable is absent. The rule is in [`CLAUDE.md`](CLAUDE.md); this is its
+  provenance. Its gate left one non-blocking Medium open: the regression exercises root
+  derivation for all three skills and does not pin every sentence of their documentation
+  contract.
+
+  **#59 — native Windows.** `hooks/codex-hooks.json` gains `commandWindows` handlers backed
+  by a tracked `scripts/forgeward-gate-check.cmd` that resolves Git for Windows directly
+  rather than invoking bare WSL `bash`, and both hooks now probe for a **functional** JSON
+  parser in order — `jq`, then `python3`, then `python` — rather than assuming the second
+  name is the only fallback. `test/windows-hooks-test.sh` covers spaced plugin roots,
+  standard and custom/shared-bin Git layouts, guard decisions and fail-open behaviour.
+  Claude hook configuration is untouched, and no version bump: this repo permits a
+  behaviour fix without a release.
+
+  **What none of the three changed.** The enforcement boundary is still the standalone git
+  pre-push hook, not the lifecycle hooks — those buy fast feedback and are client-dependent
+  by construction.
+
+- **Reviewer model and effort became properties of the runtime launch.** (0.26.0, PR #58,
+  merged 2026-08-29) Every `agents/*-reviewer.md` is pinned to `model: sonnet` /
+  `effort: medium` in native plugin-agent frontmatter; every Codex Gate spawn is pinned to
+  `model: gpt-5.6-terra`, `reasoning_effort: medium` and `fork_turns: none`; and Audit's
+  independent verifiers make the same selections. `test/dual-client-test.sh` enumerates
+  both sets, which is what makes a new reviewer that joins only one of them fail rather
+  than inherit the parent session's model.
+
+  **The pin is about anchoring and cost, not capability.** A launch that inherits the
+  parent conversation inherits its suspicions too, so gate launch prompts carry only the
+  complete rubric, the absolute repository and plugin roots, the exact base and resolved
+  HEAD, the read-only instruction and the verdict format — never the parent transcript and
+  never a suspected finding. An unknown runtime keeps the existing fail-closed Gate
+  fallback; Audit keeps its labeled self-verification fallback. The rule is in
+  [`CLAUDE.md`](CLAUDE.md).
+
+- **`osv-scanner`'s arity and the procedure for reading its output were both wrong, and
+  the same fail-open sat on the tool the prompt PREFERS.** (0.25.0, PR #55, merged
+  2026-08-27) Prose only — the reviewer prompt, `TODOS.md` and a `0.24.0 → 0.25.0` bump
+  across the manifests — and its own PR under the executable-behaviour rule rather than
+  folded into the scanner-arity test PR it was stacked on. It took **18 gate rounds**, and
+  the rounds are the finding.
+
+  **`results[]` is a FINDINGS record, not a COVERAGE record.** Scanning two lockfiles
+  emits two `Scanned …` lines on stderr and **one** `results[]` entry on stdout, so a path
+  missing from `results[]` means nothing on its own and a path present in it only means
+  that path had advisories. The shipped rule before this PR — *check that every path you
+  passed appears as a `source.path`* — was wrong in both directions at once and was the
+  common root of three fail-opens this repo's own gate had already found. The procedure is
+  rewritten **stderr-first** rather than patched a fourth time.
+
+  **Four states that produce valid-looking stdout**, all reproduced independently: egress
+  blocked to `api.osv.dev` (byte-identical to a clean run, 124 bytes each); a mixed-batch
+  silent drop; deps.dev blocked while `api.osv.dev` is reachable, which checks direct
+  dependencies and silently no transitive one; and **config-driven suppression**, the only
+  one that is not an environment failure and the only one that is attacker-controllable —
+  *the PR that introduces a CVE can add the `osv-scanner.toml` that hides it*. The check is
+  keyed on `Loaded filter from`, the one stderr line emitted unconditionally; the two
+  obvious alternatives need the vulnerability query to have succeeded and are therefore
+  absent in exactly the egress-blocked run, which would have been a fifth fail-open.
+
+  **Round 5 turned the check on trivy and found the identical hole, quieter.** With a
+  `.trivyignore` present, trivy 0.74.0 returns exit `0`, 748 bytes, zero vulnerabilities
+  and **zero bytes of stderr** — at the `--quiet` this prompt was itself recommending.
+  `--ignorefile /dev/null` closes two of the three config mechanisms and `--quiet` was
+  dropped as stdout-neutral; the severity vector is a second surface (config *and*
+  environment) and is why "nothing closes the third" was itself wrong.
+
+  **The record is in the commit message, deliberately.** At merge the narrative measured
+  70,245 bytes against GitHub's 65,536-byte PR-body cap, so the body carries a digest and
+  `git log -1` is the authority. What the rounds keep finding is one shape: a fix announced
+  as complete that was half a fix, a universal quantifier written from one sample, a count
+  appended without recomputing, and — twice — a reviewer's finding copied into a durable
+  artifact without being verified, which is this repo's own stated rule breaking inside the
+  commit that ships it.
 - **Goal 8 leg 3: the `basename` exemption is now pinned under its three named forgeries
   — and it is pinned as a LIMIT, not fixed.** (0.24.0, 2026-08-27) The goal asked that the
   exemption "survive three named forgeries under test — a rename, a symlinked path, and a
