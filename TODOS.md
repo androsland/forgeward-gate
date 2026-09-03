@@ -24,22 +24,36 @@ write-once and effectively gone after merge, which is why they live here now.
 
 ## Execution order
 
-Seventy-one open entries **as of 2026-08-26, re-measured after 0.19.0's audit port**
-— too many to sweep and too flat to prioritise: 45 P3, 13 P4, 5 P2 and 8 carrying no
-priority at all, so the priority field carries no signal. Every count in
-this section is a dated measurement rather than a live fact, and step 6 is the only
-thing that refreshes any of them. The re-measurement is why this section reads
-differently from the commit that introduced it: the port struck two of the five
-entries the first goal drew, retired the goal itself, and added seven new Quality-axis
-entries no goal drew — so the ordering was stale before this branch could merge, and
-rebasing it textually would have shipped a dead goal and an arithmetic that no longer
-balanced.
-This section is the ordering layer. It does **not** re-file anything: the sections
-below stay sorted by component, which is how this repo has always sorted them, and
-each goal points at entries where they already live.
+**Eighty-one open entries as of 2026-09-03, re-measured after archive pass 6** — too many
+to sweep and too flat to prioritise: 48 P3, 15 P4, 8 P2, 1 P1 and 9 carrying no priority
+at all, so the priority field still carries almost no signal. Every count in this section
+is a dated measurement rather than a live fact, and step 6 is the only thing that
+refreshes any of them.
 
-**A goal is one branch and one PR.** It is done when its exit condition is
-observable by running something, not when its entries "feel handled."
+The re-measurement is why this section reads differently from the pass that wrote it.
+Archive pass 6 moved fourteen entries out, emptying **four** goals of everything they
+drew — 2, 10, 15 and 17, the first three already marked done in the table and the fourth
+being the pass itself — and it filed two new entries no goal drew, one of them the first
+P1 this file has carried. Rebasing the table textually would have shipped four dead rows,
+so it was re-derived entry by entry from the 81 rather than edited. **The re-derivation is
+the only thing that has ever summed the `Draws from` column, and the column was wrong:**
+on `origin/master` it drew 63 entries and the not-work list named 5, against 87 entries
+above `## Completed` — short by 19, or by 11 once the eight struck-but-unarchived entries
+are set aside as legitimately undrawn. It also found two entries misfiled as work in
+`### Eight entries are not work` below, one goal whose exit named half what it drew, and a
+whole section that no goal touched.
+
+This section is the ordering layer. It does **not** re-file anything: the sections below
+stay sorted by component, which is how this repo has always sorted them, and each goal
+points at entries where they already live.
+
+**A goal is one branch and one PR.** It is done when its exit condition is observable by
+running something, not when its entries "feel handled."
+
+**The `#` column is a stable ID, not a rank — the row order is the order.** Goal numbers
+are cited from inside entries (`goal 8`, `goal 14`), from `## Completed` and from
+`TODOS-DONE.md`, so a goal keeps its number for the life of the file and a retired number
+is never reused. Read the table top to bottom; the numbers say nothing about what is next.
 
 ### The loop
 
@@ -52,32 +66,33 @@ observable by running something, not when its entries "feel handled."
    per-commit gating is the expensive mistake. Fire only the reviewers whose surface
    the diff touches, and name the ones you skipped and why.
 5. Open the PR, then stop.
-6. On merge: re-measure, strike the goal, return to 1. The instrument is todokeeper's
-   `measure.mjs` — a separate plugin, installed machine-locally and **not in this repo**.
-   Without it, `wc -c TODOS.md` and `awk '/^## Completed/{f=1} f' TODOS.md | wc -c` give
-   the size and the completed mass. The priority census needs the struck-but-unarchived
-   entries excluded, because a `✅`/`❌` entry keeps its `**Priority:**` line right up
-   until the archive pass moves it:
+6. On merge: **verify the merge reached `master`**, then re-measure, strike the goal, and
+   return to 1. The verification is one command —
+   `git merge-base --is-ancestor "$(gh pr view N --json mergeCommit -q .mergeCommit.oid)" origin/master`
+   — and it is step 6 rather than a footnote because PR #55 merged, reported `MERGED`, and
+   put its content on a dead ref; goal 18 exists to re-land it and goal 19 to automate this
+   line. The instrument for the re-measure is todokeeper's `measure.mjs` — a separate
+   plugin, installed machine-locally and **not in this repo**. Without it, `wc -c TODOS.md`
+   and `awk '/^## Completed/{f=1} f' TODOS.md | wc -c` give the size and the completed
+   mass. The priority census needs the struck-but-unarchived entries excluded, because a
+   `✅`/`❌` entry keeps its `**Priority:**` line right up until the archive pass moves it:
 
    ```bash
    awk '/^## Completed/{exit} /^- \*\*(✅|❌)/{s=1;next} /^- \*\*/{s=0} !s' TODOS.md \
      | grep -c '\*\*Priority:\*\* P3'
    ```
 
-   The obvious version — a plain `grep -c` over everything above `## Completed` — returns
-   **49** against a census of 45, over by four. There are **five** struck entries above the
-   archive as of 0.19.0: four P3 and one P2. So the naive pass reads P3 49 against 45, P2 6
-   against 5, and P4 13 against 13 — over by its struck entries at each priority
-   independently, and not at all where there are none.
-   **That is arithmetic, not a rule, and the 0.18.0 wording here proves why.** It recorded a
-   coincidence — naive and census both read 4 at P2, because the single struck P2 was one
-   the naive pass added and the census subtracted — and the coincidence did not survive one
-   more struck P2 arriving. Its predecessor said "exactly the three struck entries" while
-   there happened to be three. Each draft was true when measured and false by the next
-   merge, which is this file's own recurring failure arriving in the one instrument offered
-   to a reader without `measure.mjs`: a count that classifies by an entry's lead and a
-   closure that lives in its body. Run the command, quote the number, date it.
-   **Neither command produces the live-entry total (71) nor the P4/P2/no-priority split**;
+   **As of archive pass 6 that command and the naive one both return 48**, because the
+   pass moved all eight struck entries out and left none above `## Completed`. That is the
+   whole mechanism: the offset between a plain `grep -c` and the census is exactly the
+   struck entries the archive has not collected yet, counted at each priority
+   independently and absent where there are none. It measures how stale the archive is; it
+   is not a constant to subtract. Three earlier drafts of this paragraph each wrote the
+   day's offset down as though it were a rule — "exactly the three struck entries", then
+   four, then "over by four against a census of 45" — and each was true when measured and
+   false by the next merge. Run both commands. If they disagree, the archive is behind by
+   the difference.
+   **Neither produces the live-entry total (81) nor the P4/P2/P1/no-priority split**;
    those come from `measure.mjs` or from counting by hand, so a fallback re-measure
    refreshes two of this section's numbers and leaves the rest dated.
 
@@ -95,36 +110,74 @@ is keyed to HEAD, so an amend invalidates it.
 
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
-| 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4 | test |
-| 2 | **✅ DONE (0.18.0, 2026-08-26).** **gstack detection sees a plugin-installed gstack.** `forgeward-detect-gstack-skill.sh`'s cache glob accounts for the version level, and the arm has a positive control built the way R13 builds one — it has none today, because gstack is skills-installed on the only machine that has tested it. Its own PR: it changes what the gate defers and where it hands off. Shipped as its own PR, with D8b as the positive control and D8c pinning the direction; the two-level glob was kept on a disclosed absence of evidence, and the arm's remaining false POSITIVE — a cached but uninstalled plugin — is filed rather than fixed. | Quality axis ×1 (struck) | code |
-| 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, and the update path is written down. | Housekeeping ×2 (version drift, `item2-wip` tag) | docs |
+| 18 | **PR #55's content is on `master`.** The `osv-scanner` fail-open it fixed is still live in the shipped `agents/supply-chain-reviewer.md`, because the PR merged into a branch that had already merged. Re-land the prompt change from the orphaned commit against today's tree — four manifests now, not the three that commit assumed — and drop the 774-line `TODOS.md` half of that diff rather than forcing it. Topmost because it is the only entry in this file describing a defect that is live in what installers run. Its own PR under the executable-behaviour rule: it changes a reviewer prompt. | Reviewers ×1 | prompts |
+| 19 | **A merged PR that never reached `master` is caught by something other than a person noticing.** A scheduled check keys on `baseRefName` against the default branch and on ancestry of `mergeCommit.oid` — never `headRefOid`, which after a squash merge is never an ancestor and reports 46 of 59 orphaned on a repo where two are. Scheduled rather than `pull_request`, since the condition only becomes true after the base merges. | Housekeeping ×1 | CI |
+| 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; its three accepted limits are each closed or carried in the script header; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4, Deep-audit axis ×1 | test |
+| 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, the update path is written down, and the two residuals around it — the `item2-wip` tag that is not an archive and Dependabot's grouping — are each resolved or re-disclosed. | Housekeeping ×3 | docs |
+| 20 | **gstack detection resolves the ACTIVE version, not "a copy is on disk".** The plugin-cache arm's remaining false POSITIVE — a cached but uninstalled plugin — is closed or re-disclosed under a test built the way D8b is, and the deepened glob's ~75× cost is measured rather than estimated. Successor to retired goal 2, which shipped the glob and filed both residuals rather than fixing them. | Quality axis ×2 | code |
 | 4 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
 | 5 | **Base detection is honest about freshness.** The drive-letter arm, the Windows-only assertion and the unreachable divergence fix each have a reachable test; fetch staleness is stated where the user sees it; and the HEAD-pinned marker's re-review cost is either reduced or written down as the price of fixing a Low finding. | Gate — base detection ×5 | code |
-| 6 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it". | Standalone posture ×6 | code |
-| 7 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured" stops returning PASS, and the two security rules are verified on more than one fixture each. | Reviewers ×5 | prompts |
-| 8 | **PARTLY DONE (0.24.0, 2026-08-27) — the `basename` leg is closed; the other two are still open.** All three named forgeries are under test as of 0.24.0 (P8m: a rename, a symlink, and a basename collision — the first two against real binaries, because a stub cannot distinguish "dispatched on the name" from "identified the binary"). Still open: layer 1 reads flag values, and layer 4 stops using TRACKED as a proxy. Both change *enforcement* rather than tests, and layer 4 needs a defined behaviour when the var is absent, so they are a separate PR. | Reviewers ×4 | code |
+| 6 | **A discarded setting is traceable to the file that caused it.** A fixture config carrying an unrecognised key produces the documented note with a matching count, under test — not "a user could find it" — the count's three blind spots (meaningless-because-unopened, duplicate keys, the column-0 comment that releases the `seo.routes` skip) are each closed or named where the count is read, and every other reader of a repo-relative path in this repo is audited for the symlink shape the config check already refuses. | Standalone posture ×6, Housekeeping ×1 | code |
+| 7 | **A reviewer cannot silently lose its rubric.** Prompts are pinned, "unmeasured, needs a rendered check" stops returning PASS, the two security rules are verified on more than one fixture each, semgrep's `.mts`/`.cts` blind spot is disclosed where a reader of the pack will meet it, and `env-config.yml`'s two structural blind spots are each closed or named in the pack header. | Reviewers ×5 | prompts |
+| 8 | **PARTLY DONE (0.24.0, 2026-08-27) — the `basename` leg is closed and has moved to the not-work list as an accepted, tested limit.** Still open: layer 1 reads flag values (`--log-opts` is now a recommended flag), layer 4 stops using TRACKED as a proxy for "in the reviewed diff" and defines its behaviour when the var is absent, layer 4's TOCTOU target check is closed or re-disclosed, and the fourth forgery shape — a bare command name resolved through PATH — is under test. The first two change *enforcement* rather than tests. | Reviewers ×4 | code |
 | 9 | **Every disclosure the skill promises has a test.** The config note, the `substitutes` assertion and the `seo.routes` note are asserted, not just specified. | Standalone posture ×4 | test |
-| 10 | **✅ DONE (2026-08-27).** **Scanner arities are verified against real binaries.** All five installed to `~/.local/bin` from release tarballs (phpcs via `php:8.1-cli`, the host PHP lacking `xmlwriter`/`SimpleXML`); every arity and `-o` claim in the reviewer prompts and `forgeward-scan.sh` re-tested against a running binary and **all held**. Three previously unmeasured facts recorded in the entries below. | Reviewers ×3 | test |
-| 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, and the gated-e2e chain is proven in one continuous run. | Housekeeping ×4, ci-gate ×2 | test/CI |
-| 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, and the probe/marker coupling is either broken or asserted. | Standalone posture ×2, Housekeeping ×1 | code |
-| 13 | **One source of truth per fact.** The credential patterns exist once, `CLAUDE.md` stops shipping to installers unexamined, and the rule-extraction step is verified. | Housekeeping ×4, Docs hygiene ×2 | docs |
-| 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27) — every coupling in the entry below is closed. The other half of this goal is NOT done and the row must not be struck for it: gate-run logging is still open at P3, and the `/forgeward:audit` entry says it is blocked on the same decision. Decide those together, or split this goal.** **forgeward stops describing itself as a gate *for gstack*.** The identity text in both manifests and `agents/security-reviewer.md` says what forgeward is standalone; and the `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first. A positioning decision made deliberately rather than drifted into. **Re-scoped at 0.19.0:** the `deep-audit` half is done — the deferral is closed, not re-disclosed — and `supply-chain-reviewer`'s `/cso` probe moves INTO scope, reversing this goal's own exclusion of it: the probe was the good pattern while the axis belonged to gstack, and forgeward owning the axis leaves it branching on a fact that no longer decides anything. That is a reviewer-prompt change and gets its own PR under the executable-behaviour rule. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
-| 15 | **The archive is current, and the open half is measured rather than guessed.** Archive pass 6. The currency check runs *before* anything is cut, and it has five open questions already, all the same question: PR #43 (second open-half triage, merged 2026-08-19), PR #46 (the quality-axis port, 0.17.0), PR #45 (execution order), PR #47 (0.18.0's cache-glob fix) and the 0.19.0 audit port each closed work with no `## Completed` entry, though #43's findings are written up inside the `## Docs hygiene` entry it triaged, #46's inside the three Quality-axis entries it struck, and #47's and 0.19.0's inside the entries they struck in place. `## Completed`'s newest entry is 0.16.0, which is now **three** shipped versions behind. Decide whether an in-entry strike counts as recorded or is the gap the check exists to catch — do not cut while it is undecided, because "the five most recent" is a lie on a stale section. Struck on the re-measurement, explicitly **not** on landing under 50KB, because it cannot: `## Completed` holds **25,268 B**, so archiving all of it leaves the open half over 100KB — twice the threshold — whatever this file weighs on the day the pass runs. A split here is relief, never a fix. Re-score the P3 mass on the way through. | Docs hygiene ×1, Housekeeping ×1 | docs |
+| 11 | **The test suite is as linted as the code.** `test/` is in the shellcheck job, `run_split` stops round-tripping through a command substitution, `gate-test.sh` stops reporting a skip through `ok()` so a run with nothing installed cannot read as a pass, `live-test/setup.sh` stops defaulting its scaffold inside the repo, and the open half of the `grep`-returns-nothing entry is closed. | Housekeeping ×6 | test |
+| 21 | **CI runs what it claims to run.** The gated-e2e chain is proven in one continuous run; the no-scanner CI configuration is fixed or stated where a green run is read; the suites' deliberately-not-required status is re-decided now that the flake evidence is older than the workflow that replaced it; and `rules/env-config.yml`'s exclusion from the security workflow is re-disclosed or given the non-blocking advisory lane the entry names as its own precondition. Split out of goal 11 at pass 6, which had grown to ten entries across two unrelated exits. | ci-gate ×3, Housekeeping ×1 | CI |
+| 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, the probe/marker coupling is either broken or asserted by an oracle stronger than key presence, and manifest *completeness* is covered by something rather than validity arriving as a side effect. | Standalone posture ×3, Housekeeping ×1 | code |
+| 13 | **One source of truth per fact.** The credential patterns exist once, the layer-3 containment assertion exists once rather than copy-pasted between P8l and P8m leg C, `CLAUDE.md` stops shipping to installers unexamined, the rule-extraction step is verified, and the git history's three stripped PR bodies are counted rather than assumed. | Housekeeping ×3, Docs hygiene ×2 | docs |
+| 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27). The other half is NOT done and the row must not be struck for it.** **forgeward stops describing itself as a gate *for gstack*.** The `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first; `/review` never writing `VERSION` reopens a cheaper handoff than `/ship`; the two remaining couplings in the identity entry are closed; and `/forgeward:audit` gets the run-verification it says is blocked on the same decision. Decide those together, or split this goal. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
+| 22 | **`/forgeward:audit` is checked by something other than its own prose.** Its report schema, Phase 12's `filter_stats` and confidence-band table, the five phases ported from `cso/SKILL.md`, and its trend tracking are each asserted, dropped, or carried in the skill as explicitly unpinned. **The axis had no goal at all until pass 6** — four of its entries drawn by nothing, in a column that was short by 19 and summed by no one. | Deep-audit axis ×4 | test |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
-| 17 | **✅ DONE (0.20.0, 2026-08-26).** **Every ported file is checked by the same instrument, not just the reviewers.** `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` as well as `agents/*-reviewer.md`, with an R14 positive control verified to FAIL against the pre-fix script — the way D8b was built. Its blast radius is one advisory that always exits 0, so it is cheap; what it cannot buy is stated in the entry and must be carried into the script header, since the audit's Phases 0/1/12/13/14 stay unpinned and the script is blind with no gstack checkout. Shipped with R14/R14b as pre-fix controls and R14c/R14d as wrong-fix controls; the entry's twelve-site snapshot was wrong in both directions, as it said it would be. | Deep-audit axis ×1 (struck) | code |
+| 23 | **The runtime axis is decided, either way.** `/forgeward:prove` is already rejected in writing; what is open is a P4 design entry that says a runtime axis is buildable and is not decided. Deciding is the work — a `DECISIONS.md` entry saying built, deferred behind a named trigger, or out of scope — so it stops being carried as an open item nothing can act on. Last because it is the only goal here whose output is a paragraph. | Runtime axis ×1 | decision |
+| 24 | **Archive pass 7, and the first expiry triage.** Pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of the file — so the next pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
 
-### Five entries are not work
+### Retired goals
 
-Each is quoted by a prefix that is greppable in this file, because a citation nobody
-can resolve is worse than none: `Five disclosed under-matches remain by design`, `The
-base-rate measurement structurally under-counts this class`, `The local gate is strong,
-not indestructible`, `The PreToolUse artifact deny only protects once installed`, and
-`Measured 2026-08-26: for the two months before today`. The first four are standing
-disclosures of accepted limits, here so they are not re-discovered as bugs; nothing
-closes them. The fifth is a dated measurement, kept so it is not re-derived from
-scratch — and **do re-derive it if you are about to rely on it**: the first draft of
-that entry was a forward claim, it was false when it was written, and the entry now
-says how it was caught.
+A goal keeps its number after it is struck and the number is never reused, because
+entries, `## Completed` and `TODOS-DONE.md` all cite them by number. Four retired at
+archive pass 6 (2026-09-03), when the entries they drew were archived; the narrative for
+each is in [`TODOS-DONE.md`](TODOS-DONE.md).
+
+| # | Goal | Closed |
+|---|---|---|
+| 2 | gstack detection sees a plugin-installed gstack | 0.18.0, 2026-08-26 — the two residuals it filed continue as goal 20 |
+| 10 | Scanner arities are verified against real binaries | 2026-08-27 — all five installed without root, every arity and `-o` claim re-tested, all held |
+| 15 | The archive is current, and the open half is measured rather than guessed | archive pass 6, 2026-09-03 — continues as goal 24 |
+| 17 | Every ported file is checked by the same instrument | 0.20.0, 2026-08-26 — `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` too |
+
+**Goal 10's row retires a claim this section made about it, and that is worth keeping.**
+The non-goals below said it was "blocked by tooling that no ordering can unblock" and
+that reaching it would be the signal to build a container. It unblocked itself: the five
+scanners installed to `~/.local/bin` from release tarballs and only `phpcs` needed a
+container at all. **An ordering that names a blocker is asserting the blocker** — and an
+asserted blocker is the one kind of claim in this section that nothing re-derives on the
+way past, because a goal nobody reaches is a goal nobody re-checks.
+
+### Eight entries are not work
+
+Each is quoted by a prefix that is greppable in this file, because a citation nobody can
+resolve is worse than none: `Five disclosed under-matches remain by design`, `Route
+postures are capped on purpose`, `The per-tool exemption in`, `The base-rate measurement
+structurally under-counts this class`, `The local gate is strong, not indestructible`,
+`The PreToolUse artifact deny only protects once installed`, `was proposed and REJECTED`,
+and `Measured 2026-08-26: for the two months before today`.
+
+Seven are standing disclosures of accepted limits, here so they are not re-discovered as
+bugs; nothing closes them. The eighth is a dated measurement, kept so it is not
+re-derived from scratch — and **do re-derive it if you are about to rely on it**: the
+first draft of that entry was a forward claim, it was false when it was written, and the
+entry now says how it was caught.
+
+**Three of the eight were not on the previous list of five, and not one of the three was
+a new observation.** `Route postures are capped on purpose` has ended with "Recorded as a
+decision, not work" since PR #5 in July; the `basename` exemption became
+accepted-and-under-test at 0.24.0 and the list was not revisited; and the `/prove`
+rejection was already written down, just filed after this list was. The old column drew
+12 of the 13 `## Reviewers` entries, so at least one of the first two was being counted as
+ordinary work, and nothing in the row said which. A list of exceptions
+is maintained by whoever remembers it exists — the running-total failure in a different
+shape, and the harder one to see, because a *correct* count of the wrong set of entries
+is indistinguishable from a correct one until somebody reads the entries themselves.
 
 ### Non-goals, so this ordering is not read as coverage
 
@@ -133,49 +186,59 @@ expires a goal that stops moving. It does not re-file entries, so an entry that
 belongs to two goals is listed under one and worked from wherever it sits. The
 entry counts are a sizing hint, not the cap: the ~800-line ceiling is what actually
 cuts a branch, and a goal whose entries turn out large gets cut mid-goal and
-resumed. **Goal 10 is blocked by tooling that no ordering can unblock** — it will
-still be blocked when it comes up, and reaching it is the signal to build the
-container, not to skip it. And the ordering assumes each goal's entries are still
-true: the 2026-08-26 staleness sweep's SUSPECT and REFERENT-MISSING buckets were read
-in full and every one judged a false alarm. **Its coverage cannot be
-reconstructed, and that is the finding rather than a caveat on it.** The sweep records a
-63-entry file; no commit on this branch or its base holds 63 entries. The counts run 61 at
-`1815423f` (pre-port master), 64 at `d210d047` (the pre-rebase tip), 68 at `48b7feb` (the
-port) and 70 here — re-confirmed by running `stale.mjs`, which reports 70 and so counts
-leads the same way this file does. The sweep was therefore run against an uncommitted
-working tree, and which entries it saw is unrecoverable. What *is* provable is the
-shortfall: 63 then against 70 now means **at least seven current entries were never swept**,
-and the seven the port added are the obvious candidates. So the freshness claim covers most
-of this file and provably not all of it, by a margin nothing here can close after the fact —
-the fix is to re-run rather than to re-derive.
-The counts and the reasons live beside the previous pass in the `## Docs hygiene`
-triage entry, which is where sweep history belongs; that judgement has a shelf life
-and now a hole in it, so re-run it at goal 15. Last, the `Draws
-from` column is checkable and checked by nothing: the per-section counts plus the five
-not-work entries must equal the live entry count, and an edit that unbalances it will
-not announce itself. **The column is checked on arithmetic, not on coverage, and those
-are different properties**: goal 7 draws five `## Reviewers` entries and its exit names
-three of them, so striking it on its stated condition would leave two drawn entries
-open. Goal 5 carried the same gap until this pass and was widened to cover its fifth.
-Nothing detects this — the arithmetic balances either way, which is exactly how it
-survived. Read a goal's section, not only its row, before striking it. **And a `test`
-type is a claim about the exit, not a guarantee one exists**: goal 1's first clause is a
-`live-test/LIVE-TEST.md` section, which no assertion in `test/*.sh` can observe, and four
-of the five ported reviewers (`maintainability`, `performance`, `api-contract`,
-`data-migration`) are named nowhere in the suite at all. `CLAUDE.md` already records
-`live-test/LIVE-TEST.md` among the documents that "described behaviour the code did not
-have", so that clause is the weakest observer available for the goal that most needs a
-strong one — treat it as manual-only and unregressable by CI until goal 1 adds a
-machine-checkable half. **The running total that used to sit here has been deleted rather than corrected, and
-the deletion is the finding.** It was rewritten at 0.18.0, and by 0.19.0 it was stale
-again — a sum over live entries is invalidated by every commit that files one, so it is
-only ever true between the last edit and the next, and the moment it is wrong it still
-reads as verified. Three rounds of errors are worth keeping in prose because they share
-one shape and none of them announced itself: two miscounts in adjacent sections that
-**cancelled in the total** and so hid each other; a rebase that left the column citing an
-entry the rebase had dropped, so a stale count balanced against a tree that no longer
-existed; and a draft whose arithmetic was correct when written and false by the time the
-branch was ready. Balance is not the check it looks like — the errors above all balanced.
+resumed. **A stable `#` means the number no longer tells you a goal's rank**, so a later
+edit can reorder rows without anything announcing it — the row order is the only place
+the order lives, and nothing checks it.
+
+And the ordering assumes each goal's entries are still true: the 2026-08-26 staleness
+sweep's SUSPECT and REFERENT-MISSING buckets were read in full and every one judged a
+false alarm. **Its coverage cannot be reconstructed, and that is the finding rather than a
+caveat on it.** The sweep records a 63-entry file; no commit on this branch or its base
+holds 63 entries. The counts run 61 at `1815423f` (pre-port master), 64 at `d210d047`
+(the pre-rebase tip), 68 at `48b7feb` (the port) and 81 here by the `awk` count above —
+which is the same way `stale.mjs` counts leads, confirmed when it reported 70 against this
+file's 70. The sweep was therefore run against an uncommitted working tree, and which
+entries it saw is unrecoverable. What *is* provable is the shortfall: 63 then against 81
+now means **at least eighteen current entries were never swept** — the fix is to re-run
+rather than to re-derive, and goal 24 is where that happens. The counts and the reasons
+live beside the previous pass in the `## Docs hygiene` triage entry, which is where sweep
+history belongs.
+
+Last, the `Draws from` column is checkable and was checked by nothing until pass 6: the
+per-section counts plus the not-work entries must equal the live entry count, and an edit
+that unbalances it does not announce itself. It had been unbalanced by 19 for an unknown
+number of passes. **And balancing it is necessary, not sufficient — the column is checked
+on arithmetic, never on coverage, and those are different properties.** Goal 7 drew five
+`## Reviewers` entries while its exit named three, so striking it on its stated condition
+would have left two drawn entries open; goal 5 carried the same gap until it was widened;
+goal 8's exit named two of the four it drew, found while re-deriving. Three goals, one
+defect, and the count was right in all three — which is why a sum cannot find this one.
+**Read a goal's section, not only its row, before striking it** — and widen the exit text
+rather than trimming the count, because trimming is what makes an entry belong to no goal
+at all, which is how the whole `## Deep-audit axis` went ungoaled until pass 6.
+
+**And a `test` type is a claim about the exit, not a guarantee one exists**: goal 1's
+first clause is a `live-test/LIVE-TEST.md` section, which no assertion in `test/*.sh` can
+observe, and four of the five ported
+reviewers (`maintainability`, `performance`, `api-contract`, `data-migration`) are named
+nowhere in the suite at all. `CLAUDE.md` already records `live-test/LIVE-TEST.md` among
+the documents that "described behaviour the code did not have", so that clause is the
+weakest observer available for the goal that most needs a strong one — treat it as
+manual-only and unregressable by CI until goal 1 adds a machine-checkable half.
+
+**The running total that used to sit here has been deleted rather than corrected, and the
+deletion is the finding.** It was rewritten at 0.18.0, and by 0.19.0 it was stale again —
+a sum over live entries is invalidated by every commit that files one, so it is only ever
+true between the last edit and the next, and the moment it is wrong it still reads as
+verified. Three rounds of errors are worth keeping in prose because they share one shape
+and none of them announced itself: two miscounts in adjacent sections that **cancelled in
+the total** and so hid each other; a rebase that left the column citing an entry the
+rebase had dropped, so a stale count balanced against a tree that no longer existed; and a
+draft whose arithmetic was correct when written and false by the time the branch was
+ready. And balance is not the check it looks like: the errors above all balanced, while
+the column that did not balance sat unnoticed at a shortfall of 19 — so the sum catches
+neither the miscount that cancels nor the narrow exit, and it is only ever the first of
+three checks.
 **Re-derive the column when you strike a goal, and do not write the answer down**: a
 number here is a claim nothing re-runs, which is exactly what `CLAUDE.md` means by
 preferring to delete a weightless detail rather than correct it.
@@ -1720,7 +1783,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   SUSPECT** and **10 REFERENT MISSING**; each was read and judged
   a false alarm — regex literals, cross-repo paths into gstack and trivy, and a
   `.forgeward/config.yml` this repo does not have. No triage edits followed. Same headline as
-  2026-08-19: the buckets are evidence, not verdicts. Re-run at goal 15.
+  2026-08-19: the buckets are evidence, not verdicts. Re-run at goal 24 (goal 15 retired at
+  archive pass 6 and this obligation moved to its successor).
 
   **Second triage ran 2026-08-19. One entry deleted, four corrected in place, and the
   headline is what the tool's own buckets were worth.**
