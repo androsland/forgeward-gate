@@ -332,6 +332,70 @@ preferring to delete a weightless detail rather than correct it.
 
 ## Reviewers
 
+- **PR #55 is merged on GitHub and its content is NOT on `master`, so the `osv-scanner`
+  fail-open it fixes is still live in the shipped prompt.** (found by archive pass 6's
+  currency check, 2026-09-03) The single commit `19d4fa8` — a rewritten
+  `agents/supply-chain-reviewer.md`, a `0.24.0 → 0.25.0` bump across the three manifests
+  that existed then, `live-test/LIVE-TEST.md`, and 774 lines of this file — is reachable
+  only from `origin/prompts/osv-scanner-arity` and `origin/test/scanner-arities-verified`.
+  On `master` that reviewer prompt is **149 lines**; on the orphan it is **839**. The
+  procedure below is written, argued over 18 gate rounds, and installed on nobody's
+  machine. **Priority:** P1
+
+  **How it went missing.** #55 was stacked on #54 and targeted
+  `test/scanner-arities-verified`, not `master`. #54 merged at `21:36:13Z`; #55 merged
+  **twelve seconds later, into a base branch that had already landed** — so GitHub recorded
+  a merge onto a ref nothing points at any more. Every visible signal reads normal: the PR
+  is green, its state is `MERGED`, its body describes shipped work, and the branch still
+  exists. The version would be the loudest tell and it is silent too — `master` went
+  `0.24.0 → 0.26.0`, and `ci/check-version-monotonic.sh` is happy with that, because
+  skipping a minor is not walking backwards.
+
+  **Re-landing is its own PR** under the executable-behaviour rule — it changes a reviewer
+  prompt — and it is not a `git cherry-pick`. Take `agents/supply-chain-reviewer.md` and
+  `live-test/LIVE-TEST.md` from `19d4fa8` as-is, re-derive the manifest bump against
+  whatever `master` is then (0.26.0 at filing, and `.codex-plugin/plugin.json` did not
+  exist when the orphan was written, so it is a four-manifest bump now, not three), and
+  re-file the 774 TODOS.md lines by hand against the post-archive-pass-6 structure. The
+  orphan's `TODOS.md` diff will not apply and should not be forced.
+
+  **The narrative below is the surviving spec**, preserved verbatim from the entry pass 6
+  first wrote into `## Completed` before the tree contradicted it. `git log -1 19d4fa8` is
+  the authority — 70,246 bytes, against GitHub's 65,536-byte PR-body cap, which is why the
+  body is a digest and the commit message is not.
+
+  **`results[]` is a FINDINGS record, not a COVERAGE record.** Scanning two lockfiles
+  emits two `Scanned …` lines on stderr and **one** `results[]` entry on stdout, so a path
+  missing from `results[]` means nothing on its own and a path present in it only means
+  that path had advisories. The shipped rule — *check that every path you passed appears as
+  a `source.path`* — is wrong in both directions at once and is the common root of three
+  fail-opens this repo's own gate had already found. The replacement procedure is
+  rewritten **stderr-first** rather than patched a fourth time.
+
+  **Four states that produce valid-looking stdout**, all reproduced independently: egress
+  blocked to `api.osv.dev` (byte-identical to a clean run, 124 bytes each); a mixed-batch
+  silent drop; deps.dev blocked while `api.osv.dev` is reachable, which checks direct
+  dependencies and silently skips every transitive one; and **config-driven suppression**,
+  the only one that is not an environment failure and the only one that is
+  attacker-controllable — *the PR that introduces a CVE can add the `osv-scanner.toml` that
+  hides it*. The check is keyed on `Loaded filter from`, the one stderr line emitted
+  unconditionally; the two obvious alternatives need the vulnerability query to have
+  succeeded and are therefore absent in exactly the egress-blocked run, which would have
+  been a fifth fail-open.
+
+  **Round 5 turned the check on trivy and found the identical hole, quieter.** With a
+  `.trivyignore` present, trivy 0.74.0 returns exit `0`, 748 bytes, zero vulnerabilities
+  and **zero bytes of stderr** — at the `--quiet` the shipped prompt is itself
+  recommending. `--ignorefile /dev/null` closes two of the three config mechanisms and
+  `--quiet` is dropped as stdout-neutral; the severity vector is a second surface (config
+  *and* environment) and is why "nothing closes the third" was itself wrong.
+
+  **What the 18 rounds keep finding is one shape:** a fix announced as complete that was
+  half a fix, a universal quantifier written from one sample, a count appended without
+  recomputing, and — twice — a reviewer's finding copied into a durable artifact without
+  being verified, which is this repo's own stated rule breaking inside the commit that
+  ships it. The entry above is the same shape once more, one layer out: a completion
+  written from the artifact that claims it rather than from the tree.
 - **Nothing pins the reviewer prompts, so a rubric can be reverted or corrupted and all
   336 tests stay green.** (filed with the 0.14.0 a11y severity widening, 2026-08-19; count
   re-measured at 0.16.0, which added a fifth suite) The five suites cover scripts, hooks,
@@ -1484,6 +1548,39 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
+- **Nothing checks that a merged PR reached `master`, and 2 of 59 did not.** (archive pass
+  6, 2026-09-03) Swept every merged PR by testing its `mergeCommit.oid` against
+  `git merge-base --is-ancestor <oid> origin/master`: 57 land, **#51 and #55 do not**.
+  Both were stacked PRs whose base was another branch rather than `master`, and both were
+  merged into that base *after* the base had itself merged — so the merge commit sits on a
+  ref nothing points at. #51 was caught by a human within two minutes and re-landed as #52
+  (the title still says "Re-land #51"); **#55 was not caught for seven days** and is filed
+  as P1 under `## Reviewers`. One caught and one missed out of two occurrences is not a
+  control, it is a coin. **Priority:** P2
+
+  **The obvious check is the wrong one, and it is wrong loudly.** Testing `headRefOid`
+  instead of `mergeCommit.oid` flags **46 of 59** PRs as orphaned, because a squash merge
+  never leaves the head commit as an ancestor of anything. That first sweep was run here
+  and its output looked like a catastrophe; the same repo, measured correctly, has two
+  cases. A check that reports a 78% failure rate on a healthy repo does not get run twice.
+
+  **What a real check would key on**, if one is ever built: a merged PR whose `baseRefName`
+  is not the default branch is the entire population at risk — every other PR merges onto
+  `master` by construction — so the check is cheap and its scope is knowable. It belongs in
+  `ci/`, on a schedule rather than on `pull_request`, since the condition is created *after*
+  a merge and no PR event fires when it happens. **What it cannot see:** a PR that landed
+  and was then reverted, and a PR whose content reached `master` by some other commit — the
+  ancestry test answers "did this merge commit land", never "is this work present". #52 is
+  exactly that second case, and it would be reported as a finding on every run until
+  somebody suppressed it.
+
+  **Nothing in `~/.claude/CLAUDE.md` covers this shape.** The stack-merge paragraph there
+  is about the reverse hazard — `--delete-branch` on a base that an open PR still names,
+  which *closes* the dependent loudly. This one is silent: the dependent merges, reports
+  success, and lands nowhere. The retarget step the global rule already mandates is what
+  prevents it, so the gap is that the rule states the step without stating what skipping it
+  costs.
+
 - **`test/gate-test.sh` reports a skip through `ok()`, so a run with nothing installed is
   indistinguishable from a run that checked everything.** The tally is
   `echo "# pass $PASS / fail $FAIL"` and there is no third counter, so every
@@ -2121,9 +2218,17 @@ the native-Windows hook fix and the runtime-axis filing — shipped between 2026
 2026-09-03 while `## Completed`'s newest entry stayed at 0.24.0. **Four of the six never
 touched `TODOS.md` at all**, which is the shape to watch for: a PR that files nothing
 leaves no trace in this file, and the section reads current because its most recent entry
-is recent, not because it is complete. The four entries below were written from the PR
-bodies before anything was cut — had the cut run first, "the five most recent" would have
-kept five entries from before 0.25.0 and archived nothing that was actually recent.
+is recent, not because it is complete. A fifth, #55, wrote 774 lines into `TODOS.md` and
+they are not here either, for the reason the next paragraph gives. The entries below were
+written from the PR bodies before anything was cut — had the cut run first, "the five most recent" would have kept
+five entries from before 0.25.0 and archived nothing that was actually recent.
+
+**Writing them from the PR bodies is also how this pass shipped a false completion.** #55
+was written up here as merged, from a body that says merged, on a PR GitHub reports as
+`MERGED` — and its content is not on `master`. Reading the tree rather than the PR list is
+what caught it; the entry now sits in `## Reviewers` as open P1 work, and the sweep that
+bounded the class is in `## Housekeeping`. **A merged PR is a claim about a base branch,
+never about `master`.**
 
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
@@ -2210,45 +2315,6 @@ shipped on its own branch instead.
   fallback; Audit keeps its labeled self-verification fallback. The rule is in
   [`CLAUDE.md`](CLAUDE.md).
 
-- **`osv-scanner`'s arity and the procedure for reading its output were both wrong, and
-  the same fail-open sat on the tool the prompt PREFERS.** (0.25.0, PR #55, merged
-  2026-08-27) Prose only — the reviewer prompt, `TODOS.md` and a `0.24.0 → 0.25.0` bump
-  across the manifests — and its own PR under the executable-behaviour rule rather than
-  folded into the scanner-arity test PR it was stacked on. It took **18 gate rounds**, and
-  the rounds are the finding.
-
-  **`results[]` is a FINDINGS record, not a COVERAGE record.** Scanning two lockfiles
-  emits two `Scanned …` lines on stderr and **one** `results[]` entry on stdout, so a path
-  missing from `results[]` means nothing on its own and a path present in it only means
-  that path had advisories. The shipped rule before this PR — *check that every path you
-  passed appears as a `source.path`* — was wrong in both directions at once and was the
-  common root of three fail-opens this repo's own gate had already found. The procedure is
-  rewritten **stderr-first** rather than patched a fourth time.
-
-  **Four states that produce valid-looking stdout**, all reproduced independently: egress
-  blocked to `api.osv.dev` (byte-identical to a clean run, 124 bytes each); a mixed-batch
-  silent drop; deps.dev blocked while `api.osv.dev` is reachable, which checks direct
-  dependencies and silently no transitive one; and **config-driven suppression**, the only
-  one that is not an environment failure and the only one that is attacker-controllable —
-  *the PR that introduces a CVE can add the `osv-scanner.toml` that hides it*. The check is
-  keyed on `Loaded filter from`, the one stderr line emitted unconditionally; the two
-  obvious alternatives need the vulnerability query to have succeeded and are therefore
-  absent in exactly the egress-blocked run, which would have been a fifth fail-open.
-
-  **Round 5 turned the check on trivy and found the identical hole, quieter.** With a
-  `.trivyignore` present, trivy 0.74.0 returns exit `0`, 748 bytes, zero vulnerabilities
-  and **zero bytes of stderr** — at the `--quiet` this prompt was itself recommending.
-  `--ignorefile /dev/null` closes two of the three config mechanisms and `--quiet` was
-  dropped as stdout-neutral; the severity vector is a second surface (config *and*
-  environment) and is why "nothing closes the third" was itself wrong.
-
-  **The record is in the commit message, deliberately.** At merge the narrative measured
-  70,245 bytes against GitHub's 65,536-byte PR-body cap, so the body carries a digest and
-  `git log -1` is the authority. What the rounds keep finding is one shape: a fix announced
-  as complete that was half a fix, a universal quantifier written from one sample, a count
-  appended without recomputing, and — twice — a reviewer's finding copied into a durable
-  artifact without being verified, which is this repo's own stated rule breaking inside the
-  commit that ships it.
 - **Goal 8 leg 3: the `basename` exemption is now pinned under its three named forgeries
   — and it is pinned as a LIMIT, not fixed.** (0.24.0, 2026-08-27) The goal asked that the
   exemption "survive three named forgeries under test — a rename, a symlinked path, and a
