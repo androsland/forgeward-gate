@@ -1335,6 +1335,22 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   YAML template, and generating one per audit finding is the actual product. Forgeward
   already works this way: `forgeward-scan.sh` implements no scanning and wraps semgrep,
   trivy, gitleaks and phpcs inside an envelope, so the shape is precedent, not invention.
+  **Who produces the templates, given that nothing but `ci-gate` can write.** Measured
+  2026-09-03: all 11 `agents/*-reviewer.md` carry the byte-identical line
+  `tools: Read, Grep, Glob, Bash`, and of the three skills, `audit` and `gate` hold no
+  `Edit` and no `Write` — `ci-gate` is the only one in the plugin that can write a file.
+  That is not an oversight to route around: the gate *proves* it left the tree alone by
+  snapshotting and diffing it, so a reviewer dropping a `.yaml` into the repo breaks the
+  property the gate rests on. The design that survives it: the reviewer **emits** the
+  template inside its finding, and the runtime skill materializes and fires it. The
+  schema already has the slot — grep `exploit_scenario`, which is prose describing how to
+  abuse the bug, and a nuclei template is that same field written so a machine can run it.
+  **Scope it to the findings that are not fixed on sight:** a Critical or High fails the
+  gate, so it gets fixed rather than proved, and the templates earn their keep on
+  `/forgeward:audit` findings and on the Medium/Low gate findings that do not block and
+  would otherwise never acquire evidence. **What this does not buy:** an emitted template
+  is unvalidated text inside a verdict — nothing parses it until the runtime skill does,
+  so a malformed template is a runtime failure and the gate stays green on it.
   **What changed the answer.** The two objections that kill a remote-target pentest both
   dissolve when the target is LOCAL, and the safety property becomes *measured* rather
   than promised — this repo's whole idiom, stated at the head of
@@ -1351,6 +1367,23 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   inbound hop, not the outbound ones. Needed: egress confinement (a network namespace
   works on Linux; macOS and Windows are the weak leg, and forgeward ships cross-platform),
   env scrubbing, DB snapshot and restore, and teardown that survives a crash.
+  **The skill boots the app; handing the boot to the user is the LESS safe option.** It
+  reads as the safer one, which is the reason it is written down. A user-booted dev server
+  carries that user's real `.env` — real database, real Stripe key, real SMTP — and once
+  ZAP is pointed at it the skill can neither see nor stop what the app does outbound. The
+  envelope *is* the boot; give the boot away and only the promise is left. Split it
+  instead: the user **declares** the boot command, port and health-check URL in
+  `.forgeward/config.yml` (the config the gate already reads), and the skill **executes**
+  it scrubbed and confined. That also settles the weak leg above — **Docker is the
+  portable envelope on all three platforms**, ZAP ships images anyway, and a network
+  namespace is a Linux optimisation rather than the design. **Fallback, in this repo's
+  existing direction:** where no envelope can be built, refuse active scanning and offer
+  passive-only (ZAP's `baseline` mode observes and never attacks) against a URL the user
+  supplies, saying plainly that nothing is being confined — the same way both hooks
+  `exit 0` when neither `jq` nor `python3` is present. Less capability, never an unproven
+  safety claim. **What it cannot check:** the boot block is user-authored, so the skill
+  can verify that the process it started answers on the health-check URL and cannot verify
+  that URL is the app the user meant.
   **What it would not buy.** Generic scanners find generic classes — XSS, SQLi,
   misconfiguration, known CVEs. The findings that motivated this are app-specific logic
   flaws: a rate limit keyed on a spoofable `x-forwarded-for`, an audit log storing a
