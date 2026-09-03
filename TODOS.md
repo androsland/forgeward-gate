@@ -1312,6 +1312,88 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   on orchestration/glue diffs. Structurally cannot see that a stated invariant is itself
   wrong. (`docs/axis-proposals.md` → Q1, 2026-08-05) **Priority:** P3
 
+## Runtime axis (pentest / DAST)
+
+- **A runtime axis is buildable, is NOT `/prove`, and is not decided.** (design
+  conversation, 2026-09-03) Shape: **a fourth skill inside forgeward, not a separate
+  plugin and not a reviewer** — `disable-model-invocation: true`, never fired by the
+  gate. That is `ci-gate`'s existing shape rather than a new one, and `ci-gate` is the
+  precedent that settles the packaging question: it holds `Write` and `Edit`, writes
+  `.github/workflows/` and `.forgeward/rules/` into the user's repo, and changes GitHub
+  **branch protection** — an outward-facing, consequential action — behind "one explicit,
+  confirmed step". Forgeward's answer to a consequential skill has already been an
+  explicit confirmation and a default-off switch, never extraction into its own package;
+  `CLAUDE.md` records the same resolution for the AI-attribution check ("an opt-in config
+  key defaulting to off"). An earlier draft of this entry said separate plugin and was
+  over-constrained. **The one thing that is genuinely new** and earns that confirmation
+  step: this would **execute the application code of the repo under review**, which no
+  current component does — `/forgeward:audit` runs scanners *about* a repo (and reaches
+  registries doing it), never boots its app.
+  Division of labour: **OWASP ZAP** for the generic classes it already covers
+  (headless daemon, a CI `baseline` mode, official Docker images), **nuclei** for
+  per-finding custom templates — "send this request with this header, expect 403" is a
+  YAML template, and generating one per audit finding is the actual product. Forgeward
+  already works this way: `forgeward-scan.sh` implements no scanning and wraps semgrep,
+  trivy, gitleaks and phpcs inside an envelope, so the shape is precedent, not invention.
+  **What changed the answer.** The two objections that kill a remote-target pentest both
+  dissolve when the target is LOCAL, and the safety property becomes *measured* rather
+  than promised — this repo's whole idiom, stated at the head of
+  `forgeward-workspace-guard.sh`: "Prove the read-only contract instead of asserting it."
+  *Authorization* — attacking a process you started on your own machine is not an
+  authorization question, so the control-of-target proof a remote target needs is moot.
+  *Blast radius* — locally you can snapshot and diff the database, wrap the request in a
+  rolled-back transaction, or point the app at local doubles (Mailpit, Stripe test mode,
+  MinIO). A remote host admits none of the three: HTTP responses say a request succeeded
+  and never what it did.
+  **The real cost is the envelope, not the skill.** Booting the app under review executes
+  its config, so `DATABASE_URL` may reach a shared dev Postgres, a live Stripe key charges
+  real cards, and SMTP mails real humans — "we only attack localhost" describes the
+  inbound hop, not the outbound ones. Needed: egress confinement (a network namespace
+  works on Linux; macOS and Windows are the weak leg, and forgeward ships cross-platform),
+  env scrubbing, DB snapshot and restore, and teardown that survives a crash.
+  **What it would not buy.** Generic scanners find generic classes — XSS, SQLi,
+  misconfiguration, known CVEs. The findings that motivated this are app-specific logic
+  flaws: a rate limit keyed on a spoofable `x-forwarded-for`, an audit log storing a
+  forged client IP, a concurrency race on a unique key. No scanner knows a tenancy model,
+  so ZAP covers a *different* set from the one that prompted the axis. The custom-template
+  half is where the value is, and it is the half nobody else writes for you.
+  **It is a positioning change, not only a feature — and shipping it INSIDE forgeward
+  makes the rewrite mandatory rather than optional.** Four shipped statements say
+  forgeward does not do this — grep `not the running system` (DECISIONS.md),
+  `dynamic/runtime scanning` and `Still not covered by anything here` (README.md), and
+  `Code-tracing only` plus `touching anything live` in `skills/audit/SKILL.md` — the
+  second is quoted short on purpose, because the sentence wraps mid-phrase and the full
+  form matches no line.
+  All four need rewriting, and per this repo's rule that a doc describing gate behaviour
+  is part of the surface, that happens in the same commit or not at all.
+  **Measured 2026-09-03, one machine, so treat it as a floor and not a survey:** none of
+  zap, nuclei, sqlmap, nmap, nikto, wapiti, schemathesis or ffuf is installed here;
+  Docker 27.3.1 is, which is how they would run. A "run it if present" design therefore
+  needs a positive control the way E2 does for gstack, or every assertion greens
+  vacuously. **Priority:** P4
+
+- **`/forgeward:prove` was proposed and REJECTED — do not re-propose it as written.**
+  (design conversation, 2026-09-03) The proposal: take one `/forgeward:audit` finding,
+  boot the repo's dev server, fire a request, and commit a deliberately FAILING test that
+  goes green the day someone fixes the finding. Three reasons, **none of them the
+  boundary** — the crux was checked and a localhost server is *inside* the "no requests"
+  boundary as those passages are actually worded, since all four qualify with
+  live/deployed/production rather than forbidding a socket.
+  (1) The deliverable is a committed red test, and `skills/ci-gate/SKILL.md`'s **first
+  core rule** is green-on-arrival; the workflow it generates runs the repo's `test` /
+  `test:int` / `test:unit` script, so one half of the plugin would break the other half's
+  rule for as long as the finding stayed open.
+  (2) Two of the three motivating findings are invariant-shaped and are
+  `/forgeward:properties` inputs almost verbatim — *the persisted client IP is never
+  attacker-controlled*, *at most one of N concurrent calls on a key succeeds*.
+  (3) The third, the `x-forwarded-for` one, is the class where a local result is not
+  partial but **uncorrelated**: the test is red whether or not the edge strips the header,
+  so its colour carries no information about the deployed system, and a green-red-green
+  cycle would read as "settled" while proving nothing.
+  Kept so the losing outcome stays legible. The runtime axis above survives precisely by
+  dropping the two things that killed this one — it reports instead of committing a test,
+  and it never claims a local proof transfers to production. **Priority:** —
+
 ## ci-gate
 
 - **The end-to-end gated-e2e chain is not proven in one continuous run.** All three
