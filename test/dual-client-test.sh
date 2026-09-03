@@ -300,7 +300,7 @@ run_hook pretooluse "$codex_pre"
 # Version agreement across every version-bearing manifest. The Codex marketplace has
 # no version field in the current schema and points to the local plugin manifest.
 versions="$(jq -r '.version' "$PLUGIN/package.json" "$PLUGIN/.claude-plugin/plugin.json" "$PLUGIN/.codex-plugin/plugin.json"; jq -r '.plugins[0].version' "$PLUGIN/.claude-plugin/marketplace.json")"
-if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.26.0 ] \
+if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.27.0 ] \
   && [ "$(jq -r '.plugins[0].source.path' "$PLUGIN/.agents/plugins/marketplace.json")" = './' ] \
   && [ "$(jq -r '.plugins[0].name' "$PLUGIN/.agents/plugins/marketplace.json")" = forgeward ]; then
   ok "all four version-bearing manifests agree and Codex marketplace resolves locally"
