@@ -9,10 +9,20 @@ entries carry the same date, and #26 merged 39 minutes *after* #27 despite the l
 number, so both a date sort and a number sort get this file wrong. Resolve with
 `git log --first-parent` before inserting anything.
 
-Five passes so far: 12 entries at 0.10.0 (#27), 4 more at 0.12.0, 1 on 2026-08-17,
-4 on 2026-08-18 and 4 on 2026-08-19. Each pass is relief, never a fix — `TODOS.md`
-was over the ~50KB threshold after all five. **Keeping "the 5 most recent" bounds
-the entry COUNT, not the byte count**, and the three passes that measured
+**And "merge order" means when the work reached `master`, which is not what
+`gh pr view --json mergedAt` reports.** That timestamp is when the PR merged into *its
+own base*, and a stacked PR's base is another branch. Pass 6 hit both directions of this
+in one batch: #49 reports `2026-08-27T05:10:01Z`, but its base was #48's branch, so its
+content reached `master` at `05:13:51Z` inside #48's merge commit — the two are one
+landing and are filed here as a tie, in version order, because nothing separates them.
+And #55 reports a merge that reached `master` at no time at all. Resolve a stacked PR by
+finding the first `--first-parent` commit of `master` that contains it, never by its
+`mergedAt`.
+
+Six passes so far: 12 entries at 0.10.0 (#27), 4 more at 0.12.0, 1 on 2026-08-17,
+4 on 2026-08-18, 4 on 2026-08-19 and **14 on 2026-09-03**. Each pass is relief, never a
+fix — `TODOS.md` was over the ~50KB threshold after all six. **Keeping "the 5 most recent" bounds
+the entry COUNT, not the byte count**, and the four passes that measured
 themselves show what that is worth: pass 3 archived **6,883 bytes** and wrote
 **5,491** back as the `## Completed` entry for the newly-merged work, a net
 **−1,392 on an 85,990-byte file**; pass 4 had eight entries to bring back to five,
@@ -21,15 +31,27 @@ file**; pass 5 had nine, archived **24,149** and wrote **10,335** back across th
 entries — two of them for work that had merged with no entry at all — a net
 **−12,608 on a 112,018-byte file** — smaller than 24,149 − 10,335 because the same
 commit also stamped #38 and wrote a trigger re-check into the open half, which is
-the general case: a pass's net is never just its cut minus its write-back. The
+the general case: a pass's net is never just its cut minus its write-back. **Pass 6 is
+the outlier, and it is an outlier for a reason the convention does not cover.** It found
+`## Completed` at eight, wrote four more for six merged PRs that had left no entry —
+twelve — then moved one of those four straight back out when the tree contradicted it,
+and archived six. Separately it archived **eight entries that had been struck in place
+and left sitting in live sections**, where a sweep reads them in full every time.
+Fourteen entries out: **49,978 bytes** archived against **14,404** written back, a net
+**−35,574 on a 206,250-byte file**. That is 49,978 against **49,895** for passes 3, 4
+and 5 combined — a margin of 83 bytes, which is a coincidence and not a trend. None of
+it came from the convention working better: **eight of the fourteen were never in
+`## Completed` at all**, and nothing in the convention says anything about them. The
 relief scales with how far the section drifted past five, not with the convention —
 run against a section already at five, a pass cuts one, adds one and moves almost
 nothing. Anyone expecting this convention to shrink `TODOS.md` should stop
 expecting it; what it buys is that a sweep reads five current entries instead of
-twenty-seven stale ones. If the byte count is ever
-the actual problem, the lever is the open half (**79,316 bytes across 10 topic
-sections, 80% of the file — up from 72% at pass 4, and rising as a share every time
-only the completed half is cut**), not this one.
+forty-one stale ones. If the byte count is ever
+the actual problem, the lever is the open half (**156,631 bytes across 13 topic
+sections, 91.8% of the file — up from 80% at pass 5, and rising as a share every time
+only the completed half is cut**), not this one. Pass 6 archived 24% of the file and
+took 17% off it net, and the open half's *share* still rose by twelve points — which is
+the clearest statement of this paragraph there is going to be.
 
 Nothing was pruned. These entries carry the reversed decisions, the deliberate
 non-goals and the "we shipped the narrow fix on purpose, here is what it does not
@@ -39,6 +61,667 @@ their provenance — grep here before overriding one of them.
 
 `DECISIONS.md` remains the source of truth for *why* a design is the way it is. This
 file records what was done and what it deliberately left undone.
+
+- **CLOSED 2026-08-27 — `trivy fs`'s one-path arity is now verified against a BINARY,
+  on a pinned tag.** The source read stands: per `pkg/commands/app.go`, `filesystem`'s
+  `PreRunE` calls `validateArgs`, which errors when `len(args) > 1`. Confirmed empirically
+  on **trivy 0.74.0**: `trivy fs dirA dirB` prints `Usage: trivy filesystem [flags] PATH`
+  and exits **1** — it fails loudly where gitleaks silently rescoped to the cwd. The
+  second claim in the same block was confirmed too: trivy's `-o` really is a filename,
+  and `trivy fs -f json -o json dirA` created a 233-byte file literally named `json`.
+  The earlier caveat — unconfirmed against a running binary, version read was `main`
+  rather than a pinned tag — no longer applies. gitleaks 8.30.1 and semgrep were already
+  confirmed empirically (semgrep genuinely takes many paths: two given, two in
+  `paths.scanned`). Kept as reference data, not open work.
+  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27) **Priority:** —
+- **CLOSED 2026-08-27 — the four unverified per-tool arities are all measured, and
+  every documented claim held.** The gitleaks defect was a documented plural where the
+  tool takes one, and it survived three releases because nobody ran the check; the same
+  pass has now been run on each of the four, against two distinguishable fixture
+  directories:
+
+  | tool | version | positional arity | evidence |
+  |---|---|---|---|
+  | `phpcs` | 4.0.4 | **many** | both files returned their own `FILE:` header and finding count |
+  | `osv-scanner` | 2.5.1 | **many** | `dirA/requirements.txt` and `dirB/requirements.txt` both appear as distinct `source.path` values in one run |
+  | `grype` | 0.117.0 | **one** | `accepts at most 1 arg(s), received 2`, exit 1 |
+  | `syft` | 1.51.0 | **one** | `accepts at most 1 arg(s), received 2`, exit 1 |
+
+  **No scanner forgeward invokes has the gitleaks failure mode.** grype and syft are
+  anchore Cobra CLIs and refuse a second path loudly, exactly as trivy does; phpcs and
+  osv-scanner genuinely take many. Nothing in `agents/*.md` or `forgeward-scan.sh`
+  needed correcting — that is the finding, and it is the reason this closed with no
+  code change.
+
+  **Two facts that were not previously written down.** `syft` takes one path, which no
+  prompt documents because no reviewer invokes syft — it appears only in the `-o`
+  exemption list. And `osv-scanner` takes many, which makes
+  `agents/supply-chain-reviewer.md`'s "equivalent substitute" phrasing an understatement
+  on the one axis this entry cares about. The correction to that prompt ships in its
+  OWN PR, not this one: `agents/*.md` is a reviewer prompt, and the executable-behaviour
+  rule keeps a five-line prompt edit out of a two-hundred-line prose-and-test diff.
+  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27) **Priority:** —
+
+- **✅ FIXED (0.19.0, 2026-08-26) — `deep-audit` is forgeward's own axis now.**
+  `/forgeward:audit` ports gstack's `/cso` audit phases as a skill rather than a reviewer,
+  and the gate's Step 1c no longer defers the axis to anything. The entry's premise — that
+  orchestration cannot be ported — turned out to be false in the direction that mattered:
+  `/cso` is orchestration expressed entirely in prose, and prose ports. What it is **not**
+  is a reviewer, so it does not join the Step 1 table and the gate does not fire it; the
+  gate stays diff-scoped and the audit stays whole-repo, which is the distinction that made
+  the deferral look necessary in the first place. The disclosure survives in a smaller and
+  more honest form — keyed on *not run by this gate*, never on whether a tool is installed,
+  because after the port a presence probe reads `present` on every machine and would
+  license a claim nobody checked. Read-only is structural: the skill declares
+  `allowed-tools` without `Edit` or `Write`, and A30 asserts a non-empty floor because a
+  *missing* key grants every tool.
+  *Original text follows, unedited apart from this lead.* Explicitly scoped OUT of the port: `/cso` is a
+  whole-repo audit, not a checklist, so there is nothing to port — it is orchestration, and
+  the delta-scoping hole is therefore real and unfixed. What is worth checking before
+  filing more work against it: unlike `quality`, this deferral is *disclosed* rather than
+  silently assumed, `security-reviewer` still runs diff-scoped so it is not a total gap,
+  and `/forgeward:ci-gate` is a standing substitute. That is a materially better position
+  than quality was in, which is why it did not ride along with this PR. **Priority:** P3
+
+- **✅ FIXED (0.20.0, 2026-08-26) — `forgeward-rubric-drift.sh` now iterates
+  `skills/*/SKILL.md` as well, so `/forgeward:audit`'s `source-sha256` is compared on
+  every gate run.** Shipped with four assertions, and only two of them are controls
+  against the *pre-fix* script: R14 (a ported skill is scanned, and keyed by its
+  DIRECTORY — the basename is the constant `SKILL.md`, so a basename key reported every
+  skill as `SKILL`, and the assertion checks the broken form explicitly because
+  `ok       beta` and `ok       SKILL` are not mutually exclusive outputs) and R14b (a
+  gstack checkout is recognised by `cso/` as well as by `review/specialists/` — the
+  audit phases live under `cso/`, so a checkout holding one and not the other read as
+  no-gstack and the whole run went quiet). Both verified to fail against
+  `git show HEAD:scripts/forgeward-rubric-drift.sh`. **R14c and R14d are green against
+  the pre-fix script by construction and are controls against the plausible WRONG fix**,
+  which is the distinction worth carrying: R14c pins that the fallback scan is
+  landmark-major rather than candidate-major (candidate-major is shorter and lets a
+  `cso`-only root shadow a `review/specialists` root that sorts later, which nothing else
+  here would redden — verified by mutation), and R14d is R6's floor for the skills half,
+  reading the shipped tree with no fixture in the path.
+
+  **A fifth assertion, R14e, was added by the review that gated this branch, and the
+  finding it pins is the one worth remembering.** Landmark-major ordering is asymmetric:
+  it stops a `cso`-only root shadowing a `review/specialists` one and does nothing in the
+  other direction, because the first candidate holding `review/specialists` won outright.
+  A plugin-cache directory sorting earlier (`1.10.0` sorts before `1.9.0`) that predates
+  `cso/` was therefore selected over a complete checkout on the same machine, and the run
+  printed `no longer exist ... Upstream may have renamed or removed them` for the audit
+  port while the file it names sat one directory over — an advisory asserting something
+  false about upstream, which is strictly worse than this script's default silence.
+  Reproduced against the shipped script before fixing. A completeness pass now runs
+  first and takes the first candidate holding EVERY landmark, with the landmark-major
+  scan kept as the fallback for a genuinely partial machine. Two things made it survive
+  the first pass and both are the lesson: the code comment claimed the ordering stopped
+  "a partial checkout shadow[ing] a complete one" without naming the direction it does
+  not cover, and **R14c called one of its two partial fixture roots "complete"** — so the
+  case read as already tested by an assertion that never built it. Found independently by
+  the maintainability specialist and by `codex review`; neither the suite nor the author's
+  own critical pass caught it. The entry's twelve-site snapshot was wrong in both
+  directions. Two sites it missed were `README.md`'s no-gstack paragraph and
+  `THIRD-PARTY-LICENSES.md`'s "what this file does not do" paragraph, both of which
+  stated the old scope in prose the `\*-reviewer\.md` grep does not match — which is the
+  snapshot's own stated failure mode arriving on schedule. It also over-counted by two in
+  the other direction: `README.md`'s provenance paragraph and `test/gate-test.sh`'s R6
+  loop scope themselves to the five reviewers ON PURPOSE and are still correct, so they
+  were left alone (R14d is R6's counterpart for `skills/`, not a widening of it). No
+  replacement total is quoted here — it would rot the same way. **What it still does not
+  buy, unchanged:** the script is blind on a machine with no gstack checkout, which is
+  the machine the port exists to serve, and Phases 0/1/12/13/14 are not hash-pinned at
+  all (below). Original entry follows. (0.19.0,
+  2026-08-26) The loop is `for f in "$agents_dir"/*-reviewer.md`. `skills/audit/SKILL.md`
+  carries the same provenance block shape — `source-path`, `source-commit`, `source-sha256`
+  against `cso/sections/audit-phases.md` — and nothing compares it to the live gstack file,
+  so gstack can rewrite the audit phases and this repo is told nothing. A31 asserts the
+  block is *well-formed*; it says nothing about whether the hash still matches anything.
+  **The fix is one glob and its positive control**: extend the loop to `skills/*/SKILL.md`
+  and add an R14 built the way R13 builds one — a synthetic gstack root plus a fixture skill
+  whose recorded hash is deliberately wrong, so the assertion fails against the pre-fix
+  script. It did not ride along with the port because the positive control's fixture is the
+  file the port creates, so the two cannot land in one PR without the test asserting against
+  a file that does not exist on its own base. **Twelve sites describe the current scope and
+  every one of them is part of the change** — a glob that lands while the prose still says
+  `agents/*-reviewer.md` is the doc-lag failure `CLAUDE.md` records under *a doc that
+  describes gate behaviour is part of the gate's surface*. By symbol, not by line:
+  `scripts/forgeward-rubric-drift.sh` in three places (its header comment, the `for f in
+  "$agents_dir"/*-reviewer.md` loop, and the comment below the loop reasoning from
+  "committed, reviewed files"); `README.md` twice (the provenance paragraph and the
+  no-gstack paragraph); `skills/gate/SKILL.md` twice (the fork paragraph and the 0.19.0
+  drift paragraph); `DECISIONS.md`, `THIRD-PARTY-LICENSES.md` and `skills/audit/SKILL.md`
+  once each; and `test/gate-test.sh` twice (the `agents/*-reviewer.md` provenance loop and
+  the comment stating the script's scope). **This list is a snapshot and nothing keeps it
+  current** — re-run `grep -rn '\*-reviewer\.md'` before starting, because a site added
+  after 2026-08-26 will not be here — and it under-counted by two for exactly that reason.
+  **What it still would not buy:** the script is
+  blind on a machine with no gstack checkout, which is the machine the port exists to serve,
+  and the audit's Phases 0/1/12/13/14 are not hash-pinned at all (below), so even a green
+  extended run covers less than the skill's provenance block appears to promise.
+  **Priority:** P2
+
+- **✅ FIXED (0.18.0, 2026-08-26) — `forgeward-detect-gstack-skill.sh`'s plugin-cache glob
+  was one directory too shallow, so a plugin-installed gstack had never been detected.**
+  The precondition this entry set — *"whether the two-level shape is a real layout
+  anywhere"* — was answered by enumeration rather than sample before the fix landed:
+  `find ~/.claude/plugins/cache -maxdepth 4 -name skills -type d` returns **14 versioned
+  paths across 8 marketplaces and zero two-level ones**. So the shallow depth has no
+  positive evidence behind it and is **kept anyway**, on the drift script's defensive
+  footing, with D8 rewritten to say so — a passing D8 is not proof that layout exists.
+  D8b is the positive control the entry asked for, built the way R13 builds one, and it was
+  verified to FAIL against the pre-fix script before being accepted: `git show HEAD:` of the
+  old script exits 1 on a versioned fixture where the new one exits 0. D8c pins the
+  direction, so a future widening that swallows a fourth level turns red. The drift script's
+  "THE SIBLING IS STILL WRONG" paragraph is retired in the same commit, per the rule that a
+  doc describing gate behaviour changes with the code.
+  *Original text follows, unedited apart from this lead.* It globs
+  `"$claude_dir"/plugins/cache/*/*/skills`; measured on the author's machine that matches
+  **nothing**, while `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills`
+  exists for both installed plugins — the real layout carries a **version** level the glob
+  does not account for. Found while giving `forgeward-rubric-drift.sh` a multi-root lookup;
+  the drift script searches **both** depths and says in its own comment that it is
+  deliberately not copying this one. **Not fixed here on purpose:** this script answers "is
+  this gstack skill installed", which drives `supply-chain-reviewer`'s `/cso` deferral and
+  the Step 3 `/ship` handoff, so changing it changes what the gate defers and where it hands
+  off — a different blast radius from a drift advisory, and the standing rule is that a
+  change to executable behaviour gets its own PR. **What to check before fixing:** whether
+  the two-level shape is a real layout anywhere (the drift script searches it defensively,
+  not from evidence) — and note that E2's positive control passes today because gstack is
+  **skills**-installed here, so this arm has no positive control at all and a fix needs one
+  built the way R13 builds it. **Priority:** P2
+
+- **✅ DONE (0.17.0) — The gate cannot tell whether the handoff it offered was actually
+  taken, so the `quality` disclosure is a statement about what is owed, not what ran.**
+  (filed with 0.15.0, 2026-08-19; closed 2026-08-26)
+  **Closed by removing the question, not by answering it.** The five quality reviewers are
+  ported into `agents/` and fire from the Step 1 table, so the axis is reviewed inside the
+  gate on every machine and there is no longer a deferral whose payment needs observing.
+  The `review-ran` check specced below is dead along with it — see that entry. What the
+  original filing got right is preserved in `DECISIONS.md` at 0.17.0: the configuration it
+  named (handoff offered, never taken) is forgeward's own default workflow, which is why
+  "owed but never paid" was the common case rather than an edge one.
+  *Original text follows, with the match key annotated inline where later measurement
+  falsified it — the annotation is marked by an em-dash aside, everything else is verbatim.*
+  Step 3 invokes `/ship` via the Skill tool and reports
+  `Handing off to /ship`; nothing afterwards observes whether Step 9 reached the review
+  army, whether the user interrupted, or whether they took the far more common route of
+  gate → push-and-PR by hand (which forgeward itself does, because `/ship` re-bumps the
+  version). So on the `gstack_ship: present` branch the axis is reported as deferred and
+  may simply never run. **The tractable check is the one `docs/axis-proposals.md`
+  already specced and shelved** — though not in the shape it was specced in: the three
+  corrections at the end of this section retire `commit` and specialists-dispatched from
+  the match key, and retire `via` as the *rejector* of forgeward's own gate runs. Treating
+  a missing `via` as standalone survives untouched — it was never a match-key component in
+  the first place, it is gstack's own documented semantics, and
+  `docs/axis-proposals.md` §5 says so explicitly. A second mechanism surfaced while measuring it, and it is already
+  installed: forgeward's own `hooks/hooks.json` registers a `UserPromptExpansion` hook on
+  `^([A-Za-z0-9_]+-)?ship$`, so the same shape keyed on `gate` could say "quality has not
+  been reviewed on this branch" as the user types the command, with the gate reading nothing
+  at run time. Either way it cannot block on
+  a first version, because its input is absent for runs that legitimately happened. Worth
+  reviving now that the disclosure is keyed correctly and the gap is the only thing left
+  between "owed" and "paid". **Priority:** P3
+
+- **✅ DONE (0.17.0, 2026-08-26) — gstack's `/review` and forgeward defer the quality axis
+  to each other, and it runs nowhere.** Struck on the lead to match the two entries beside
+  it: 0.17.0 wrote the closure into the body of this entry but left the lead in open form,
+  so every count that reads leads — this file's own, and todokeeper's — reported it as
+  live. *Original text follows.* On commit `04a04fb` the review log records `maintainability` skipped with
+  `reason: "covered-by-forgeward-and-coverage-audit"` and `security` with
+  `"covered-by-forgeward"`, while forgeward's README skips code-quality because
+  `/review` covers it. Same shape as the `/cso` reversal. Scope: 2 of 22 review entries —
+  an existence proof, not a measured rate. (2026-08-05) **Priority:** P3 — downgraded at
+  0.12.0 because forgeward's half is closed. Not because the rest is another repo's ticket:
+  the correction below shows there is no code on either side to change.
+
+  **Half-narrowed by 0.8.0, and forgeward's half closed at 0.12.0.** Option B made the
+  *gstack-absent* half explicit — the gate discloses `quality` as unowned. 0.12.0 closed
+  the other side of forgeward's contribution: the README no longer says `/review` covers
+  quality, and `skills/gate/SKILL.md` now prints a PRESENT-case clause naming what the
+  probe can and cannot see (`quality: owned by gstack /review (installed; forgeward has
+  no quality reviewer and does not check that /review ran)`). So a user with both tools
+  installed is no longer told the axis is handled.
+  **What is left is not fixable from here.** Nothing in forgeward can read `/review`'s
+  skip reasons, change them, or detect that a review ran; the entry stays because the
+  *measurement* lives here and would otherwise be lost.
+  (0.8.0, 2026-08-06; forgeward half closed 0.12.0, 2026-08-16)
+
+  **Correction, 2026-08-26 — there is no other-repo fix, because there is no other-repo
+  code.** This entry was filed as gstack's ticket, on the assumption that gstack's skill
+  *contains* the deferral and the remedy is gstack dropping it. It does not: `grep -rn 'covered-by-forgeward'` over
+  `~/.claude/skills/` returns **0**, and **0** files anywhere under
+  `~/.claude/skills/gstack/` mention forgeward at all. `review/SKILL.md`'s own documented
+  skip reasons are `"scope"`, `"gated"`, the under-50-line bail and `[GATE_CANDIDATE]`.
+  The strings this entry quotes were **improvised by the model at run time** and written
+  into the log — twice, in
+  `~/.gstack/projects/thimisou/fixtimed-events-followups-reviews.jsonl` (2026-07-29) and
+  again on 2026-08-26 in `androsland-claude-video`, the second phrased freehand as
+  "forgeward security-reviewer PASSed this exact range". So the loop is a *runtime*
+  behaviour with no code on either side to change, which makes it strictly harder to fix
+  than filed and not, as recorded, someone else's ticket.
+
+  **✅ DONE (0.17.0, 2026-08-26) — the loop is broken from this side, and gstack's half
+  stopped being wrong without gstack changing anything.** `/review` skipping
+  `maintainability` as `covered-by-forgeward-and-coverage-audit` was a false claim when it
+  was logged and is now simply **true**: forgeward has a maintainability reviewer, and it
+  fires. The entry closes because the defect was "the axis runs nowhere", and it now runs
+  here. Two things this does not mean: gstack's skip reason is still model-improvised prose
+  with no code behind it on either side, so it can say anything on any run; and `security`
+  skipped as `covered-by-forgeward` was always true and is untouched by this.
+
+- **❌ DROPPED (0.17.0, 2026-08-26) — The review-ran check — warn-only, never blocking on
+  a first version.** Superseded rather than shipped: it exists to check up on a delegated
+  quality pass, and there is no longer a delegation. Dropping it also retires the two
+  cross-repo dependencies it carried (gstack's two `gstack-review-log` call sites and the
+  `via`-key shape), plus the `"via":"standalone"` change it wanted filed against gstack.
+  That last one was measured before it was dropped, and the number is the reason it was
+  never worth much: across 85 `*-reviews.jsonl` files under `~/.gstack/projects/`, exactly
+  **one** of 122 lines carries no `via`, and it is a genuine standalone run. So the field's
+  absence was the only available signal, one sample wide, and indistinguishable from a
+  truncated write or an older template — the change would have shrunk the `unknown` bucket
+  without ever making it empty, and would have done nothing for lines already written.
+  **Kept rather than deleted** because its analysis is the strongest single argument for
+  the port: a check that must treat a missing field as "probably ran" and can never block,
+  because a real review can leave no trace, is a check whose input the gate does not
+  control. That is the property that made owning the axis the cheaper option.
+  *Original text follows.* Gate on
+  whether a quality pass ran rather than reimplementing quality. Match `skill:"review"` +
+  `commit` + specialists dispatched, and **treat a missing `via` as standalone** — a
+  standalone `/review` reaches the `gstack-review-log` call in `review/SKILL.md` with no
+  `via` key, while `/ship` reaches the one in `ship/sections/review-army.md` with
+  `"via":"ship"`. Both re-verified 2026-08-16. These are **cross-repo** references into
+  gstack, which this repo neither controls nor can keep current, so grep for the
+  `gstack-review-log` invocation before acting on either. Keying on
+  `via:"ship"` would fail exactly the people who ran `/review` correctly. Cannot block,
+  because both call sites are model-executed prompt steps: a review that happened can
+  leave no entry, which under-counts a measurement but manufactures false FAILs in an
+  enforcement. **Priority:** P3
+
+  **Three corrections to this design, measured 2026-08-26 before building it.** Census:
+  85 `*-reviews.jsonl` files under `~/.gstack/projects/`, 122 unique lines, 23 carrying
+  `skill:"review"` across **6 distinct key-shapes**.
+
+  (1) **It must reject forgeward's own gate runs — and `via` cannot be what rejects them.**
+  Two live log lines record forgeward's reviewers under `skill:"review"`:
+  `finrecruits/featcandidate-job-alerts-reviews.jsonl`, with `"note":"4 axes
+  (privacy/a11y/security/seo) x 3 rounds"` and `via:"forgeward-gate"`, and the 2026-08-26
+  `androsland-claude-video` line, whose `passes.skipped.security` reads "forgeward
+  security-reviewer PASSed this exact range" and which carries no `via` at all. So a check
+  keyed on `skill:"review"` alone reads forgeward's gate as the quality pass it exists to
+  disclose the absence of — and the obvious guard, rejecting `via:"forgeward-gate"`, catches
+  only the first: that record is the **oldest** of the six shapes, and the newest shape has
+  no `via` to reject. Key the rejection on a field the current shape carries
+  (`read_only:true`, or a `passes.skipped.*` reason naming forgeward), and test it against a
+  gate record in the *new* shape, not only the 2026-07 one.
+
+  **That key was proposed with no negative control, and re-measuring on 2026-08-26 shows
+  why that matters.** The `androsland-claude-video` / `fix/gate-findings` record — the one
+  correction (2) below calls "still a real `/review` run", and the only standalone run in
+  the census at the time — carries `read_only: true` *and* a
+  `passes.skipped.security` reading "forgeward security-reviewer PASSed this exact range".
+  Both proposed keys match it, so the check would have printed the false accusation
+  correction (3) forbids, against its own sole positive example. It is not
+  zero-separating-power: a second standalone row logged since (this branch's own review,
+  under `androsland-forgeward-gate`) carries neither key and would pass. The defect is that
+  the discriminator was written from a population with exactly one positive and no negative,
+  which is the same one-sample error corrections (1)–(3) are each about. It strengthens the
+  DEAD verdict rather than weakening it, and is recorded here for that reason.
+
+  (2) **`commit` cannot be in the match key, and neither can the rest of the template.**
+  `commit`, `specialists`, `quality_score` and per-finding `fingerprint`/`severity`/`action`
+  all come from `/review`'s Step 5.8 template, and the newest record on this machine carries
+  **none of them** — it carries `passes`/`counts`/`headline`/`workspace_guard`/`read_only`
+  instead. The shape this design was written against is the oldest of the six. Note what
+  this does *not* license: that record is still a real `/review` run (see the measurement
+  entry above), so a check keyed on the template's fields would have called a genuine
+  standalone pass unreviewed.
+
+  (3) **`unknown` must cover lookup failure, not only parse failure.** With `commit` gone,
+  the branch-derived filename is the only key left — and it drifts: **17 branch names on
+  this machine resolve to two different files** (`feat-dashboard-i18n-reviews.jsonl` and
+  `featdashboard-i18n-reviews.jsonl` are one branch), 4 logs sit under the literal branch
+  name `unknown`, and 3 sit one directory deeper because the branch name contains a slash.
+  Zero candidate files, more than one, or a record whose provenance is not readable is
+  `unknown`. The check must **never** degrade to `not reviewed` — that turns gstack's schema
+  churn into forgeward printing a false accusation.
+
+- **`forgeward-transcript-audit.sh`: the P2 filed with the gitleaks fix is now shipped, and
+  its first real run corrected the README that specified it.** Shipped 2026-08-19 as
+  **0.16.0** — `scripts/forgeward-transcript-audit.sh` (755) plus
+  `test/transcript-audit-test.sh` (37 assertions), registered in `package.json`'s roster,
+  which is the single source of truth for the suite list.
+
+  **THE FINDING THAT CHANGED THE DESIGN.** README 0.10.1 settled that the audit surface is
+  "**two** channels" — `subagents/*.jsonl` and `tool-results/*.txt` — and the filed entry
+  said a script would inherit that. The script's first run over the real
+  `~/.claude/projects/` tree (3536 files, 194 session directories, 19.7s) returned **20
+  prefixed hits: 14 under `subagents/`, 1 under `tool-results/`, and 5 at the top level**,
+  `<project-slug>/<session-uuid>.jsonl` — a quarter of the hits outside both documented
+  channels. A `memory/` directory sits beside them too. Three is now written as a **floor**,
+  not a total. The rule extracted to CLAUDE.md is that a channel list is an `--include`
+  filter in different clothes; `grep -r` from `projects/` found all three because it was
+  told about none of them.
+
+  **SCOPE, ALSO CORRECTED BY MEASUREMENT.** The entry specified "its own project's
+  transcripts". A slug is keyed to the session's LAUNCH directory, and **0 of 26** slugs on
+  this machine contain `forgeward` — so the specified design would have reported the repo
+  shipping the script clean, while being the one repo certain to have been discussed.
+  Default scope is every project; `--project SLUG` narrows; nothing derives a slug from a
+  repo path.
+
+  **WHAT IT REPORTS.** Filenames and counts, never a value — the run above deliberately
+  opened none of the 20 matching files, since reading one pulls a live credential into a
+  fresh transcript and re-commits the exposure the audit is about. It prints
+  `files N across M session directories` so a clean result has a denominator, a per-shape
+  breakdown, a count of group/other-readable `tool-results` files (267 here), and a
+  mandatory "WHAT THIS RUN DID NOT ESTABLISH" block carrying UNVERIFIABLE and
+  rotate-regardless. Exit `1` prefixed match, `0` none, `2` nothing to search, `64` usage.
+  The URL pattern stays advisory and never sets `1` — 195 hits against 20, the same
+  signal-to-noise split the README already measured at 201-vs-15.
+
+  **TWO HARNESS TRAPS, BOTH WRITTEN INTO THE SUITE'S HEADER.** (1) `set -o pipefail` plus
+  `CMD | grep -q` is a false-negative generator: `grep -q` exits on first match, `CMD` takes
+  SIGPIPE and dies 141, and pipefail hands the pipeline that 141 — so a *successful* match
+  reads as a failed test. Five assertions failed that way before the cause was found. (2) A
+  bare `grep -qF "$PEM_NEEDLE"` errors "unrecognized option" because the needle starts with
+  `-`, exiting 2 — which is non-zero, so a *silence* assertion passes without ever reading
+  the output. Found while writing the suite; `-e` is load-bearing in the test for exactly
+  the reason the README already gives for the search. The suite's first assertion is a trust
+  check that proves the leak assertion can fail.
+
+  **THE GATE FOUND THREE THINGS ACROSS TWO ROUNDS AND ALL THREE ARE FIXED IN THE SAME
+  PR**, which is the shape a read-only gate is for — and the third is the interesting one,
+  because it was a gap in the fix for the first. Privacy (Medium): the printed filename list is itself identifying —
+  a slug is a flattened directory path, so it carries a home-directory name and repo/client
+  names, and the natural next move after a hit is pasting it into an issue. The script now
+  says REDACT BEFORE PASTING beside the list, and two assertions pin that it fires on a run
+  with hits and stays quiet on one without. Security (Low): `stat -c` is GNU-only, so on BSD
+  and macOS every call fails and the loop would have printed a confident `0` world-readable
+  files — a false clean produced by the very script that argues against false cleans. It now
+  probes once and prints `UNAVAILABLE`, tested with a deliberately broken `stat` on `PATH`.
+  Supply-chain self-skipped: no dependency moved.
+
+  Round two, privacy (Medium): the warning had been added under the prefixed-shape list
+  only, while `--urls` printed a **second** list of the same slug-bearing paths with no
+  warning at all. One list warned and one not is worse than neither, because it reads as a
+  considered distinction. The note is now a function called after every filename list, and
+  two more assertions pin it on the `--urls` path in both directions. This is the
+  own-fix-undershoots-own-evidence shape from CLAUDE.md, caught by a reviewer rather than by
+  me: the evidence was "printed paths are identifying" and the remedy covered one of the two
+  places paths are printed.
+
+  Round three, privacy (Low): the same reasoning applied to the README. The redaction note
+  was written next to the *script's* paragraph, while the four hand-run `grep` blocks below
+  it print the identical slug-bearing lists and the README explicitly anticipates people
+  jumping straight to a command block. Moved so it sits between the shared explanation and
+  the first command, reworded to cover both routes, with a pointer after the first block.
+  Three rounds, and each round's finding was that the previous round's remedy stopped one
+  printer short of its own evidence.
+
+  Deferred, both filed above: `test/` is still outside CI's shellcheck, and the pattern list
+  is duplicated between script and README with nothing checking they agree.
+
+- **Archive pass 5: the currency check caught the section stale by two again, and a tool
+  did the measuring for the first time.** Shipped 2026-08-19, docs only — no code, no
+  version bump (0.15.0 unchanged).
+
+  **CURRENCY — stale by two, and the check has now caught staleness in three of the four
+  passes known to have run it** (2, 3 and 5; pass 4 came back clean). `## Completed`
+  stopped at #38. **#39** (`032e8df`, 0.14.0) and **#41** (`4c7207b`, 0.15.0) merged under
+  three minutes apart on 2026-08-19 and neither carried an entry; both are written up from
+  their commit bodies, before anything was moved. Pass 4's clean result reads differently
+  in that light — one clean run in four, not a change of regime — and the mechanism pass 3
+  named is unchanged: the entry describing a PR can only be written once that PR merges, by
+  which time the branch that would have carried it is gone.
+
+  **#40 is not a hole in the numbering, and that was checked rather than assumed.** It was
+  the same change as #41, opened against `fix/a11y-severity-wrong-name-and-contrast`
+  because 0.15.0 was stacked on 0.14.0 and the monotonic rule forbids merging them in the
+  other order. Squash-merging #39 rewrote that base out of existence, so #40 was closed and
+  the work re-opened against `master` as #41. Nothing merged as #40 and nothing is owed an
+  entry for it. **A gap in the PR numbers is evidence of nothing until you look** — the
+  currency check enumerates merged PRs, and a closed one has to be read to be dismissed.
+
+  **MEASURED BY A TOOL for the first time, and it changed no decision here.** `todokeeper`'s
+  `measure.mjs` read `TODOS.md` at **112,018 B, completed mass 33,302 B = 29.7% of the file
+  across 6 entries, 61 live entries, over the 50,000 B threshold**. That is the first pass
+  where the numbers came from a command rather than from a reading. The file was obviously
+  over the threshold and the cut size is arithmetic — nine entries back to five — so the
+  tool confirmed rather than decided. The reason to run it anyway is the one its own docs
+  give: a maintainer eyeballed another repo's completed mass at 1.6% when it was 12.4%, and
+  that estimate was the argument for leaving the file alone.
+
+  **MERGE ORDER — checked, and the one inversion in range does not touch the cut.**
+  `git log --first-parent` puts #33 < #32 < #34 < #35 < #36 < #37 < #38 < #39 < #41. The
+  inversion is #32 merging 19 seconds *behind* #33 despite the higher number, and it is
+  inert here because #32 never had an entry of its own — it is folded into #33's. Among the
+  four entries being cut, number order and merge order agree.
+
+  **CUT — four entries, `24,149` bytes, to `TODOS-DONE.md` newest-first at the top, in the
+  same commit that removed them:** #36 (`e250ec8`, 0.13.0), #35 (`840d936`, 0.12.1), #34
+  (`f0ac18e`, archive pass 3) and #33 (`8baee22`). Nine entries back to five — six standing,
+  three written by this pass, four out.
+
+  **EXTRACTION — five rules lifted, against pass 4's three.** Most of what these four
+  entries produced was already in `CLAUDE.md` — the whole substitution-swallowed-`exit`
+  property, its five mechanisms and its non-goals shipped with `0.12.1` itself. What was
+  not yet written down, and is now:
+
+  - **Prefer deleting a weightless detail to correcting it** — from `0.12.1`, where each
+    amend's prose about the last correction became the next round's failure surface.
+  - **A number in a doc is re-derived from what merged, against a FIXED range** — from
+    `0.12.1`'s branch-diff hash and pass 3's headline count, two shapes of the same defect.
+  - **A tool whose absence turns a suite green is still a dependency** — from #33's
+    `semgrep`/`1..0 # SKIP` finding.
+  - **An automation nobody has watched run is a claim, not a control** — from #33's
+    Dependabot close.
+  - **A count the gate prints must not fire on a configuration the docs endorse** — from
+    0.13.0's `seo.routes` non-fire, carried with its `0`-is-not-a-clean-bill exception.
+
+  **MEASURED, because pass 3's entry says to.** `TODOS.md` went **112,018 → 99,410
+  bytes**, a net **−12,608** after writing three entries back — against pass 4's −15,032 on
+  117,273 and pass 3's −1,392 on 85,990. Still **just under 2×** the ~50KB threshold, and
+  the reason is the one every pass has recorded: the open half is **79,316 bytes, 80% of
+  the file** (`awk '/^## Gate — publish matcher/{f=1} /^## Completed/{exit} f' TODOS.md |
+  wc -c`), up from 72% at pass 4 — it rises as a share every time only the completed half
+  is cut, and this pass does not touch it.
+
+  **What this pass did NOT do, and the difference from pass 4 is that it is now due.** It
+  expired nothing in the open half. Pass 4 recorded that triage as a different job with a
+  different risk; its own entry sets the trigger as a batch of merged work large enough that
+  several entries are plausibly stale, and that trigger was **checked and not met on
+  2026-08-17**. Seven PRs and five releases later it **is** met, `stale.mjs` puts **24 of 61
+  entries in SUSPECT** against **5 cold**, and the entry now says so with the full
+  distribution and what each bucket is not. The triage itself is the next unit of work,
+  not this one — a title needing an "and" is two PRs.
+
+- **The `quality` axis was disclosed as owned by reading whether `/review` is INSTALLED,
+  which is not what runs it.** Shipped on `feat/gate-quality-axis-keys-on-handoff` as
+  **PR #41, merged `4c7207b`, 2026-08-19** (0.15.0), +75/−13 across 6 files. Written up by
+  archive pass 5 from the commit body, because the entry did not ship with the work.
+
+  **The failing configuration is `/review` present, `/ship` absent.** The gate never invokes
+  `/review`; the axis is run only by the Step 3 handoff, through `/ship` Step 9. So a
+  `gstack_review`-keyed table reported the axis as covered in the exact configuration where
+  nothing will ever run it, and said nothing at all, because the variable it read was
+  satisfied. `docs/axis-proposals.md` had recorded, under the quality-axis question and
+  since before the table said otherwise, that the handoff to `/ship` is the only thing that
+  runs quality — **the repo contradicted its own doc, and the doc was right.**
+
+  **Four cases, including the one that cannot be detected.** `/ship` present → the axis is
+  deferred to Step 9, said plainly so nobody runs `/review` a second time by hand. `/ship`
+  absent, `/review` present → NOT COVERED this pass, naming the command. `/ship` present but
+  the handoff not taken → undetectable, and stated to be — **it is the common path, not an
+  edge**, since forgeward's own workflow is gate → push-and-PR by hand precisely because
+  `/ship` would re-bump the version. Both absent → unchanged. The first bullet is therefore
+  worded as where the axis is *owed*, never as a claim it was paid.
+
+  **Why the gate must not simply invoke `/review`, pinned so it does not read as a gap
+  waiting to be filled.** `/review`'s `allowed-tools` include `Edit` and `Write`, and Step 2
+  snapshots the tree and diffs it afterwards to prove the gate is read-only — a reviewer that
+  may legitimately edit code cannot run inside that envelope without either firing the
+  workspace guard on correct behaviour or gutting the guarantee. The scopes differ too:
+  `/review` resolves its own base branch, Step 0 resolves the publish boundary.
+
+  **Residue filed, not waved off:** nothing observes whether the offered handoff was taken.
+  `axis-proposals` already specced that check — match a dashboard entry on `skill:"review"` +
+  `commit` + specialists-dispatched, a missing `via` meaning standalone — and shelved it. It
+  is now the only thing standing between "owed" and "paid".
+
+- **A11y read a WRONG accessible name, and text below AA, as polish.** Shipped on
+  `fix/a11y-severity-wrong-name-and-contrast` as **PR #39, merged `032e8df`, 2026-08-19**
+  (0.14.0), +79/−4 across 6 files. Written up by archive pass 5 from the commit body.
+
+  **A wrong name blocks nobody, which is exactly why the old rubric got it wrong.** The bar
+  was "a real barrier that blocks a user from completing a task… polish is Low". A
+  screen-reader user given a wrong name completes the task and is told something untrue on
+  the way, so it landed at Low and the gate passed — backwards from the missing-name case
+  sitting beside it. A missing name is discoverable: the reader announces "button" and the
+  user knows something is absent. A wrong one announces something plausible and gives no
+  signal to doubt it. `aria-label` REPLACES the element's contents in the buffer, so a
+  hand-written one silently deletes every field it omits and goes stale the next time one is
+  added.
+
+  **"Failing contrast on key text" had the same shape.** "Key" has no definition, so it
+  resolves to whatever the reviewer already believes is important, and a whole family of
+  secondary labels sits under the floor for months while each one individually reads as
+  unimportant. Any text below 4.5:1 normal / 3:1 large is now High, unqualified.
+
+  **This widens what the gate BLOCKS, not what it prints, and it is the one place this repo
+  has done that deliberately** — recorded as an exception in `CLAUDE.md` beside the rule it
+  is an exception to. Both non-goals are written into the reviewer prompt rather than left
+  implied: a terse-but-accurate name is a pass (`aria-label="Κλείσιμο"` on an `×` is correct,
+  because the test is whether the name is TRUE, never whether it is long, and `alt=""` is the
+  correct marking for decoration), and runtime-composed contrast — a theme token, an
+  `opacity-*` utility over an unknown backdrop, a UA stylesheet — is not computable from a
+  diff and must be reported as "unmeasured, needs a rendered check". **A vendor's documented
+  value is not evidence there:** one shipped UA rule for disabled input text predicts ~2.0:1
+  where the engine paints 7.57:1.
+
+  **Two gaps filed rather than closed.** No test reads `agents/*.md` at all, so every
+  reviewer's blocking surface is prose no CI job checks — 299 assertions stay green through
+  any rubric edit. And an "unmeasured" report still returns PASS, so a known-unknown is
+  indistinguishable from a clean run in the marker.
+
+- **A security assertion was pinned by a hand-copied literal, and forgetting to update it
+  was the one failure in this repo with no red anywhere.** Shipped on
+  `fix/e17-derive-payload` as **PR #38, merged `678a4fc`, 2026-08-19** (0.13.1). Written in
+  the same commit as the work, so the PR was current the moment it opened and the number was
+  not knowable then; stamped by archive pass 5, as the placeholder that stood here asked for.
+
+  **The defect is the absence of a signal, not a wrong answer.** E17 asserts that
+  `_env_ok` is anchored at *both* ends by handing `forgeward-write-marker.sh` the probe's
+  genuine output with a forgery appended. For that to test the trailing anchor, the opening
+  bytes must be a shape `_env_ok` accepts — and they were typed by hand, with nothing
+  comparing them to the probe. Add a field to the probe, leave the copy alone, and the
+  payload is refused on its **prefix** instead: `notforged` still returns true, E17 still
+  prints `ok`, and dropping the trailing `$` — the exact one-character regression E17 exists
+  to catch — reddens nothing at all.
+
+  **It read as handled precisely because it had always been handled.** The copy moved twice
+  and both times correctly (`seo_posture` 0.9.0, `config_warnings` 0.13.0). The obligation
+  was written in three places and honoured on both occasions. What kept E17 honest was a
+  person remembering; the failure mode of forgetting was silent, while the other two legs of
+  the same obligation are loud (a stale `_env_ok` reddens E10 and degrades every marker to
+  `{"probe":"unavailable"}`).
+
+  **The fix deletes the copy rather than warning about it harder.** E17 derives its prefix
+  from `$E1J` — the live probe captured at E1 with all three roots neutralised — so a new
+  field is in the payload the moment the probe emits it. `grep` confirms no literal copy of
+  the probe's output line remains anywhere in the suite. A probe field is a **two**-file
+  edit again, stated at the `printf` itself.
+
+  **Non-goals, in the test and in `DECISIONS.md` rather than left implied.** It cannot see
+  `_env_ok` falling behind the probe — that direction refuses the derived prefix, degrades
+  the marker, and greens E17 for the wrong reason; **E10 reddens there**, and neither
+  assertion is sufficient alone. It does not decouple the probe from the marker writer; that
+  coupling is a separate open P2 whose price this dropped from three files to two. The
+  emptiness floor checks that `$E1J` *looks like* a probe line, not that it is correct — E1,
+  E2 and E9 own that.
+
+  **The P2's revisit trigger was re-evaluated, not actioned.** The probe is past "a handful
+  of fields", so the trigger is met — but the remedy the entry named ("take the parser
+  dependency") is refused by `CLAUDE.md`'s one-reader-per-shape rule and by
+  `forgeward-write-marker.sh` sitting on the **push-authorizing** path, where an interpreter
+  present on the author's box and absent on an installer's decides whether a marker is
+  written. Recorded in the entry so the trigger is not re-derived every pass; the entry
+  stays open.
+
+  **MUTATION — both directions, and the decisive leg is the last pair.**
+  Every mutated leg printed a verification line confirming its mutation was actually present
+  before the suite ran — a green from a mutation that silently failed to apply proves nothing.
+
+  | mutation | gate suite | E17 |
+  |---|---|---|
+  | base (unmutated) | 194/0 | `ok` |
+  | drop the `$` from `_env_ok`, nothing else | 193/1 | **RED, and only E17** |
+  | 8th probe field + `_env_ok` updated (the correct two-file edit) | 194/0 | `ok` — no test edit needed |
+  | …that field addition **plus** the dropped `$`, with this commit's E17 | 193/1 | **RED** |
+  | …the same, with **master's** E17 | 194/0 | **GREEN** |
+
+  The last two legs are byte-identical apart from which `test/gate-test.sh` runs. Master's
+  leg prints *"a valid-prefix-plus-appendix splice is rejected (the shape match is anchored
+  at BOTH ends)"* — its own unchanged wording — while the anchor it names is gone.
+
+  Isolated outside the harness, same scripts, anchor dropped: the derived payload writes a
+  marker carrying `diff_hash=TAILFORGE` — the forgery lands, `notforged` fails, E17 reddens.
+  Master's stale 7-field payload writes a marker carrying the **real** diff hash: refused on
+  its prefix, `notforged` returns true, E17 greens.
+
+- **Archive pass 4: the currency check came back CLEAN for the first time, and the cut
+  arithmetic was wrong until it was written down.** Shipped 2026-08-18, docs only — no code,
+  no version bump. Clears the deferral the 0.13.0 entry recorded, which held this split back
+  on purpose so a four-figure prose diff would not bury a script change.
+
+  **CURRENCY — clean, and that is news.** Passes 2 and 3 both caught `## Completed` stale,
+  and pass 3's entry called two-of-two "a pattern, not an accident". This pass enumerated
+  every merged PR with `gh pr list` and mapped it against the section rather than eyeballing
+  the newest date: 8 entries covering **#28–#36**, with **#32** (the `actions/checkout`
+  bump) folded into #33's entry rather than carrying one of its own, and nothing merged
+  after #36. No gap. The check still had to run to establish that — a clean result and an
+  unrun check are indistinguishable from the page.
+
+  **MERGE ORDER — the trap did not fire this time, and the check still ran.** `git log` on
+  all eight merge commits put #28 < #29 < #30 < #31 < #33 < #34 < #35 < #36, so PR-number
+  order and merge order agreed and any sort would have produced the same cut. Pass 3 hit the
+  inversion (#26 merged 39 minutes *after* #27) and `CLAUDE.md` now carries the rule; this is
+  what it looks like when a rule costs one command and buys nothing on a given day.
+
+  **CUT — four entries, not three, and the first plan said three.** Landing at "the 5 most
+  recent" means cutting **four** when the pass writes its own entry back, and the first
+  boundary drawn here was three, which would have left six. Caught by re-deriving the
+  arithmetic before the cut rather than after. Archived #31 (`9cddc11`, 0.12.0), #30
+  (`5144a37`, 0.11.0), #29 (`2844886`, 0.10.1) and #28 (`ce69eb5`) to `TODOS-DONE.md`,
+  newest-first at the top: **18,863 bytes**, in the same commit that removed them.
+
+  **EXTRACTION — three rules lifted, and the thinness is the evidence the ratchet works.**
+  Most of what these four entries produced was already in `CLAUDE.md`: the `python3 -I` rule
+  with its no-jq scope limit, the `export LC_ALL=C` pin with its deliberate `test/`
+  exception, "pin the VIOLATING form and guard the enumeration against emptiness", the
+  merge-order cut rule, and "a filing-only PR still gets a `## Completed` entry" all landed
+  in pass 3. What was *not* yet written down, and is now:
+
+  - **Rewriting a tracked script in place must preserve its mode.** `awk … > tmp && mv`
+    recreates at the umask default and silently de-executed eleven scripts when the
+    `LC_ALL` pin landed. A29 pins it; the rule was only ever in the archived entry.
+  - **When a filter caused the miss, delete the filter — do not extend it.** From the
+    rotation notice's `--include='*.jsonl'`, which could not see `tool-results/*.txt`.
+  - **A search over evidence that expires must report an empty result as UNVERIFIABLE.**
+    From the `cleanupPeriodDays` measurement, and it binds the filed
+    `forgeward-transcript-audit.sh` before that script exists.
+
+  **MEASURED, because pass 3's entry says to.** `TODOS.md` went **117,273 → 102,241
+  bytes**, a net **−15,032** after writing this entry back — against pass 3's net
+  −1,392 on 85,990. Four entries out instead of one is the whole difference; the convention
+  bounds the entry COUNT, and the byte count follows only from how many you cut. It is still
+  roughly **2× the ~50KB threshold**, and the reason is unchanged and structural: the open
+  half is **73,484 bytes across 10 topic sections, 72% of the file**, and nothing in this
+  pass touches it.
+
+  **What this pass did NOT do, stated so the numbers are not read as health:** it expired
+  nothing. A stale-but-open entry and a live one are indistinguishable to an archive pass,
+  and the open half grew as a share of the file (63% → 72%) precisely because only the
+  completed half was cut. Triaging the open half is a different job with a different risk —
+  archiving is reversible and pruning is not — and it remains undone.
 
 - **P2: `.forgeward/config.yml` said nothing when it was read and discarded.** Shipped on
   `feat/config-warnings` as **PR #36, merged `e250ec8`, 2026-08-18** (0.13.0). Stamped by

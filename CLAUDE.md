@@ -250,6 +250,22 @@ commit that was fixing it — a line number cannot survive its own fix.
   Both are stated as non-goals in the script and pinned as accepted-and-contained (P8l),
   not asserted away. Do not widen a claim about the wrapper to cover `stdin` mode.
 
+- **A scan whose filename is a constant must be keyed by DIRECTORY.** `forgeward-rubric-drift.sh`
+  iterates `skills/*/SKILL.md`, where every basename is the string `SKILL.md`, so a
+  basename key reported every skill as `SKILL` — and `ok  beta` and `ok  SKILL` are not
+  mutually exclusive outputs, which is why the assertion has to check the broken form
+  explicitly rather than merely check for the right one.
+
+- **Pick a candidate root by a COMPLETENESS pass first, and never emit an advisory the
+  selected root cannot support.** Ordering the scan by landmark is asymmetric: it stops a
+  partial root shadowing a complete one in one direction only, and in the other a
+  plugin-cache directory sorting earlier (`1.10.0` before `1.9.0`) that predates a landmark
+  beat a complete checkout on the same machine. The run then printed
+  `no longer exist … Upstream may have renamed or removed them` about a file sitting one
+  directory over. **An advisory that asserts something false about upstream is worse than
+  this script's default silence** — take the first candidate holding EVERY landmark, and
+  keep the landmark-major scan only as the fallback for a genuinely partial machine.
+
 ## Reviewer scope and severity
 
 - **Reviewer model and effort are properties of the runtime launch, never of the parent
@@ -431,6 +447,28 @@ commit that was fixing it — a line number cannot survive its own fix.
   then. The check that settles it costs one glance at the PR list, and it binds any
   scheduled workflow this repo adds later, not just that one.
 
+- **A pre-fix control and a wrong-fix control are different assertions, and a fix needs
+  both.** An assertion that fails against the old script proves the bug existed; it says
+  nothing about the fix being the RIGHT one, because the obvious wrong fix usually fails
+  that assertion too. 0.20.0 shipped four of these controls — four of the twelve R14-family
+  assertions that one commit added: R14 and R14b were verified to fail against
+  `git show HEAD:scripts/forgeward-rubric-drift.sh`, while R14c and R14d are green against
+  the pre-fix script **by construction** and exist to pin the plausible wrong fix — R14c
+  that candidate selection is landmark-major rather than candidate-major, verified by
+  mutation, since candidate-major is shorter and nothing else in the suite reddens on it.
+  Say in the assertion's comment which of the two kinds it is; an author reading four green
+  lines cannot otherwise tell that two of them never had an opinion about the bug.
+  **This is not a claim that both kinds together are sufficient** — R14e was added by the
+  review that gated that same branch, for a case R14c's own fixture comment had already
+  mislabelled as covered.
+
+- **A skill's read-only posture is asserted by a NON-EMPTY `allowed-tools` floor, never by
+  the absence of `Edit`/`Write`.** A *missing* key grants every tool, so "the frontmatter
+  does not list `Write`" is satisfied by frontmatter that lists nothing — the assertion
+  passes at its most permissive. A30 is shaped that way on purpose and must not be
+  re-written as an absence check or cited as closing the surface: it pins that the key is
+  present and non-empty, and the tool list itself is still prose no test reads.
+
 ## Docs
 
 - **Codex's `PLUGIN_ROOT` contract belongs to plugin hook processes, not ordinary skill
@@ -448,6 +486,19 @@ commit that was fixing it — a line number cannot survive its own fix.
   date (#20 and #22 both say 2026-08-06 and merged a day apart), and **#26 merged 39
   minutes AFTER #27**, so a number sort is wrong in the other direction. Resolve with
   `git log --first-parent` before moving anything. Both traps have now been hit once each.
+  **A third: `gh pr view --json mergedAt` is when the PR merged into ITS OWN BASE, which
+  for a stacked PR is another branch.** #49 reports `05:10:01Z` and reached `master` at
+  `05:13:51Z` inside #48's merge commit — one landing, two timestamps, and the pair are a
+  tie no sort can separate. Worse, that field is not even evidence the work landed: #55
+  reports `MERGED` and its diff is on no ref `master` can reach, because it was merged into
+  a base branch twelve seconds after that base had itself merged. **Before writing "merged"
+  into a durable entry, check the tree** — `git merge-base --is-ancestor <mergeCommit>
+  origin/master`. Test the MERGE commit, not the head: a squash merge never leaves the head
+  commit as an ancestor of anything, so the head-commit form of that check reports 45 of 59
+  PRs orphaned on a repo where two are — a figure that moves with `master`, measured here
+  against `be6a01d`, so quote the ref with it. **The merge-commit test has a false positive
+  of its own**: a re-landed PR keeps an orphaned merge commit while its content is on
+  `master` (#51, re-landed as #52), so fall back to the head commit before alerting.
 - **Extract a rule WITH its exception, or don't extract it.** When the `-I` rule was
   lifted, only one of five sites carried the flag and the gap was already filed; stating
   the rule bare would have converted a filed hole into a claim of coverage. If the
