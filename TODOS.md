@@ -1335,16 +1335,19 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   YAML template, and generating one per audit finding is the actual product. Forgeward
   already works this way: `forgeward-scan.sh` implements no scanning and wraps semgrep,
   trivy, gitleaks and phpcs inside an envelope, so the shape is precedent, not invention.
-  **Who produces the templates, given that nothing but `ci-gate` can write.** Measured
+  **Who produces the templates, given that only `ci-gate` is ALLOWED to write.** Measured
   2026-09-03: all 11 `agents/*-reviewer.md` carry the byte-identical line
   `tools: Read, Grep, Glob, Bash`, and of the three skills, `audit` and `gate` hold no
-  `Edit` and no `Write` — `ci-gate` is the only one in the plugin that can write a file.
-  That is not an oversight to route around: the gate *proves* it left the tree alone by
-  snapshotting and diffing it, so a reviewer dropping a `.yaml` into the repo breaks the
-  property the gate rests on. The design that survives it: the reviewer **emits** the
-  template inside its finding, and the runtime skill materializes and fires it. The
-  schema already has the slot — grep `exploit_scenario`, which is prose describing how to
-  abuse the bug, and a nuclei template is that same field written so a machine can run it.
+  `Edit` and no `Write` — `ci-gate` is the only one that declares either. **Declaring is
+  not the same as being unable:** every reviewer holds `Bash`, so a reviewer could write a
+  file and no tool list would stop it, which is exactly why the gate *proves* it left the
+  tree alone by snapshotting and diffing rather than by trusting the frontmatter. A
+  reviewer dropping a `.yaml` into the repo breaks the property the gate rests on, and it
+  breaks it where the gate actually looks. The design that survives it: the reviewer
+  **emits** the template inside its finding, and the runtime skill materializes and fires
+  it. The schema already has the slot — grep `exploit_scenario`, which is prose describing
+  how to abuse the bug, and a nuclei template is that same field written so a machine can
+  run it.
   **Scope it to the findings that are not fixed on sight:** a Critical or High fails the
   gate, so it gets fixed rather than proved, and the templates earn their keep on
   `/forgeward:audit` findings and on the Medium/Low gate findings that do not block and
