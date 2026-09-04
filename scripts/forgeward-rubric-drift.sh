@@ -33,6 +33,17 @@
 #      0/1/12/13/14 from `cso/SKILL.md`, which is deliberately not — see
 #      THIRD-PARTY-LICENSES.md. A second pair added to a ported file would be read as
 #      covered and never compared.
+#   3. The three NOTE accumulators render `$name` and `$src_path` RAW, one entry per
+#      line, so a name or path holding a newline forges what looks like an extra entry
+#      in the printed list. The COUNTS beside them are correct -- they are integers
+#      incremented once per entry, which is what R18 pins and why the tail `grep -c`
+#      was deleted -- so a run reporting `2 ported rubric(s) have drifted` above three
+#      visible lines is the reader seeing this limit, not a miscount. Escaping on the
+#      way into the accumulators is the fix and is filed rather than taken: it changes
+#      what every drift report looks like, which is a wider blast radius than the
+#      defect. This is NOT the same shape as the candidate list below, which had a
+#      real joining bug (`${gs_roots[*]}` splitting a spaced path into two entries)
+#      and was fixed.
 #
 # The alternative that was considered and rejected was reading gstack's rubrics at
 # runtime instead of porting them. That keeps the copy authoritative and auto-
@@ -95,10 +106,29 @@ verbose=0
 [ "${1:-}" = "--verbose" ] && verbose=1
 
 # One digest, two spellings of the same tool. See the LIMITATION note above.
+#
+# HASHED THROUGH STDIN, NOT BY FILENAME, AND THAT IS NOT A STYLE CHOICE. Given a path
+# containing a backslash or a newline, GNU coreutils escapes the whole output line: it
+# prefixes it with `\` and escapes the offending character. `cut -d' ' -f1` then returns
+# `\73cb...` where the digest is `73cb...`, the comparison at the drift test can never
+# match, and every affected rubric is reported as DRIFTED with a printed instruction to
+# re-port a file that is byte-identical. Measured, not reasoned: `sha256sum -- 'a\b.md'`
+# emits `\73cb3858...`, and `sha256sum < 'a\b.md'` emits `73cb3858...`.
+#
+# The serious form reaches through `gs_root`, not the rubric name -- a `HOME`,
+# `CLAUDE_CONFIG_DIR` or plugin-cache path holding a backslash makes EVERY port report as
+# drifted at once, and `skills/gate/SKILL.md` instructs the gate to relay that verbatim.
+# So the blast radius is a path this script does not choose and cannot validate.
+# R16 tested a SPACE and read as covering the class; a space is the one metacharacter
+# `sha256sum` does not escape, which is exactly how a sample gets mistaken for a spec.
+# R16b pins the backslash and is a pre-fix control. `shasum` has the identical defect and
+# gets the identical treatment. The group redirect (rather than a trailing `2>/dev/null`)
+# is what keeps a failed redirect on an unreadable file quiet, since redirections are set
+# up before the commands inside the group run.
 if command -v sha256sum >/dev/null 2>&1; then
-  sha256_of() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
+  sha256_of() { { sha256sum < "$1" | cut -d' ' -f1; } 2>/dev/null; }
 elif command -v shasum >/dev/null 2>&1; then
-  sha256_of() { shasum -a 256 -- "$1" 2>/dev/null | cut -d' ' -f1; }
+  sha256_of() { { shasum -a 256 < "$1" | cut -d' ' -f1; } 2>/dev/null; }
 else
   [ "$verbose" -eq 1 ] && printf 'rubric-drift: no sha256sum or shasum on PATH — drift cannot be checked.\n'
   exit 0
@@ -201,7 +231,34 @@ if [ -z "$gs_root" ]; then
 fi
 
 if [ -z "$gs_root" ]; then
-  [ "$verbose" -eq 1 ] && printf 'rubric-drift: no gstack rubrics at any searched root — nothing to compare. Searched: %s\n' "${gs_roots[*]:-<none>}"
+  # THREE LINES, NOT ONE, AND THE THIRD IS THE POINT. The old single line ended
+  # `Searched: %s`, which reads as a complete account of where this script looked and is
+  # not one: a plugin-cache path enters `gs_roots` only when `[ -d ]` already holds, so
+  # the locations that do not exist were never candidates and never appear -- while the
+  # explicit root and the two fixed locations are appended unguarded and appear whether
+  # they exist or not. One word covered both, mixing "looked here, nothing there" with
+  # "never looked", and someone debugging a silent run acts on that difference.
+  # Dropping the `[ -d ]` guard to make the list uniform is the wrong fix: an unmatched
+  # glob would then put its own literal pattern into the list. Say what the list is
+  # instead. Pinned by R19.
+  if [ "$verbose" -eq 1 ]; then
+    printf 'rubric-drift: no gstack rubrics at any searched root — nothing to compare.\n'
+    # ONE PER LINE, because the six lines around this one exist to make the reader parse
+    # it as an enumeration of what was and was not tested. `${gs_roots[*]}` joins on a
+    # space, so a candidate path containing a space renders as two entries and one
+    # containing a newline forges an extra -- in the exact output that is claiming to be
+    # a precise account of coverage. `[@]` with a per-element format cannot do either.
+    printf 'rubric-drift: candidates tested:\n'
+    if [ "${#gs_roots[@]}" -eq 0 ]; then
+      printf 'rubric-drift:   <none>\n'
+    else
+      printf 'rubric-drift:   %s\n' "${gs_roots[@]}"
+    fi
+    printf 'rubric-drift: tested, not considered — a plugin-cache path becomes a candidate only if it\n'
+    printf 'already exists, so cache locations that do not exist were never tested and cannot appear\n'
+    printf 'above. Every other candidate form (FORGEWARD_GSTACK_ROOT, and the two fixed locations it\n'
+    printf 'overrides) is listed whether or not it exists.\n'
+  fi
   exit 0
 fi
 
@@ -209,6 +266,15 @@ fi
 drifted=''
 missing=''
 malformed=''
+# COUNTED AT THE APPEND SITE, NOT AT THE TAIL. These three were `printf '%s' "$x" | grep -c .`
+# on the accumulated strings, which counts LINES; a rubric whose name carries a newline is
+# one entry across two lines and over-counted by one. The name comes from a skill DIRECTORY
+# name or a reviewer FILENAME, both of which may legally hold a newline, so the input is not
+# under this script's control. Incrementing here is the only form that cannot disagree with
+# the string it describes. R18 is the pre-fix control. Do not reintroduce a tail count.
+n_drift=0
+n_miss=0
+n_bad=0
 # TWO COUNTERS, NOT ONE, AND THEY ANSWER DIFFERENT QUESTIONS. `parsed` is how many files
 # carried a readable provenance block; `checked` is how many of those had a live upstream
 # file to hash. They diverge exactly when a port goes missing upstream, which is reported,
@@ -279,6 +345,7 @@ for f in "$agents_dir"/*-reviewer.md "$skills_dir"/*/SKILL.md; do
   case "/$src_path/" in
     */../*) malformed="$malformed  $name  ($src_path)
 "
+            n_bad=$((n_bad + 1))
             continue ;;
   esac
 
@@ -287,6 +354,7 @@ for f in "$agents_dir"/*-reviewer.md "$skills_dir"/*/SKILL.md; do
   if [ ! -f "$live" ]; then
     missing="$missing  $name  ($src_path)
 "
+    n_miss=$((n_miss + 1))
     continue
   fi
   checked=$((checked + 1))
@@ -295,6 +363,7 @@ for f in "$agents_dir"/*-reviewer.md "$skills_dir"/*/SKILL.md; do
   if [ "$now" != "$src_sha" ]; then
     drifted="$drifted  $name  ($src_path)
 "
+    n_drift=$((n_drift + 1))
   elif [ "$verbose" -eq 1 ]; then
     printf 'rubric-drift: ok       %s\n' "$name"
   fi
@@ -320,10 +389,6 @@ if [ "$parsed" -eq 0 ]; then
   printf 'the provenance blocks did not parse (a CRLF checkout does this), or agents/ and skills/ were\n'
   printf 'not where this script looked. Drift was NOT checked. Re-run with --verbose for the roots tried.\n'
 fi
-
-n_drift=$(printf '%s' "$drifted" | grep -c . || true)
-n_miss=$(printf '%s' "$missing" | grep -c . || true)
-n_bad=$(printf '%s' "$malformed" | grep -c . || true)
 
 if [ "$n_drift" -gt 0 ]; then
   printf 'NOTE: %d ported rubric(s) have drifted from the installed gstack copy:\n%s' "$n_drift" "$drifted"

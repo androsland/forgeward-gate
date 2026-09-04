@@ -47,7 +47,7 @@ cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
 ```
 
 **Verify it actually loaded (all four):**
-- `/plugin` → `forgeward` is enabled and its detail view lists 5 agents, the `gate` skill, and hooks.
+- `/plugin` → `forgeward` is enabled and its detail view lists 11 reviewer agents (five of them the ported quality reviewers §5c exercises), the `gate`, `audit` and `ci-gate` skills, and hooks.
 - `claude plugin list` → shows `forgeward`.
 - `claude plugin details forgeward` → lists a **PreToolUse / Bash** hook and a **UserPromptExpansion / ship** hook.
 - Type `/forgeward:gate` → it autocompletes.
@@ -256,7 +256,9 @@ Expected:
   gate reported a handoff that never happened.)
 - Verify the marker and that the push now goes through:
   ```bash
-  cat .git/forgeward-gate-marker.json          # shows passed:true, base, diff_hash
+  # one file per branch; there is no single `.git/forgeward-gate-marker.json`
+  cat "$(git rev-parse --git-common-dir)"/forgeward-gate-markers/"$(git branch --show-current)".json
+  # shows passed:true, base, diff_hash, reviewed_head
   ```
   Ask Claude to push → it now **succeeds**; `git ls-remote --heads origin` shows `feature/signup`.
 
@@ -535,6 +537,233 @@ Two caveats on how it was run, so the next person does not over-read this:
 
 ---
 
+## 5c. The five ported quality reviewers, on a real diff
+
+0.17.0 ported gstack's five Review Army specialists — `maintainability`, `testing`,
+`performance`, `api-contract`, `data-migration` — and forgeward has owned the `quality`
+axis outright ever since. `test/gate-test.sh` verifies the *port* (provenance recorded,
+drift detected, rubrics present); nothing in any suite has ever verified the *reviewers*,
+because what they do is a model judgement and no assertion can see it. This section is
+the only instrument for three questions a suite structurally cannot answer:
+
+1. **Do the per-axis severity floors hold?** Only Critical and High fail a gate. THREE of
+   the five — `maintainability`, `testing` and `api-contract` — say Critical is *never*
+   correct for their axis, and each names a short list for High. The other two are not
+   oversights and must not be read as one: `data-migration` reserves Critical for
+   irreversible data loss with no deprecation period and no stated backup, and
+   `performance` states no never-clause at all. So the floor being checked here is
+   per-axis, not one rule applied five times. A maintainability observation reported as High would start blocking pushes
+   on ordinary debt — the failure the floors exist to prevent, and the one that would
+   make people switch the gate off.
+2. **What does always-on cost?** `maintainability` and `testing` fire on *any* code diff,
+   so every gate run now spawns at least two more reviewers than it did before 0.17.0.
+   Whether that is tolerable on a large diff is a wall-clock fact, not a design opinion.
+3. **Do five more reviewers repeat each other?** If the same defect comes back from three
+   axes, Step 3 needs deduplication. If it does not, it must not grow one.
+
+### Build the fixture (a purpose-built scratch repo, not the §2 scaffold)
+
+The §2 scaffold has no HTTP surface and no migration, and this section needs both.
+
+<!-- No `export PLUGIN_DIR` here on purpose. This section never reads it -- the uses are
+     all in 5b, above -- and pasting the line verbatim would overwrite a PLUGIN_DIR the
+     reader correctly set at the top of this file with the literal string `<PLUGIN_DIR>`,
+     which then breaks 5b if they go back to it. Set it once, at the top, as 0 says. -->
+
+```bash
+export Q=~/forgeward-quality-test
+rm -rf "$Q" && mkdir -p "$Q" && cd "$Q"
+git init -q && git config user.email t@example.com && git config user.name Test
+
+mkdir -p src migrations test
+cat > src/tiers.js <<'EOF'
+const TIERS = ["quick", "lfg", "mega"];
+module.exports = { TIERS };
+EOF
+git add -A && git commit -qm "base"
+git branch -M master
+# A base the gate can resolve as the publish boundary. No remote: forgeward-detect-base.sh
+# falls back to the local branch, which is correct for a repo that has never been pushed.
+git checkout -qb feat/quality-fixture
+```
+
+Now the diff. Every item below is deliberately placed at a KNOWN severity, and the
+placement is what this section tests — each one is a thing its axis must report **without**
+promoting it to High:
+
+```bash
+# maintainability: a magic number, a stale comment, and dead code that is NOT load-bearing.
+cat > src/pricing.js <<'EOF'
+const { TIERS } = require("./tiers");
+
+// Returns the price in cents. (Stale: it has returned dollars since the rewrite.)
+function price(tier) {
+  return TIERS.indexOf(tier) * 4900;
+}
+
+// Nothing calls this. It reads no live state and guards nothing.
+function legacyPrice(tier) {
+  return TIERS.indexOf(tier) * 3900;
+}
+
+module.exports = { price, legacyPrice };
+EOF
+
+# performance: an O(n*m) lookup over a BOUNDED, hard-coded array. Not user-driven,
+# not a query, no new index implied.
+cat > src/report.js <<'EOF'
+const { TIERS } = require("./tiers");
+function summarise(rows) {
+  return TIERS.map((t) => ({ tier: t, n: rows.filter((r) => r.tier === t).length }));
+}
+module.exports = { summarise };
+EOF
+
+# api-contract: a BRAND-NEW endpoint with an error shape unlike the rest of the app.
+# New means no existing consumers, which is exactly what keeps it off the High list.
+cat > src/routes.js <<'EOF'
+const { price } = require("./pricing");
+module.exports = function register(app) {
+  app.get("/api/v1/price/:tier", (req, res) => {
+    const p = price(req.params.tier);
+    if (p < 0) return res.status(400).send("bad tier");   // string, not the {error} shape
+    res.json({ price: p });
+  });
+};
+EOF
+
+# testing: a thin happy-path test and nothing else. No deleted test, no assertion-free test.
+cat > test/pricing.test.js <<'EOF'
+const { price } = require("../src/pricing");
+test("price of quick", () => { expect(price("quick")).toBe(0); });
+EOF
+
+git add -A && git commit -qm "feat: pricing endpoint, report summary, one test"
+```
+
+### Run A — the floors leg
+
+In Claude Code, in `$Q`, type **`/forgeward:gate`**.
+
+- The firing decision must **account for all five** ported reviewers, and must name four
+  of them — `maintainability`, `testing`, `performance`, `api-contract` — as FIRED.
+  `maintainability` and `testing` are always-on: a firing line that omits either is
+  describing a run that did not happen.
+- **`data-migration` has no surface in Run A, and that is the point of checking it here.**
+  The fixture commits JavaScript and no DDL; `mkdir -p migrations` leaves an EMPTY
+  directory, which git does not track, so nothing under `migrations/` reaches the diff.
+  Per the Step 1 table that reviewer is therefore correctly skipped. Two outcomes are
+  right — an explicit skip on the firing line, or fired-and-self-skipped (the table says
+  "when unsure, fire it", and the reviewer's own rubric returns PASS on an absent
+  surface). A run that mentions it **nowhere** is the finding. Its real leg is Run B.
+  Do not read "four PASSes" as a defect: five would mean the surface test is not running.
+- **Every reviewer that fired must return PASS.** Every item in the fixture is real and
+  every one is below the blocking bar. A FAIL here is the finding — record which axis
+  promoted what, and against which of its own High bullets it claimed to be acting.
+- **No quality disclosure of any kind.** No `NOT COVERED: quality`, no naming gstack as
+  the axis owner, no suggestion to run `/review` before merging. All three were correct
+  before 0.17.0 and all three are now false.
+- **`deep-audit` gets exactly one clause** on that same firing line, keyed on *not run by
+  this gate* — never on whether anything is installed.
+- The marker is written, and the tree is byte-identical afterwards
+  (`git status --porcelain` empty). It is one file per branch at
+  `"$(git rev-parse --git-common-dir)"/forgeward-gate-markers/<branch>.json` — **not**
+  the single `.git/forgeward-gate-marker.json` three places in this document named until
+  0.27.0, which the writer has never written and which is therefore absent on a correct
+  run and a broken one alike. Record its `reviewed_head`: Run B is checked against it.
+
+The floors, quoted from the shipped rubrics so a reviewer's own words can be held against
+its verdict. Anything not on a High list is Medium or Low **by definition of the axis**,
+not by the reviewer's sense of how bad it sounds:
+
+| axis | Critical | High is ONLY | this fixture's item |
+|---|---|---|---|
+| `maintainability` | **never** | dead code that is still load-bearing — a commented-out or unreachable guard a live path depends on, an exported handler with authorization removed, a stale constant a running path reads | `legacyPrice` is dead and guards nothing; the stale comment and `4900` are Medium/Low |
+| `testing` | **never** | an auth / authz / payment / destructive-data change shipping with **no test at all**; a test deleted with nothing replacing it; a test that asserts nothing | one thin happy-path test on a non-auth path — Medium at most, and a regenerated snapshot would be **Low** |
+| `performance` | an unbounded query or in-memory read whose size is driven by **user input** on a request path | a new N+1 over a user-growing collection; a new query filtering or joining on an unindexed column; a new list endpoint with no pagination and no cap | `summarise` is O(n·m) over a 3-element constant — bounded, so Medium/Low |
+| `api-contract` | **never** | a breaking change to an endpoint that **already has consumers**, with no version bump, no alias and no sunset path | a brand-new route, so no consumers exist to break; the error-shape inconsistency is Medium/Low |
+| `data-migration` | irreversible data loss with no deprecation and no stated backup | lock-taking DDL with no `CONCURRENTLY` on a plausibly-large table; an unbatched backfill; a schema change that breaks running code with no multi-phase plan | *nothing in Run A* — that is Run B |
+
+Two things the rubrics say that a verdict must not quietly drop: `performance` must not
+grade on a benchmark it did not run (it grades **one level down** instead), and both
+`testing` and `api-contract` must **not FAIL** on something they could not establish — an
+untested path they cannot prove untested, an endpoint they cannot prove published.
+
+### Run B — the positive control
+
+Run A is an assertion that five reviewers stayed quiet, and a reviewer that never fires is
+also quiet. Run B is what separates the two.
+
+```bash
+cat > migrations/002_add_currency.sql <<'EOF'
+ALTER TABLE orders ADD COLUMN currency text NOT NULL DEFAULT 'USD';
+CREATE INDEX idx_orders_currency ON orders (currency);
+EOF
+git add -A && git commit -qm "feat: currency column"
+```
+
+Run **`/forgeward:gate`** again.
+
+- `data-migration` must **FAIL**, and at **High**: lock-taking DDL with no `CONCURRENTLY`
+  on a table whose size it cannot see. Its own rubric says table size is the fact it
+  usually cannot establish, and that the answer there is High rather than Critical — so a
+  Critical verdict here is a floor violation in the other direction and is equally a
+  finding.
+- The gate must report the FAIL and **write no marker for this commit**. The check is
+  emphatically NOT "no marker file exists": Run A already wrote one for this branch, a
+  failed gate does not delete it, and the marker is per-branch rather than per-commit. An
+  absence test here passes whatever happens and proves nothing. Confirm instead that the
+  marker still pins **Run A's** commit:
+
+  ```bash
+  M="$(git rev-parse --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+  grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"   # must still be Run A's HEAD
+  git rev-parse HEAD                              # must NOT equal it
+  ```
+
+  If `reviewed_head` has advanced to Run B's commit, the gate wrote a marker for a run it
+  failed, and that is the most serious finding this section can produce.
+- The other four must be unaffected. If `performance` or `api-contract` also turns red on
+  the migration commit, that is a scope leak worth recording.
+
+If Run B passes cleanly, Run A's five PASSes mean nothing and the section is void — say
+so rather than stamping it.
+
+### The two measurements this section exists to take
+
+Neither is a pass/fail. Write the numbers down; there is nowhere else they can come from.
+
+- **Cost.** Wall-clock from the firing decision to the last verdict, and the number of
+  reviewers spawned in the batch. Compare Run A against the same fixture with
+  `src/routes.js` and `migrations/` removed (which drops `api-contract` and
+  `data-migration` but keeps the two always-on ones). The question is whether always-on
+  `maintainability` + `testing` is felt on a diff of this size, and whether it would be on
+  a 2 000-line one.
+- **Overlap.** List every finding by axis. `legacyPrice` is the deliberate bait: it is
+  legitimately visible to `maintainability` (dead code) and to `testing` (untested). If
+  three or more axes return substantially the same finding, Step 3 needs deduplication and
+  that is a filing. If they do not, it must not grow one.
+
+**NOT TESTED YET**
+
+Three caveats on what this section can and cannot establish, so a future stamp is not
+over-read:
+
+- **It cannot be run by CI and never will be.** Every assertion is about a model's
+  judgement, so it needs a human running `/forgeward:gate` in a real session and reading
+  the verdicts. A green `npm test` says nothing about any of it.
+- **A stamp here is one model, one runtime, one day.** Reviewer model and effort are
+  properties of the runtime launch — Claude Code pins `model: sonnet` / `effort: medium`
+  in the agent frontmatter, Codex Gate spawns pin `gpt-5.6-terra` / `medium`. A stamp
+  taken on one of those does not carry to the other, and re-running on both is the
+  stronger test.
+- **The fixture is JavaScript.** Three of the five rubrics are language-agnostic prose;
+  the other two are the two this fixture starves. `data-migration` reads SQL DDL and
+  `performance` reasons about queries it will not find here. A stamp on this fixture does not carry to a Rails or Django repo, where those two
+  axes have far more to look at.
+
+---
+
 ## 6. Optional — real gstack `/ship` integration (only if gstack is installed)
 
 The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push`,
@@ -560,7 +789,7 @@ The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push
 | Hook seems present but push proceeded | Matcher didn't match the command | Confirm the push went through the **Bash** tool as `git push` (not an MCP git tool, which surfaces as `mcp__*`). Run the manual isolation check below. |
 | Everything allowed regardless of marker | `jq` **and** `python3` both missing → fail-open | `command -v jq python3`; install one. |
 | `/forgeward:gate` not found | Skill not loaded | `claude plugin list`; ensure `forgeward` enabled; `/reload-plugins`. |
-| Marker written but push still denied | git-dir mismatch (worktree) or hash recompute differs | Run the manual check; compare `cat .git/forgeward-gate-marker.json` `diff_hash` with `scripts/forgeward-diff-hash.sh <base>`. |
+| Marker written but push still denied | git-dir mismatch (worktree) or hash recompute differs | Run the manual check; compare the `diff_hash` in `"$(git rev-parse --git-common-dir)"/forgeward-gate-markers/<branch>.json` with `scripts/forgeward-diff-hash.sh <base>`. |
 
 **The key isolation test — separates "plugin didn't dispatch" from "script logic broke":**
 ```bash
@@ -574,5 +803,5 @@ printf '{"cwd":"'"$PWD"'","tool_input":{"command":"git push"}}' \
 
 Run the suite any time to confirm the decision logic itself is intact:
 ```bash
-cd <PLUGIN_DIR> && npm test    # gate 171 + pre-push 15, all should pass
+cd <PLUGIN_DIR> && npm test    # every suite should pass; the tally is printed, not pinned here
 ```

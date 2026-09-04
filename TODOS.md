@@ -139,7 +139,6 @@ is keyed to HEAD, so an amend invalidates it.
 
 | # | Goal — done when… | Draws from | Kind |
 |---|---|---|---|
-| 1 | **The ported quality axis is verified by something other than the port.** A LIVE-TEST section exercises the five reviewers on a real diff and pins the per-axis severity floors — a maintainability observation reported as High would start blocking pushes, which is the failure the floors exist to prevent; the drift script's three unasserted edges each have an assertion; its three accepted limits are each closed or carried in the script header; and R6 stops duplicating the script's provenance regexes. | Quality axis ×4, Deep-audit axis ×1 | test |
 | 3 | **What master ships is what the machine runs.** The installed plugin version matches `plugin.json`, releases are tagged, the update path is written down, the release procedure names every file a bump has to touch — `test/dual-client-test.sh` pins the version as a literal and nothing says so — and the two residuals around it, the `item2-wip` tag that is not an archive and Dependabot's grouping, are each resolved or re-disclosed. | Housekeeping ×4 | docs |
 | 20 | **gstack detection resolves the ACTIVE version, not "a copy is on disk".** The plugin-cache arm's remaining false POSITIVE — a cached but uninstalled plugin — is closed or re-disclosed under a test built the way D8b is, and the deepened glob's ~75× cost is measured rather than estimated. Successor to retired goal 2, which shipped the glob and filed both residuals rather than fixing them. | Quality axis ×2 | code |
 | 4 | **The publish matcher parses what bash parses.** Each of the six filed parsing gaps is closed or re-disclosed with a test naming it. | Gate — publish matcher ×6 | code |
@@ -155,16 +154,24 @@ is keyed to HEAD, so an amend invalidates it.
 | 12 | **The marker stops carrying fields nothing reads.** `schema` and `environment` are either consumed or dropped, the probe/marker coupling is either broken or asserted by an oracle stronger than key presence, and manifest *completeness* is covered by something rather than validity arriving as a side effect. | Standalone posture ×3, Housekeeping ×1 | code |
 | 13 | **One source of truth per fact.** The credential patterns exist once, the layer-3 containment assertion exists once rather than copy-pasted between P8l and P8m leg C, `CLAUDE.md` stops shipping to installers unexamined, the rule-extraction step is verified, and the git history's three stripped PR bodies are counted rather than assumed. | Housekeeping ×3, Docs hygiene ×2 | docs |
 | 14 | **IDENTITY HALF DONE (0.21.0 manifests + README lead, 0.22.0 `agents/security-reviewer.md`, 0.23.0 the `/cso` probe; 2026-08-27). The other half is NOT done and the row must not be struck for it.** **forgeward stops describing itself as a gate *for gstack*.** The `/ship` handoff and gate-run logging are decided together, since the second is what would measure the first; `/review` never writing `VERSION` reopens a cheaper handoff than `/ship`; the two remaining couplings in the identity entry are closed; and `/forgeward:audit` gets the run-verification it says is blocked on the same decision. Decide those together, or split this goal. | Quality axis ×3, Deep-audit axis ×1 | docs/prompts |
-| 22 | **`/forgeward:audit` is checked by something other than its own prose.** Its report schema, Phase 12's `filter_stats` and confidence-band table, the five phases ported from `cso/SKILL.md`, and its trend tracking are each asserted, dropped, or carried in the skill as explicitly unpinned. **The axis had no goal of its own until pass 6** — goals 14 and 17 drew one entry each and the other five of its seven were drawn by nothing, in a column that was short by 19 and summed by no one. This goal takes four of those five; goal 1 takes the fifth. | Deep-audit axis ×4 | test |
+| 22 | **`/forgeward:audit` is checked by something other than its own prose.** Its report schema, Phase 12's `filter_stats` and confidence-band table, the five phases ported from `cso/SKILL.md`, and its trend tracking are each asserted, dropped, or carried in the skill as explicitly unpinned. **The axis had no goal of its own until pass 6** — goals 14 and 17 drew one entry each and the other five of its seven were drawn by nothing, in a column that was short by 19 and summed by no one. This goal takes four of those five; struck goal 1 took the fifth, now closed. | Deep-audit axis ×4 | test |
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 | 23 | **The runtime axis is decided, either way.** `/forgeward:prove` is already rejected in writing; what is open is a P4 design entry that says a runtime axis is buildable and is not decided. Deciding is the work — a `DECISIONS.md` entry saying built, deferred behind a named trigger, or out of scope — so it stops being carried as an open item nothing can act on. Last because it is the only goal here whose output is a paragraph. | Runtime axis ×1 | decision |
 | 24 | **Archive pass 7, and the first expiry triage.** Measured at `f0ce0dd`, pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of *that commit's* file. The next commit on this same branch invalidated both, which is why the ref is quoted with them and why the pass re-measures before acting rather than reading this row. The pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
+| 27 | **The five ported reviewers have actually been RUN.** §5c of `live-test/LIVE-TEST.md` is stamped with a date, a client and a model — or voided by its own Run B and said to be — and the suite's `_strict_provenance` name-mode gets the assertion a person currently substitutes for. Successor to struck goal 1, which wrote the procedure and could not run it. Last because it is the only goal here whose output is not a diff: CI structurally cannot observe it, so it ends at a terminal. | Quality axis ×2 | manual |
 
 ### Retired goals
 
 A goal keeps its number after it is struck and the number is not reused, because entries,
 `## Completed` and `TODOS-DONE.md` all cite them by number — a rule held since `02bca81`,
-not a property the file has always had, per the note under **The goals** above. Four
+not a property the file has always had, per the note under **The goals** above.
+**Two branches allocated 25 at the same time and one had to move**: the
+five-ported-reviewers goal was numbered 25 on `test/quality-axis-verification` while
+`prompts/reland-osv-scanner-arity` was independently numbering its two new goals 25 and 26.
+The re-land merged first, so the quality-axis goal is **27**. The rule above is about
+*retired* numbers and neither of these was retired, so nothing it protects was broken — but
+this is the failure it cannot prevent, because numbers are allocated per branch and nothing
+reserves one. Four
 retired at archive pass 6 (2026-09-03): 2 and 17 because everything they drew was
 archived, 10 because two of its three were, and 15 because the pass it names is the one
 that ran — its two entries are still live under goal 24. The narrative for each is in
@@ -201,6 +208,25 @@ for certain.
 | 17 | Every ported file is checked by the same instrument | 0.20.0, 2026-08-26 — `forgeward-rubric-drift.sh` covers `skills/*/SKILL.md` too |
 | 18 | PR #55's content is on `master` | 0.27.0, 2026-09-04 — re-landed from `19d4fa8` by three-way merge, not cherry-pick; the 774-line `TODOS.md` half was re-filed by hand as twelve entries, continuing as goals 25 and 26 |
 | 19 | A merged PR that never reached `master` is caught by something other than a person noticing | 2026-09-04 — `ci/check-merged-prs-landed.sh` on a weekly schedule; the entry it drew is in `## Completed`, along with the two things that entry got wrong and the base filter the review that gated the branch deleted |
+| 1 | The ported quality axis is verified by something other than the port | branch `test/quality-axis-verification`, 2026-09-04 — the LIVE-TEST section is written and **unstamped**, and that residual continues as goal 27 |
+
+**Goal 1's `Draws from` column was wrong when the row went.** It read `Quality axis ×4, Deep-audit axis ×1`; the row's own text
+names four pieces of work, and they map to four entries — three under `## Quality axis`,
+one under `## Deep-audit axis`. The correct figure was `×3, ×1`. Pass 6's re-derivation
+counted which entries each goal draws and still carried this row's arithmetic forward,
+because it re-derived the mapping and not whether the row's own number matched it. Recorded
+here rather than silently fixed, since the row is gone and this is the only place the error
+can now be seen.
+
+**The phantom entry was hiding a real one, which is the whole cost of the error.** With
+goal 1 reading `×4`, the `Draws from` column summed to the live entry count and looked
+balanced; corrected to `×3` it is short by one, and the one is
+`Nothing schedules a re-port, and nothing verifies one was honest` under `## Quality axis`
+— open, P3, and drawn by no goal in the table. It is deliberately left undrawn rather than
+attached to goal 27, which is about *running* the ported reviewers and not about acting on
+drift. **A balanced column is evidence that the arithmetic is consistent and nothing else.**
+The goal 7 / 5 / 8 examples below are the same lesson found by reading a goal's section;
+this one needed no section at all — correcting a single number in the row exposed it.
 
 **Goal 10's row retires a claim this section made about it, and that is worth keeping.**
 The non-goals below said it was "blocked by tooling that no ordering can unblock" and
@@ -280,14 +306,16 @@ at all, which is how five of the seven entries in `## Deep-audit axis` were draw
 nothing until pass 6. The section was never *wholly* ungoaled — goals 14 and 17 each drew
 one — and saying it was overstated a real gap into a false one.
 
-**And a `test` type is a claim about the exit, not a guarantee one exists**: goal 1's
-first clause is a `live-test/LIVE-TEST.md` section, which no assertion in `test/*.sh` can
-observe, and four of the five ported
+**And a `test` type is a claim about the exit, not a guarantee one exists**: struck goal
+1's first clause was a `live-test/LIVE-TEST.md` section, which no assertion in `test/*.sh`
+can observe, and four of the five ported
 reviewers (`maintainability`, `performance`, `api-contract`, `data-migration`) are named
 nowhere in the suite at all. `CLAUDE.md` already records `live-test/LIVE-TEST.md` among
-the documents that "described behaviour the code did not have", so that clause is the
-weakest observer available for the goal that most needs a strong one — treat it as
-manual-only and unregressable by CI until goal 1 adds a machine-checkable half.
+the documents that "described behaviour the code did not have", so that clause was the
+weakest observer available for the goal that most needed a strong one. **It shipped as §5c
+and it shipped unstamped, which is this warning landing rather than being avoided** — a
+goal typed `test` was struck on a deliverable no test reads. Goal 25 carries the remainder,
+and it is typed `manual` for that reason.
 
 **The running total that used to sit here has been deleted rather than corrected, and the
 deletion is the finding.** It was rewritten at 0.18.0, and by 0.19.0 it was stale again —
@@ -1211,16 +1239,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 - **Gate-run logging.** Append the fired reviewer set plus verdict rather than
   overwriting/pruning, so "gate ran, `/ship` didn't" becomes measured instead of inferred
   from marker file counts. **Priority:** P3
-- **The five ported quality reviewers have never been run live.** (0.17.0, 2026-08-26)
-  D1–D7 pin the drift script and D6 pins that every ported file records its provenance, but
-  `agents/` is out of scope for `npm test` by design — reviewer prompts are judged by
-  `live-test/`, and no section covers these five. The specific things a suite cannot see:
-  whether the per-axis severity floors actually hold (a maintainability observation
-  reported as High would start blocking pushes, which is the failure this rebasing exists
-  to prevent), whether `maintainability` and `testing` being always-on makes the parallel
-  batch too expensive on a large diff, and whether five more reviewers produce enough
-  overlapping findings to be worth deduplicating in Step 3. Add a LIVE-TEST section.
-  **Priority:** P2
 - **Nothing schedules a re-port, and nothing verifies one was honest.** (0.17.0,
   2026-08-26) `scripts/forgeward-rubric-drift.sh` reports that gstack moved; acting on it
   is a human step with no prompt, no hook and no cadence. Two known holes, both stated as
@@ -1335,22 +1353,70 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   larger than this one (8 marketplaces, 15 version dirs) before reaching for `find -maxdepth`
   or a first-match short-circuit. Do not optimise on this single sample. **Priority:** P4
 
-- **The drift script's remaining unasserted edges.** (0.17.0, 2026-08-26) R1–R13 do not
-  cover: a gstack root that exists but is a *file* rather than a directory; an `agents/`
-  holding zero ported rubrics at all (`checked=0`, which prints a count of nothing under
-  `--verbose` and is silent otherwise — indistinguishable from a clean run, the vacuity trap
-  in its purest form); or a `source-path` containing spaces or a newline. All three are
-  hand-editing accidents rather than adversarial input, and all three fail toward silence,
-  which is the direction this script is least able to notice. **Priority:** P3
-- **R6 duplicates the drift script's two `sed` provenance regexes rather than calling
-  it — accepted, and named in the test.** (0.17.0, 2026-08-26) R6 is the one assertion
-  that reads the **shipped** `agents/` tree with no fixture in the path, which is what makes
-  it the floor keeping the synthetic fixtures honest; driving the real script over the real
-  agents would need a synthetic gstack root holding copies of the five real rubrics, which
-  reintroduces exactly the fixture dependence R6 exists to escape. Exposure: a future
-  loosening of the script's regex would not redden R6. Fixing it properly means factoring
-  the provenance reader into something both can source, which is a bigger change than the
-  exposure justifies today. **Priority:** P3
+- **`live-test/LIVE-TEST.md` §5c is written and has never been run.** (goal 1;
+  quality-axis verification pass, 2026-09-04) The section that closes "the five ported
+  quality reviewers have never been run live" specifies the fixture, both runs and the five
+  per-axis severity floors; nothing in it is stamped, and it ends `**NOT TESTED YET**` for
+  that reason. The three questions the entry it replaces named — whether the floors hold,
+  what always-on `maintainability` + `testing` cost on a large diff, and whether five more
+  reviewers overlap enough to be worth deduplicating in Step 3 — are all still open, and
+  writing the procedure moved none of them. **CI can never close this**: the run spawns
+  reviewer subagents against a scratch repo outside this tree, so it is a person at a
+  terminal or it is nothing. **What would settle it:** run §5c's Run A and Run B on one
+  machine and stamp the section with the date, the client and the model — and if Run B
+  passes cleanly, say so and void Run A rather than stamping it. **Priority:** P2
+
+- **`_strict_provenance`'s name-mode argument is load-bearing and no assertion reads
+  it.** (goal 1; quality-axis verification pass, 2026-09-04) R6 and R14d held
+  byte-identical copies of the suite's strict provenance reader; the copies differed only
+  in how a half-recorded port is NAMED — a reviewer by its filename, a skill by its
+  **directory**, because every skill's basename is the constant string `SKILL.md` (the
+  directory-key rule in `CLAUDE.md`). Factoring them onto one helper turned that difference
+  into a `dir`/`file` argument, and the argument is visible only in the diagnostic a
+  *failing* assertion prints. Mutation-tested by hand when it landed — swapping R14d to
+  `file` makes it report `half-recorded: SKILL.md`, which is the exact bug the
+  directory-key rule exists to prevent — but nothing in the suite reddens on that swap, so
+  the property is pinned by a person having checked once. **What would settle it:** an
+  assertion that drives a deliberately half-recorded skill fixture through the helper in
+  `dir` mode and requires the directory name, not `SKILL.md`, in `_sp_bad`.
+  **Priority:** P3
+
+- **An UNREADABLE upstream rubric is reported as drifted, which is a false advisory
+  about a file that is right there.** (goal 1; `/review` on the quality-axis
+  verification branch, 2026-09-04) `sha256_of` in
+  `scripts/forgeward-rubric-drift.sh` suppresses the digest tool's stderr, so a file
+  that exists and passes `[ -f ]` but cannot be READ — mode 000, a broken symlink
+  target, an unreadable parent, a filesystem error — yields an empty string, and
+  `[ "$now" != "$src_sha" ]` compares empty against a 64-character digest and reports
+  DRIFT. The user is told to re-port a rubric whose bytes never changed, and
+  `skills/gate/SKILL.md` relays that verbatim. It is the same class as the
+  backslash-escape defect the same review found (fixed on this branch, pinned by R16b)
+  and the same class as the false `no longer exist` advisory R14e exists for: the
+  script's failure directions are load-bearing, and "cannot read" is currently folded
+  into "changed" rather than being its own answer. **Why it is filed and not fixed:** the
+  honest fix is a THIRD outcome class beside drifted/missing/malformed — a `could not
+  read` accumulator, its own counter, its own NOTE, its own assertion — and adding an
+  output class changes what every consumer of this script sees, which is a wider blast
+  radius than the branch it was found on. **What would settle it:** the fourth
+  accumulator, plus an assertion driving a `chmod 000` fixture (skipped as root, which is
+  how CI containers run, so the skip has to be explicit and counted). **Priority:** P2
+
+- **The three NOTE accumulators render names raw, so a newline in a name forges a
+  visible entry.** (goal 1; `/review` on the quality-axis verification branch,
+  2026-09-04) `drifted`, `missing` and `malformed` append `  $name  ($src_path)` with no
+  escaping, and both values can legally hold a newline — `name` comes from a skill
+  DIRECTORY or a reviewer FILENAME, `src_path` from the ported file's own text. The
+  printed list then shows more lines than there are entries. **The counts beside them are
+  correct**: R18 pins that they are integers incremented once per entry, which is exactly
+  why the tail `grep -c` was deleted, so `2 ported rubric(s) have drifted` above three
+  visible lines is this limit showing rather than a miscount. Stated as non-goal 3 in the
+  script header on this branch, deliberately, because escaping on the way into the
+  accumulators changes what every drift report looks like. **Not the same shape as the
+  candidate list**, which had a real joining bug (`${gs_roots[*]}` splitting a spaced path
+  into two entries) and was fixed on this branch, pinned by R19c — that one corrupted the
+  data, this one only renders it ambiguously. **What would settle it:** escape both values
+  at the three append sites and assert a newline-named entry prints on one line.
+  **Priority:** P3
 
 ## Deep-audit axis
 
@@ -1382,40 +1448,6 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   the emitted report, not a unit test. Filed so the absence is recorded rather than
   discovered later as a green suite. **Priority:** P3
 
-- **Three accepted limits in `forgeward-rubric-drift.sh`, found by the review that gated
-  0.20.0 and knowingly not fixed.** (drift-check review, 2026-08-26) All three were
-  reproduced or read against the shipped script; none changes a verdict, and each is
-  recorded here rather than in the PR body because the PR is gone after merge.
-  1. **`n_drift` / `n_miss` / `n_bad` count LINES, not entries.** Each report entry is
-     `  <name>  (<source-path>)` plus a newline, counted with `grep -c .`. `source-path`
-     comes out of a `sed` substitution and so cannot hold a newline, but `name` is the
-     basename of a **directory** under `skills/`, and a directory name containing a
-     newline splits one entry across two lines and over-counts by one. The list itself is
-     printed in full, so the user sees the truth and only the integer in the sentence
-     above it is wrong. Reachable only by a newline in a directory name inside forgeward's
-     own shipped tree, which is committed and reviewed — the same trust boundary the
-     traversal guard's comment already declines to treat as a security boundary. The fix
-     is to increment an integer at each of the three append sites and delete the three
-     `grep -c` subshells; it is cheap, but it changes no output in any reachable case, so
-     it needs a fixture with a newline-named skill directory to be verifiable at all,
-     and that is the whole cost.
-  2. **The `Searched: %s` diagnostic under-reports what was considered.** The two
-     fixed candidates (`$claude_dir/skills/gstack`, `$top/.claude/skills/gstack`) are
-     appended unguarded, so they appear whether or not they exist; the plugin-cache
-     candidates are `[ -d ]`-guarded before being appended, so a path that does not exist
-     is never named. The line therefore mixes "looked here, nothing there" with "never
-     looked", and only under `--verbose`. Dropping the `-d` guard would put an unmatched
-     glob's literal pattern into the list, which is worse; the honest fix is a wording
-     change plus an assertion pinning it, and the wording is not worth a user-visible
-     string change on this branch.
-  3. **A `.gitattributes` carrying `* text=auto eol=lf` was considered and deliberately
-     not added.** A CRLF checkout is what made the strict reader parse zero ports, and
-     normalising line endings at checkout would prevent that class at the source. It was
-     rejected for scope, not merit: it changes the checkout of **every tracked file** in
-     the repo, which is a decision about the repo rather than about this script, and the
-     tolerant reader plus the vacuity guard make the script correct on a CRLF checkout
-     regardless. Revisit it as its own PR if a second CRLF-shaped defect appears.
-  **Priority:** P3
 - **Phases 0, 1, 12, 13 and 14 of `/forgeward:audit` are ported from `cso/SKILL.md` and
   are deliberately NOT hash-pinned.** (0.19.0, 2026-08-26) Phase 14 belongs in this set
   and an earlier draft left it out, on the reasoning that it writes through
@@ -2403,6 +2435,105 @@ never about `master`.**
 Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split was held
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
+
+- **The ported quality axis is verified by something other than the port — as far as
+  anything short of a person at a terminal can verify it.** (goal 1; branch
+  `test/quality-axis-verification`, 2026-09-04 — **not merged at the time of writing**;
+  settle that with
+  `git merge-base --is-ancestor "$(gh pr view N --json mergeCommit -q .mergeCommit.oid)" origin/master`
+  before reading this as landed.) Four entries close: the five reviewers' missing LIVE-TEST
+  section, the drift script's three unasserted edges, R6's duplicated provenance regexes,
+  and the three accepted limits from the review that gated 0.20.0. `test/gate-test.sh` goes
+  234 → 243 assertions. Four of the nine new ones (R15b, R16b, R19b, R19c) come from the
+  `/review` pass on this branch rather than from the goal, and the paragraph on that pass
+  below says which finding each closes.
+
+  **The LIVE-TEST section is written and deliberately unstamped.** §5c specifies a
+  purpose-built JS scratch repo, a Run A where all five reviewers must PASS, a Run B
+  positive control adding a lock-taking migration that `data-migration` must FAIL at High
+  with no marker written, and the five per-axis severity floors quoted out of the shipped
+  rubrics so a reader compares against the rubric rather than against a memory of it. It
+  ends `**NOT TESTED YET**`, because it has not been. Run B is what makes Run A mean
+  anything: **if Run B passes cleanly the section is void and says so**, rather than five
+  PASSes reading as evidence. The residual — nobody has run it, and CI structurally cannot
+  — is re-filed under `## Quality axis` and drawn by goal 27.
+
+  **Two of the three unasserted edges were not what the entry said they were, and a third
+  is unrepresentable.** Edge (b), an `agents/` holding zero ported rubrics, was already
+  covered by R14h at 0.20.0; R17 covers the genuinely distinct variant the entry did not
+  name — globs that match **nothing**, so the loop body never executes at all. Edge (c)'s
+  newline half cannot be tested on the `source-path` side: a provenance block is
+  line-oriented, so a newline *in the value* is unrepresentable, and the newline arrives
+  through the **name** instead, which is R18. R15 (a gstack root that exists but is a
+  regular file) and R16 (a `source-path` containing a space) are the two that landed as
+  written.
+
+  **R15, R16 and R17 are characterization assertions, not pre-fix controls, and their
+  comments say so.** All three are green against
+  `git show d9fa699:scripts/forgeward-rubric-drift.sh` — the branch's merge-base with
+  `master`, cited by hash because a bare `HEAD:` is self-referential the moment the fix
+  commits and then prints the FIXED script to anyone following the recipe; only R18, R19
+  and R16b were run against the
+  pre-fix script and observed to fail — R18 counting 2 where one entry exists, R19 still
+  printing `Searched:`, R16b reporting a byte-identical rubric as drifted. A green
+  assertion that never had an opinion about the bug is exactly what the pre-fix/wrong-fix
+  rule in `CLAUDE.md` exists to make visible, and most of the assertions here are not
+  controls at all.
+
+  **R6's stated fix is REJECTED, on evidence that did not exist when the entry was
+  written.** The entry asks for the provenance reader to be factored into something R6 and
+  the script both source. R14j landed at 0.20.0 and already closes the exposure the entry
+  names, and sourcing the script's reader into R6 would make R14j compare the script's
+  reader **with itself** — a control turned into a tautology, *removing* the coverage the
+  entry wanted added. What was genuinely duplicated is R6's and R14d's byte-identical
+  copies of each other; those are now one `_strict_provenance` helper, and the number of
+  independent readers in play is unchanged at two. The rejection is recorded in R6's own
+  comment, where the next person to read the entry will meet it.
+
+  **Two of the three accepted limits are closed; the third stays rejected, with its
+  trigger.** Limit 1's `grep -c` line-counting is gone — three integers increment at the
+  three append sites, and R18's newline-named skill directory is the fixture that makes it
+  verifiable at all (it skips *loudly* through `ok()` on a filesystem that refuses the
+  name; CI runs `gate-test.sh` only on `ubuntu-latest`). Limit 2's `Searched: %s` now
+  separates "tested" from "never tested" in as many words, pinned by R19 with a negative
+  arm on the old wording so a revert reddens. Limit 3 — a `.gitattributes` carrying
+  `* text=auto eol=lf` — stays rejected for scope: it changes the checkout of every tracked
+  file in the repo, which is a decision about the repo rather than about this script.
+  **Its trigger now survives here and nowhere else: revisit it as its own PR if a second
+  CRLF-shaped defect appears** — lift that sentence into `CLAUDE.md` rather than lose it if
+  this entry is ever archived.
+
+  **The `/review` pass on this branch found a live correctness bug in the shipped script,
+  and a coverage claim that was false.** Six findings were fixed here and two filed. (1)
+  `sha256_of` spelled the digest `sha256sum -- "$1" | cut -d' ' -f1`, and GNU coreutils
+  ESCAPES the whole output line when the filename holds a backslash or a newline — so the
+  digest came back as `\73cb…` where the file hashes to `73cb…`, the comparison could
+  never match, and every ported rubric read as drifted. It reaches through `gs_root`, a
+  path this script neither chooses nor validates, and `skills/gate/SKILL.md` relays the
+  result verbatim. Hashing through **stdin** removes the filename from the output line and
+  the class with it; R16b is the pre-fix control, and it exists because R16 tests a SPACE,
+  the one metacharacter `sha256sum` does not escape, and so read as covering a class it
+  never touched. (2) R15's comment claimed the plausible `[ -d ]` → `[ -e ]` loosening "is
+  what reddens on it" — measured, that mutation leaves the whole suite green, because
+  R15's root is a regular FILE and both operators fail identically on it. R15b is the
+  fixture that separates them (a real directory whose landmarks are regular files) and
+  reddens alone under the mutation. (3) The verbose candidate list joined on
+  `${gs_roots[*]}`, so a candidate path containing a space rendered as two entries in the
+  one output whose job is a precise account of what was tested; it prints one per line
+  now, pinned by R19c. (4) R19b, added earlier in this same review round, was itself
+  reddening for R19c's reason under that mutation — the exact independence failure its own
+  comment documents having already fixed once — and needed a third extractor arm. (5) Two
+  counts in `LIVE-TEST.md` said "four of the five" where the rubrics say three. (6) §5c's
+  `export PLUGIN_DIR` was dead where it sat and would clobber a correctly-set value for
+  anyone returning to §5b. **Filed, not fixed:** an unreadable-but-present upstream file is
+  reported as drifted rather than as unreadable (needs a fourth output class), and the
+  three NOTE accumulators render names raw so a newline forges a visible line (the counts
+  beside them stay correct — that is what R18 pins).
+
+  **What this does not buy.** The severity floors are quoted, not measured. The always-on
+  cost of `maintainability` + `testing` on a large diff is unmeasured. Whether five more
+  reviewers overlap enough to deduplicate in Step 3 is unmeasured. All three were why the
+  closed entry existed, and writing the procedure for measuring them is not measuring them.
 
 - **A merged PR that never reached `master` is caught by a scheduled check rather than by
   a person noticing.** (goal 19; branch `ci/detect-orphaned-merges`, 2026-09-04 — **not
