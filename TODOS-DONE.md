@@ -97,10 +97,14 @@ file records what was done and what it deliberately left undone.
   prompt documents because no reviewer invokes syft — it appears only in the `-o`
   exemption list. And `osv-scanner` takes many, which makes
   `agents/supply-chain-reviewer.md`'s "equivalent substitute" phrasing an understatement
-  on the one axis this entry cares about. The correction to that prompt ships in its
+  on the one axis this entry cares about. The correction to that prompt shipped in its
   OWN PR, not this one: `agents/*.md` is a reviewer prompt, and the executable-behaviour
-  rule keeps a five-line prompt edit out of a two-hundred-line prose-and-test diff.
-  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27) **Priority:** —
+  rule keeps a five-line prompt edit out of a two-hundred-line prose-and-test diff. **That
+  PR was #55, and splitting it out is what exposed it** — it merged into a base branch that
+  had already merged, so the correction sat on a ref `master` cannot reach until it was
+  re-landed at 0.27.0 (2026-09-04). The rule was right and the stack it created was not.
+  (gitleaks untracked-.env fix, 2026-08-10; verified 2026-08-27; re-land noted 2026-09-04)
+  **Priority:** —
 
 - **✅ FIXED (0.19.0, 2026-08-26) — `deep-audit` is forgeward's own axis now.**
   `/forgeward:audit` ports gstack's `/cso` audit phases as a skill rather than a reviewer,
