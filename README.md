@@ -433,10 +433,16 @@ codex plugin marketplace add androsland/forgeward-gate
 codex plugin add forgeward@forgeward-gate
 ```
 
-Codex reads `.agents/plugins/marketplace.json`, then `.codex-plugin/plugin.json`. That manifest
-points to `hooks/codex-hooks.json`, so Codex never consumes Claude's
-`UserPromptExpansion` definition. Shared skills are available through Codex's skill UI and
+Codex reads `.agents/plugins/marketplace.json`, then `.codex-plugin/plugin.json`. In a fresh
+installation, that manifest routes Codex to `hooks/codex-hooks.json`, whose lifecycle events are
+`UserPromptSubmit` and `PreToolUse`. Shared skills are available through Codex's skill UI and
 `$gate`, `$audit`, and `$ci-gate` invocation forms.
+
+That is a packaging contract, not a claim that every Codex version or already-running upgrade
+session can only ever materialize that file. Codex can retain an approved `hooks/hooks.json` hash
+in its global hook-trust state after the active plugin manifest has moved to
+`hooks/codex-hooks.json`; the retained approval is not, by itself, evidence that the hook is still
+registered. Forgeward cannot safely inspect or prune Codex-owned global trust records.
 
 Codex supplies `PLUGIN_ROOT` to the plugin's lifecycle **hook processes**. Ordinary shell
 commands issued while following a skill do not inherit that hook environment. Forgeward's
@@ -456,16 +462,23 @@ approval applies. In either client, the **standalone `pre-push` enforcement hook
 automatically**. Install it per repository as described in
 [Turn on enforcement](#turn-on-enforcement-one-command-per-repo).
 
-On native Windows, each Codex handler uses `commandWindows` to call the tracked
-`forgeward-gate-check.cmd` adapter with `%PLUGIN_ROOT%` quoted for paths containing spaces. The
-adapter resolves `bash.exe` relative to `git.exe` installations on `PATH`; it never invokes bare
-`bash`, which may be the WSL launcher. The served layouts are standard Git for Windows and custom
-Git distributions with the same `cmd`/`bin` or shared-`bin` relationship, including the
-Laragon-style layout covered by the Windows suite. Ordinary non-publish Bash commands remain a
-legitimate allow. A system with no Git-Bash-compatible shell is a deliberate blind spot: the
-adapter exits 0 without claiming the guard ran, because wedging every Codex prompt/tool call would
-violate Forgeward's fail-open lifecycle-hook policy. This is not a claim about other Windows Git
-or POSIX compatibility layers.
+On native Windows, every shipped command-hook definition has a `commandWindows` route to the
+tracked `forgeward-gate-check.cmd` adapter. This shared rule serves two independent cases: a fresh
+Codex install using `hooks/codex-hooks.json`, and an upgrade that still dispatches an older trusted
+definition from `hooks/hooks.json`. It must not take over the legitimate Claude Code configuration:
+Claude continues loading `hooks/hooks.json` through its normal `command` entry and
+`${CLAUDE_PLUGIN_ROOT}`.
+
+The Windows adapter receives `%PLUGIN_ROOT%` quoted for paths containing spaces. It resolves
+`bash.exe` relative to `git.exe` installations on `PATH`; it never invokes bare `bash`, which may be
+the WSL launcher. The served layouts are standard Git for Windows and custom Git distributions
+with the same `cmd`/`bin` or shared-`bin` relationship, including the Laragon-style layout covered
+by the Windows suite. Ordinary non-publish Bash commands remain a legitimate allow. A system with
+no Git-Bash-compatible shell is a deliberate blind spot: the adapter exits 0 without claiming the
+guard ran, because wedging every prompt/tool call would violate Forgeward's fail-open
+lifecycle-hook policy. The adapter also cannot observe whether a Codex-owned global trust record is
+active, orphaned, or later re-materialized; only the client owns that state. These are not claims
+about other Windows Git or POSIX compatibility layers.
 
 Lifecycle handlers probe and read JSON with working `jq` first, then a functional `python3`, then
 `python`. PATH presence alone is not treated as proof that the Microsoft Store `python3` alias can

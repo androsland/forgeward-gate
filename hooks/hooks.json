@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh expansion"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh expansion",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\forgeward-gate-check.cmd\" expansion"
           }
         ]
       }
@@ -17,7 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh pretooluse"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/forgeward-gate-check.sh pretooluse",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\forgeward-gate-check.cmd\" pretooluse"
           }
         ]
       }

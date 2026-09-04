@@ -51,10 +51,28 @@ PLUGIN_WIN="$(to_windows "$PLUGIN_COPY")"
 
 PROMPT_COMMAND="$(jq -r '.hooks.UserPromptSubmit[0].hooks[0].commandWindows' "$PLUGIN/hooks/codex-hooks.json")"
 PRETOOL_COMMAND="$(jq -r '.hooks.PreToolUse[0].hooks[0].commandWindows' "$PLUGIN/hooks/codex-hooks.json")"
+LEGACY_PRETOOL_COMMAND="$(jq -r '.hooks.PreToolUse[0].hooks[0].commandWindows' "$PLUGIN/hooks/hooks.json")"
+LEGACY_EXPANSION_COMMAND="$(jq -r '.hooks.UserPromptExpansion[0].hooks[0].commandWindows' "$PLUGIN/hooks/hooks.json")"
 case "$PROMPT_COMMAND|$PRETOOL_COMMAND" in
   *'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd'*prompt-submit*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd'*pretooluse*)
     ok "both Codex handlers declare the tracked Windows wrapper with percent-style root expansion" ;;
   *) nok "Codex commandWindows definitions" "$PROMPT_COMMAND | $PRETOOL_COMMAND" ;;
+esac
+
+codex_hook_path="$(jq -r '.hooks' "$PLUGIN/.codex-plugin/plugin.json")"
+fresh_events="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/${codex_hook_path#./}")"
+if [ "$codex_hook_path" = ./hooks/codex-hooks.json ] \
+  && [ "$fresh_events" = PreToolUse,UserPromptSubmit ] \
+  && case "$PROMPT_COMMAND|$PRETOOL_COMMAND" in *forgeward-gate-check.cmd*'|'*forgeward-gate-check.cmd*) true;; *) false;; esac; then
+  ok "native-Windows fresh install resolves only the intended Codex lifecycle file and adapter"
+else
+  nok "native-Windows fresh-install routing" "path=$codex_hook_path events=$fresh_events"
+fi
+
+case "$LEGACY_EXPANSION_COMMAND|$LEGACY_PRETOOL_COMMAND" in
+  *'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd'*expansion*'|'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd'*pretooluse*)
+    ok "both legacy Claude hook definitions have native-Windows fallbacks for stale Codex dispatch" ;;
+  *) nok "legacy stale-trust Windows fallbacks" "$LEGACY_EXPANSION_COMMAND | $LEGACY_PRETOOL_COMMAND" ;;
 esac
 
 tracked_ok=true
@@ -250,8 +268,12 @@ for layout in standard custom; do
   if [ "$layout" = standard ]; then git_path="$STANDARD_GIT_PATH"; else git_path="$CUSTOM_GIT_PATH"; fi
   prompt_runner="$TEST_POSIX/$layout-prompt.cmd"
   pre_runner="$TEST_POSIX/$layout-pretool.cmd"
+  legacy_expansion_runner="$TEST_POSIX/$layout-legacy-expansion.cmd"
+  legacy_pre_runner="$TEST_POSIX/$layout-legacy-pretool.cmd"
   write_runner "$prompt_runner" "$git_path" "$PROMPT_COMMAND"
   write_runner "$pre_runner" "$git_path" "$PRETOOL_COMMAND"
+  write_runner "$legacy_expansion_runner" "$git_path" "$LEGACY_EXPANSION_COMMAND"
+  write_runner "$legacy_pre_runner" "$git_path" "$LEGACY_PRETOOL_COMMAND"
 
   run_windows_hook "$prompt_runner" "$prompt_allow"
   [ "$st" -eq 0 ] && [ -z "$out" ] \
@@ -263,12 +285,26 @@ for layout in standard custom; do
     && ok "$layout layout: ordinary non-publish Bash exits 0 without output" \
     || nok "$layout ordinary Bash" "st=$st out=$out"
 
+  run_windows_hook "$legacy_pre_runner" "$pre_allow"
+  if [ "$st" -eq 0 ] && [ -z "$out" ]; then
+    ok "$layout layout: stale-trust dispatch allows ordinary Bash without an error"
+  else
+    nok "$layout stale-trust ordinary Bash" "st=$st out=$out"
+  fi
+
   run_windows_hook "$prompt_runner" "$ship_block"
   if [ "$st" -eq 0 ] && [ "$(printf '%s' "$out" | jq -r '.decision' 2>/dev/null)" = block ] \
     && [ -n "$(printf '%s' "$out" | jq -r '.reason // empty' 2>/dev/null)" ]; then
     ok "$layout layout: direct \$ship without a marker returns valid block JSON"
   else
     nok "$layout direct ship guard" "st=$st out=$out"
+  fi
+
+  run_windows_hook "$legacy_expansion_runner" "$ship_block"
+  if [ "$st" -eq 2 ] && printf '%s' "$out" | grep -Fq 'forgeward gate: /ship halted'; then
+    ok "$layout layout: stale-trust expansion preserves the Claude /ship block decision"
+  else
+    nok "$layout stale-trust expansion guard" "st=$st out=$out"
   fi
 
   run_windows_hook "$pre_runner" "$pre_deny"
@@ -280,20 +316,36 @@ for layout in standard custom; do
   else
     nok "$layout publish guard" "st=$st out=$out"
   fi
+
+  run_windows_hook "$legacy_pre_runner" "$pre_deny"
+  if [ "$st" -eq 0 ] \
+    && [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName' 2>/dev/null)" = PreToolUse ] \
+    && [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)" = deny ]; then
+    ok "$layout layout: stale-trust dispatch preserves the publish decision"
+  else
+    nok "$layout stale-trust publish guard" "st=$st out=$out"
+  fi
 done
 
 # With no git.exe on PATH, System32's WSL launcher may still expose bare bash.exe. The
 # adapter must ignore it, emit no claim that the guard ran, and fail open for both events.
 NO_GIT_PROMPT="$TEST_POSIX/no-git-prompt.cmd"
 NO_GIT_PRE="$TEST_POSIX/no-git-pretool.cmd"
+NO_GIT_LEGACY_EXPANSION="$TEST_POSIX/no-git-legacy-expansion.cmd"
+NO_GIT_LEGACY_PRE="$TEST_POSIX/no-git-legacy-pretool.cmd"
 printf '@echo off\r\nset "PLUGIN_ROOT=%s"\r\nset "PATH=%s"\r\n%s\r\n' "$PLUGIN_WIN" "$SYSTEM32_WIN" "$PROMPT_COMMAND" > "$NO_GIT_PROMPT"
 printf '@echo off\r\nset "PLUGIN_ROOT=%s"\r\nset "PATH=%s"\r\n%s\r\n' "$PLUGIN_WIN" "$SYSTEM32_WIN" "$PRETOOL_COMMAND" > "$NO_GIT_PRE"
+printf '@echo off\r\nset "PLUGIN_ROOT=%s"\r\nset "PATH=%s"\r\n%s\r\n' "$PLUGIN_WIN" "$SYSTEM32_WIN" "$LEGACY_EXPANSION_COMMAND" > "$NO_GIT_LEGACY_EXPANSION"
+printf '@echo off\r\nset "PLUGIN_ROOT=%s"\r\nset "PATH=%s"\r\n%s\r\n' "$PLUGIN_WIN" "$SYSTEM32_WIN" "$LEGACY_PRETOOL_COMMAND" > "$NO_GIT_LEGACY_PRE"
 run_windows_hook "$NO_GIT_PROMPT" "$ship_block"; no_git_prompt="$st|$out"
 run_windows_hook "$NO_GIT_PRE" "$pre_deny"; no_git_pre="$st|$out"
-if [ "$no_git_prompt" = "0|" ] && [ "$no_git_pre" = "0|" ]; then
-  ok "no Git Bash fails open silently instead of using WSL bash or claiming the guard ran"
+run_windows_hook "$NO_GIT_LEGACY_EXPANSION" "$ship_block"; no_git_legacy_expansion="$st|$out"
+run_windows_hook "$NO_GIT_LEGACY_PRE" "$pre_deny"; no_git_legacy_pre="$st|$out"
+if [ "$no_git_prompt" = "0|" ] && [ "$no_git_pre" = "0|" ] \
+  && [ "$no_git_legacy_expansion" = "0|" ] && [ "$no_git_legacy_pre" = "0|" ]; then
+  ok "Codex and stale-trust routes fail open silently instead of using WSL bash"
 else
-  nok "no-Git-Bash fail-open contract" "prompt=$no_git_prompt pretool=$no_git_pre"
+  nok "no-Git-Bash fail-open contract" "prompt=$no_git_prompt pretool=$no_git_pre legacy-expansion=$no_git_legacy_expansion legacy-pretool=$no_git_legacy_pre"
 fi
 
 printf '1..%d\n' "$((PASS+FAIL))"
