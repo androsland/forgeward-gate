@@ -393,6 +393,39 @@ Expected:
   `expresss` as a typosquat of `express`, and ends `SUPPLY-CHAIN VERDICT: FAIL`. No marker; push
   stays blocked. (This is the gap gstack's `/cso` does not cover.)
 
+This scenario exercises typosquat detection only. The reviewer's **scanner-coverage
+protocol** — the four stderr checks, the exit-code table, and the trivy/osv
+config-suppression bypasses — is exercised by nothing here and by nothing in `npm test`
+either. **Nor is the shell-quoting and package-name validation defence**, which is the
+newest of them; it was missing from this paragraph until the round-12 testing review
+pointed out that this list and `TODOS.md` were both silent on it.
+**Those are two defences with three different failure modes, and only one of them is
+RCE.** The shell-quoting half fails by running attacker-supplied code — a manifest path
+of `evil_$(touch <marker>)_dir` reaching an unquoted expansion. The package-name
+validation half fails two ways, and they are not the same finding. It fails **quietly and
+wrongly** when a dependency named `--json` gets npm's metadata for an unrelated package,
+or one named `version@0.1.0` gets a real version of a package the diff never declared:
+nothing executes on the review host, and reading that as RCE understates the real risk,
+which is a review that reports a typosquat as confirmed. It fails **outward** when a
+dependency named `owner/repo` with no leading `@` hits npm's git-hosted shorthand and npm
+clones the named repository from github.com to disk before it ever consults the registry
+— no attacker code runs here either, but a manifest key alone has produced network egress
+and a disk write, which is neither of the other two modes and is the one this list
+described as impossible until round 15 measured it.
+That debt is tracked in `TODOS.md` (P2) as **two deliberately separate top-level
+entries** — the quoting-defence entry, which is ordinary bash and automatable, and the
+package-name-validation entry beside it, which is prose instructing a model and is
+explicitly not. They were split so the second would not read as automatable by
+association; do not collapse them back into one reference here. **The second has since
+grown sub-entries — some naming a failure mode, some naming a test approach or a scope
+gap, so do not read them as one-per-mode — and one of them sits in a position neither
+top-level entry describes**: the git-clone bypass has a live-test leg and its mechanical
+proxy is *refused* on cost, which is neither "ordinary bash and automatable" nor "not
+automatable at all". So the top-level count is still two and is not the thing to check —
+expect the second entry to keep branching, and reconcile against its sub-entries. This
+paragraph and those entries are the same debt from three directions now. Update all of
+them or none.
+
 **NOT TESTED YET**
 ---
 

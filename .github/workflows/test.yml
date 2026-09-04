@@ -61,11 +61,15 @@ jobs:
           printf 'python3   %s\n' "$(command -v python3 >/dev/null && python3 --version || echo absent)"
           printf 'awk       %s\n' "$(command -v awk || echo MISSING)"
 
-      # `npm test` rather than the four bash files spelled out, so package.json stays the
-      # single source of truth for the suite roster: a fifth suite added there is picked
-      # up here without editing this file. The cost is that its `&&` chain stops at the
-      # first failing suite, so a red run reports one suite's failures and not the rest.
-      - name: npm test (gate, pre-push, version-check, rules)
+      # `npm test` rather than the bash files spelled out, so package.json stays the
+      # single source of truth for the suite roster: a suite added there is picked up here
+      # without editing this file. The cost is that its `&&` chain stops at the first
+      # failing suite, so a red run reports one suite's failures and not the rest.
+      #
+      # The step name deliberately does NOT enumerate the suites. It listed four while
+      # seven were running, which is the predictable end state of a list kept in a second
+      # place -- the roster is in package.json and this line stopped claiming to mirror it.
+      - name: npm test (whatever package.json lists)
         run: npm test
 
   windows-hooks:

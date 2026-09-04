@@ -1,6 +1,6 @@
 {
   "name": "forgeward",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "description": "Enforced, read-only conformance gate. Fires privacy, accessibility, ai-output, seo, supply-chain, security and quality reviewers on the surfaces a diff touches, and blocks the push until every fired reviewer returns VERDICT: PASS. Hands off to gstack's /ship when installed.",
   "author": {
     "name": "forgeward"

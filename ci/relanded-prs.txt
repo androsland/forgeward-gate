@@ -1,0 +1,29 @@
+# Acknowledgments for ci/check-merged-prs-landed.sh.
+#
+# Format: "<orphaned-pr> <re-landing-pr>", one per line, separated by any whitespace.
+# Text after # is a comment. A line that is not exactly two all-digit fields is ignored.
+#
+# An entry here does NOT mute anything on its own. The check verifies that the named
+# re-landing PR is itself merged AND that its own merge commit is an ancestor of the
+# default branch. If it is not, the finding is still a FAILURE, worded to say the
+# acknowledgment did not hold. A verified entry is still PRINTED, as a note rather than
+# a failure -- this file can make a finding non-fatal, never invisible.
+#
+# Only add a line here once the work has actually re-landed. "I will get to it" is not
+# an acknowledgment; leave the check red until it is true.
+#
+# Why this exists at all: the head-commit fallback already suppresses a re-land that
+# PRESERVED the original commit (#51, re-landed as #52 ten minutes later). It cannot
+# suppress a re-land done by hand, because the bytes differ -- #55 was re-landed as a
+# three-way merge and the bytes came out different, so neither #55's merge commit nor
+# its head commit will ever be an ancestor of master. Without an entry here that finding
+# repeats on every scheduled run forever, and a check that cries wolf gets switched off.
+#
+# <orphan> <re-landed-by>
+
+# 55 was merged into a base branch that had itself merged twelve seconds earlier; its
+# content reached master by hand as #62. Entered BEFORE #62 merged, deliberately: until
+# then this check fails saying the acknowledgment does not hold, which is the truth, and
+# it turns green by itself the moment #62 lands. That is the mechanism working, not a
+# workaround for it.
+55 62

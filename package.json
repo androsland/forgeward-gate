@@ -1,9 +1,9 @@
 {
   "name": "forgeward-gate",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "private": true,
   "description": "Tooling/test metadata for the dual-client Forgeward gate plugin.",
   "scripts": {
-    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh && bash test/version-check-test.sh && bash test/dual-client-test.sh && bash test/windows-hooks-test.sh && bash test/rules-test.sh && bash test/transcript-audit-test.sh"
+    "test": "bash test/gate-test.sh && bash test/pre-push-test.sh && bash test/version-check-test.sh && bash test/merged-prs-landed-test.sh && bash test/dual-client-test.sh && bash test/windows-hooks-test.sh && bash test/rules-test.sh && bash test/transcript-audit-test.sh"
   }
 }
