@@ -121,16 +121,62 @@ case "$gate_step2|$audit_policy" in
   *) nok "other-runtime fallback policy" ;;
 esac
 
-# Package routing: Codex must not consume the Claude-only event definitions.
+# Package routing for a fresh install: the Codex manifest names only the Codex event
+# file. This proves the package contract, not how Codex treats old global trust state.
 claude_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/hooks.json")"
 codex_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/codex-hooks.json")"
 codex_hooks="$(jq -r '.hooks' "$PLUGIN/.codex-plugin/plugin.json")"
 if [ "$claude_event" = "PreToolUse,UserPromptExpansion" ] \
   && [ "$codex_event" = "PreToolUse,UserPromptSubmit" ] \
   && [ "$codex_hooks" = "./hooks/codex-hooks.json" ]; then
-  ok "client manifests route Claude and Codex to separate lifecycle events"
+  ok "fresh client manifests route Claude and Codex to separate lifecycle events"
 else
   nok "client hook routing" "claude=$claude_event codex=$codex_event manifest=$codex_hooks"
+fi
+
+claude_commands="$(jq -r '[.hooks[][] .hooks[] | .command] | join("|")' "$PLUGIN/hooks/hooks.json")"
+claude_windows_commands="$(jq -r '[.hooks[][] .hooks[] | .commandWindows] | join("|")' "$PLUGIN/hooks/hooks.json")"
+codex_windows_commands="$(jq -r '[.hooks[][] .hooks[] | .commandWindows] | join("|")' "$PLUGIN/hooks/codex-hooks.json")"
+# shellcheck disable=SC2016 # the hook variables must remain literal in the manifest
+case "$claude_commands|$claude_windows_commands|$codex_windows_commands" in
+  *'${CLAUDE_PLUGIN_ROOT}'*'forgeward-gate-check.sh expansion'*'forgeward-gate-check.sh pretooluse'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" expansion'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" pretooluse'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" prompt-submit'*)
+    ok "Claude keeps its normal command while every native-Windows route uses the tracked adapter" ;;
+  *) nok "dual-client Windows command routing" ;;
+esac
+
+compat_docs="$(sed -n '/That is a packaging contract/,/Lifecycle handlers probe/p' "$PLUGIN/README.md")"
+compat_docs_ok=true
+for required_text in \
+  fresh \
+  upgrade \
+  'legitimate Claude Code configuration' \
+  'cannot safely inspect or prune Codex-owned global trust records'; do
+  case "$compat_docs" in *"$required_text"*) ;; *) compat_docs_ok=false ;; esac
+done
+if [ "$compat_docs_ok" = true ]; then
+  ok "compatibility rule documents fresh installs, stale upgrades, the Claude non-match, and its trust-store blind spot"
+else
+  nok "documented compatibility-rule scope"
+fi
+
+# Validate the complete package edge on every platform. The native-Windows suite
+# executes these paths, but it is allowed to skip when cmd.exe is unavailable.
+package_paths="./hooks/hooks.json
+$codex_hooks
+$(jq -r '.. | objects | .command? // empty, .commandWindows? // empty' \
+  "$PLUGIN/hooks/hooks.json" "$PLUGIN/hooks/codex-hooks.json" \
+  | grep -oE 'scripts[\\/][A-Za-z0-9._-]+' | sed 's#\\#/#g')"
+package_paths_ok=true
+while IFS= read -r package_path; do
+  package_path="${package_path#./}"
+  [ -n "$package_path" ] || continue
+  git -C "$PLUGIN" ls-files --error-unmatch "$package_path" >/dev/null 2>&1 \
+    || package_paths_ok=false
+done < <(printf '%s\n' "$package_paths" | sort -u)
+if [ "$package_paths_ok" = true ]; then
+  ok "Claude auto-discovery, the Codex manifest, and every referenced hook script are tracked"
+else
+  nok "tracked dual-client package paths"
 fi
 
 # Codex documents PLUGIN_ROOT for plugin hook processes, not for ordinary skill
