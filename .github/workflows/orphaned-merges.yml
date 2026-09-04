@@ -1,0 +1,71 @@
+# This workflow owns one question that no `pull_request` run can ever answer: did every
+# pull request GitHub reports as MERGED actually reach `master`?
+#
+# WHY NOT `pull_request`. The failure it looks for is CREATED BY a merge, and created
+# after the PR that suffers it has already closed. #55 was merged into a base branch that
+# had itself merged twelve seconds earlier; at that instant #55 was closed and no further
+# PR event concerning it will ever fire. There is no pull_request run in which this could
+# be true, so putting it on one would be a check that structurally cannot fire.
+#
+# WHY IT IS CHEAP ANYWAY. The check is one `gh pr list` and a handful of
+# `git merge-base --is-ancestor` calls against a population it filters first: only PRs
+# whose base was NOT the default branch can be orphaned this way, which on this repo is
+# 3 of 60. Weekly is far more often than the condition arises -- it has arisen twice in
+# the repo's life -- and the point is bounding how long it goes unnoticed, which was
+# seven days for #55 and is now at most seven days by construction.
+#
+# WHY IT IS NOT A REQUIRED CHECK. It reports on `master` as it stands, not on the PR in
+# front of you, so a red run here is never something the author of an unrelated PR can
+# fix. Making it required would block work on a condition its author did not cause.
+name: orphaned merges
+
+# WHAT SILENCES THIS WITHOUT TELLING ANYONE. GitHub disables a `schedule` trigger after
+# 60 days with no push activity in the repository, and it does that quietly -- no run, no
+# failure, no notification. So "the check is green" and "the check has stopped existing"
+# look identical from outside, and they look identical for exactly the repos where a
+# stale-merge problem would sit longest. `workflow_dispatch` is here so it can be run by
+# hand, which is the recovery, not the detection. Nothing in this file can detect it;
+# TODOS.md carries the entry that this schedule has never been OBSERVED to fire.
+on:
+  schedule:
+    # Mondays at 07:00 UTC. A weekday so a finding lands in front of someone, and early
+    # enough that a re-land is a same-day job rather than next week's.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: orphaned-merges-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Mandatory, and the script refuses without it: ancestry cannot be decided from
+          # partial history, and a shallow clone answers "did not land" for everything it
+          # simply does not have.
+          fetch-depth: 0
+
+      # `persist-credentials: false` above means the checkout leaves no git credential
+      # behind; `gh` gets its token here, explicitly and for this step only.
+      - name: check that every merged PR reached the default branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment, never interpolated into the shell line -- the same
+          # rule version-check.yml states for its base ref. The value is repo-owner
+          # controlled rather than PR-author controlled, so this is convention rather
+          # than a live injection risk; the convention is worth more than the exception.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        # The name is passed as well as the ref. The workflow already has it exactly;
+        # the script's fallback derives it by stripping the ref to its last path segment,
+        # which is wrong the day a default branch has a slash in it. Passing what we
+        # already know beats re-deriving it worse.
+        run: bash ci/check-merged-prs-landed.sh --default-branch "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
