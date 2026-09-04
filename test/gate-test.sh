@@ -3129,6 +3129,37 @@ drift() { # drift [--verbose] -> stdout+stderr, with the synthetic gstack root
   FORGEWARD_GSTACK_ROOT="$DGS" "$DP/scripts/forgeward-rubric-drift.sh" ${1:+"$1"} 2>&1
 }
 
+# _strict_provenance <name-mode> <file>... -> sets _sp_n and _sp_bad
+#
+# The suite's own STRICT reader of a provenance block, deliberately not the script's
+# tolerant one. R6 and R14d are its only callers and they held byte-identical copies of
+# it until this change; the copies differed in nothing but how a half-recorded port is
+# NAMED -- a reviewer by its filename, a skill by its directory, because every skill's
+# basename is the constant string `SKILL.md` (the directory-key rule in CLAUDE.md).
+# `<name-mode>` is `dir` for the second and anything else for the first.
+#
+# Read R6's comment before touching the regexes: their strictness is the point, and the
+# fact that they are NOT the script's is what makes R14j a control rather than a
+# tautology.
+_strict_provenance() {
+  _sp_mode="$1"; shift
+  _sp_n=0; _sp_bad=""
+  for _spf in "$@"; do
+    [ -f "$_spf" ] || continue
+    _sp_p="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_spf" | head -1)"
+    _sp_s="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_spf" | head -1)"
+    if [ -n "$_sp_p" ] && [ -n "$_sp_s" ]; then
+      _sp_n=$((_sp_n+1))
+    elif [ -n "$_sp_p" ] || [ -n "$_sp_s" ]; then
+      case "$_sp_mode" in
+        dir) _sp_bad="$_sp_bad $(basename "$(dirname "$_spf")")" ;;
+        *)   _sp_bad="$_sp_bad $(basename "$_spf")" ;;
+      esac
+    fi
+  done
+  return 0
+}
+
 # R1: THE CLEAN RUN IS SILENT. A gate that already prints a firing decision must not
 # grow a line saying nothing happened — "say it once, and only when it is news" is the
 # same rule the axis disclosures follow, and a check that speaks on every run is a check
@@ -3202,29 +3233,31 @@ esac
 # BOTH fields, because the script skips any reviewer missing either one and a
 # half-recorded port is silently unchecked rather than loudly broken.
 #
-# The two sed expressions below are a DELIBERATE copy of the script's own, not a call
-# into it, and the duplication is the cost of what R6 is for: every other assertion
-# here drives a synthetic fixture, so R6 has to read the SHIPPED tree with no fixture
-# in the path at all. Running the script over the real agents/ would need a synthetic
-# gstack root holding copies of the five real rubrics, which reintroduces exactly the
-# fixture dependence R6 exists to escape. The exposure it buys is that a loosening of
-# the script's regex would not show up here -- which stopped being hypothetical the day
-# the reader was made tolerant of CRLF and uppercase hex. R14j is the control: it runs
-# the real script over this same shipped tree and asserts it parses exactly the number
-# R6 and R14d count between them, so the two copies of the reader are compared rather
-# than assumed to agree. Keep the copy strict on purpose -- what SHIPS should be
-# canonical even where the reader tolerates what a checkout does to it on the way in.
-_r6n=0; _r6bad=""
-for _f in "$PLUGIN"/agents/*-reviewer.md; do
-  [ -f "$_f" ] || continue
-  _has_p="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_f" | head -1)"
-  _has_s="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_f" | head -1)"
-  if [ -n "$_has_p" ] && [ -n "$_has_s" ]; then
-    _r6n=$((_r6n+1))
-  elif [ -n "$_has_p" ] || [ -n "$_has_s" ]; then
-    _r6bad="$_r6bad $(basename "$_f")"
-  fi
-done
+# THE COPY OF THE SCRIPT'S REGEXES STAYS, AND TODOS.md ASKED FOR IT TO GO. The entry
+# (0.17.0) filed the duplication as accepted-with-exposure and named the proper fix as
+# "factoring the provenance reader into something both can source". That fix is now
+# REJECTED, on evidence that did not exist when it was written. R14j landed at 0.20.0
+# and closes the exposure the entry names: it runs the real script over this same
+# shipped tree and requires it to parse exactly the number R6 and R14d count between
+# them, so a loosening of the script's regex reddens R14j today. Sourcing the script's
+# reader here would make R14j compare the script's reader with itself -- a control
+# turned into a tautology, REMOVING the coverage the entry wanted added. Two
+# independent readers agreeing on the shipped tree is the property; one reader used
+# twice is not, however much less duplicated code it is.
+#
+# What WAS genuinely duplicated is now factored out: R6 and R14d held byte-identical
+# loops differing only in how a half-recorded port is named. `_strict_provenance` above
+# is that one copy. The number of readers in play is unchanged at two -- the script's
+# tolerant one and this strict one -- which is the number the property needs.
+#
+# Keep the copy strict on purpose -- what SHIPS should be canonical even where the
+# reader tolerates what a checkout does to it on the way in. And keep it fixture-free:
+# every other assertion here drives a synthetic fixture, so R6 and R14d have to read the
+# SHIPPED tree with nothing in the path at all. Running the script over the real
+# agents/ would need a synthetic gstack root holding copies of the five real rubrics,
+# which reintroduces exactly the fixture dependence they exist to escape.
+_strict_provenance file "$PLUGIN"/agents/*-reviewer.md
+_r6n="$_sp_n"; _r6bad="$_sp_bad"
 [ "$_r6n" -ge 5 ] && [ -z "$_r6bad" ] \
   && ok "drift: all $_r6n shipped ported rubrics record BOTH source-path and a 64-hex source-sha256 (the fixtures above are not the only thing covered)" \
   || nok "drift R6: a ported rubric is not drift-checkable" "complete: $_r6n (expected >= 5) | half-recorded:${_r6bad:- none}"
@@ -3471,9 +3504,14 @@ esac
 # someone reintroduces it, since `ok       beta` and `ok       SKILL` are not mutually
 # exclusive outputs of a loop that could print both.
 #
-# Verified to FAIL against the pre-fix script (`git show HEAD:` at the time of writing):
-# the skills glob was absent, so the run counted one rubric and printed no `beta` line
-# at all, and this assertion went nok via its catch-all arm. Runs --verbose
+# Verified to FAIL against the pre-fix script: the skills glob was absent, so the run
+# counted one rubric and printed no `beta` line at all, and this assertion went nok via
+# its catch-all arm. Cite it as `git show ed4d0ae~1:scripts/forgeward-rubric-drift.sh`
+# -- the parent of the commit that added `skills_dir`. This comment read `git show HEAD:`
+# "at the time of writing" for four versions, which is honest and unusable: a reader
+# following it today gets the FIXED script, reproduces a passing run, and concludes the
+# control is a lie. Same trap the R18/R19 banner below names; this file held both the
+# warning and an instance of it. Runs --verbose
 # for the reason R12 records: the `ok       <name>` line is verbose-only.
 mkdir -p "$DGS/cso/sections" "$DP/skills/beta"
 printf 'Audit phases, v1.\n' > "$DGS/cso/sections/phases.md"
@@ -3712,17 +3750,12 @@ rm -rf "$TMP/r14l"
 # and are not ports, so requiring every skill to carry provenance would be asserting a
 # property this repo does not have. What it pins is that at least one does and that none
 # is half-recorded.
-_r14dn=0; _r14dbad=""
-for _f in "$PLUGIN"/skills/*/SKILL.md; do
-  [ -f "$_f" ] || continue
-  _has_p="$(sed -n 's/^ *source-path: *\(.*[^ ]\) *$/\1/p' "$_f" | head -1)"
-  _has_s="$(sed -n 's/^ *source-sha256: *\([0-9a-f]\{64\}\) *$/\1/p' "$_f" | head -1)"
-  if [ -n "$_has_p" ] && [ -n "$_has_s" ]; then
-    _r14dn=$((_r14dn+1))
-  elif [ -n "$_has_p" ] || [ -n "$_has_s" ]; then
-    _r14dbad="$_r14dbad $(basename "$(dirname "$_f")")"
-  fi
-done
+#
+# `dir`, not `file`: every skill's basename is the constant `SKILL.md`, so naming a
+# half-recorded port by basename would report every one of them as `SKILL`. Same rule
+# `forgeward-rubric-drift.sh` follows for the name it prints.
+_strict_provenance dir "$PLUGIN"/skills/*/SKILL.md
+_r14dn="$_sp_n"; _r14dbad="$_sp_bad"
 [ "$_r14dn" -ge 1 ] && [ -z "$_r14dbad" ] \
   && ok "drift: all $_r14dn shipped ported skill(s) record BOTH source-path and a 64-hex source-sha256" \
   || nok "drift R14d: a ported skill is not drift-checkable" "complete: $_r14dn (expected >= 1) | half-recorded:${_r14dbad:- none}"
@@ -3782,6 +3815,428 @@ EOF
   && ok "drift: all $_r14kn shipped source-path(s) sit under a landmark the root scan recognises ($_r14j_lm)" \
   || nok "drift R14k: a shipped port sits outside every landmark, so a checkout holding only its subtree reads as no-gstack" \
       "landmarks:'${_r14j_lm:-NONE}' paths seen:$_r14kn (expected $_r14jexp) | outside:${_r14kbad:- none}"
+
+# =============================================================================
+# R15–R19 — the three unasserted edges, and the controls for the two limits
+# this branch fixes.
+#
+# TODOS.md carried two separate P3 entries about this script: three edges R1–R13 never
+# drove (0.17.0), and three limits the review that gated 0.20.0 found and knowingly did
+# not fix. R15–R17 close the edges. R18 and R19 are the controls for the two limits
+# fixed on this branch; the third (a `.gitattributes` `eol=lf` pin) was already rejected
+# for scope and stays rejected.
+#
+# THEY ARE NOT THE SAME KIND OF ASSERTION AND EACH COMMENT SAYS WHICH IT IS. R15, R16
+# and R17 were green before a line of this branch was written — they pin behaviour that
+# was already correct and simply untested, so they had no opinion about any bug. Only
+# R18 and R19 were run against the PRE-FIX script and observed to fail there. Cite it as
+# `git show d9fa699:scripts/forgeward-rubric-drift.sh` -- this branch's merge-base with
+# master, which is immutable. Bare `HEAD:` is what the rest of this file used and it is
+# self-referential the instant the fix commits: it then prints the FIXED script, so anyone
+# following the recipe reproduces the passing number and concludes the control is a lie. An author reading five green lines cannot otherwise tell the
+# difference, and CLAUDE.md's rule is that a fix needs both kinds and must label them.
+# =============================================================================
+
+# R15: A ROOT THAT EXISTS BUT IS A *FILE* DEGRADES TO THE QUIET NO-OP.
+# The first of the three filed edges. Every landmark test in the root scan is `[ -d ]`,
+# so a candidate that is a regular file fails both passes and the script exits 0 having
+# said nothing — which is the correct outcome and was already the behaviour.
+#
+# CHARACTERIZATION, NOT A CONTROL: verified green against the pre-fix script, so it
+# proves nothing about this branch. It pins that the file path appears in the verbose
+# candidate list, so the user can see WHAT was rejected rather than only that something
+# was.
+#
+# WHAT IT DOES NOT COVER, CORRECTED HERE: this comment used to claim the plausible future
+# edit `[ -d ]` → `[ -e ]` "is what reddens on it". MEASURED: mutate both landmark tests
+# to `[ -e ]` and this suite stays green end to end. The reason is that R15 is not a
+# fixture for that edit at all -- its root is a regular FILE, so `[ -e "$file/review/
+# specialists" ]` fails with ENOTDIR exactly as `[ -d ]` does, and the two operators are
+# indistinguishable here. R15b below is the fixture that DOES separate them. A comment
+# asserting coverage a green assertion does not have is worse than no comment: it is the
+# reason nobody writes the assertion that would have caught the edit.
+_r15f="$TMP/driftroot-is-a-file"
+printf 'not a directory\n' > "$_r15f"
+# Fixture guard. Every assertion below this line reads as a clean no-op if the write
+# above silently failed -- a root that does not exist reaches the same nothing-to-compare
+# path as one that is a file, so R15 would print `ok` while testing nothing.
+[ -f "$_r15f" ] || nok "drift R15: fixture was not created, so the assertion below is vacuous" "path='$_r15f'"
+_r15q="$(FORGEWARD_GSTACK_ROOT="$_r15f" "$DP/scripts/forgeward-rubric-drift.sh" 2>&1)"; _r15rc=$?
+_r15v="$(FORGEWARD_GSTACK_ROOT="$_r15f" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r15v" in
+  *"no gstack rubrics at any searched root"*"$_r15f"*)
+    [ -z "$_r15q" ] && [ "$_r15rc" -eq 0 ] \
+      && ok "drift: a gstack root that exists but is a FILE is rejected by both passes, named in the verbose candidate list, and silent otherwise" \
+      || nok "drift R15: a file-shaped root was not the quiet no-op" "rc=$_r15rc quiet='$_r15q'" ;;
+  *) nok "drift R15: a file-shaped root did not reach the nothing-to-compare path, or was not named in the candidate list" "out='$_r15v'" ;;
+esac
+
+# R15b: A ROOT WHOSE LANDMARKS ARE REGULAR FILES IS REJECTED.  ** WRONG-FIX CONTROL **
+#
+# NOT a pre-fix control: the `[ -d ]` landmark tests are untouched by this branch, so this
+# is green against `git show d9fa699:scripts/forgeward-rubric-drift.sh` exactly as it is
+# green here. What it pins is the edit R15's comment used to claim R15 covered and does
+# not: relaxing both `[ -d "$cand/$landmark" ]` tests to `[ -e ]`.
+#
+# The fixture is the difference. R15's root is a FILE, so both operators fail identically
+# on `$file/review/specialists` (ENOTDIR) and the mutation is invisible. Here the root is
+# a real DIRECTORY and the two landmarks inside it are regular FILES -- the shape a
+# half-extracted archive or a `touch` typo leaves behind. `-d` rejects it and the script
+# stays silent; `-e` accepts it, selects it as `gs_root`, and then every `$gs_root/review/
+# specialists/<x>.md` fails `[ -f ]`, so the run reports every ported rubric as no longer
+# existing upstream and tells the user upstream may have renamed or removed files that
+# are sitting on their disk. That false advisory is the same class as R14e's, which is why
+# the first arm pins it explicitly rather than leaving a catch-all to absorb it.
+#
+# VERIFIED BY MUTATION, not by reasoning: with both tests changed to `[ -e ]` this
+# assertion fails on its first arm and the rest of the suite stays green, so it is the
+# only thing standing between that edit and a shipped false advisory.
+_r15bgs="$TMP/driftroot-landmarks-are-files"
+mkdir -p "$_r15bgs/review"
+printf 'a file, not the directory the landmark test expects\n' > "$_r15bgs/review/specialists"
+printf 'a file, not the directory the landmark test expects\n' > "$_r15bgs/cso"
+[ -f "$_r15bgs/review/specialists" ] && [ -f "$_r15bgs/cso" ] \
+  || nok "drift R15b: fixture landmarks were not created as files, so the assertion below is vacuous" "root='$_r15bgs'"
+_r15bq="$(FORGEWARD_GSTACK_ROOT="$_r15bgs" "$DP/scripts/forgeward-rubric-drift.sh" 2>&1)"; _r15brc=$?
+_r15bv="$(FORGEWARD_GSTACK_ROOT="$_r15bgs" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+case "$_r15bv" in
+  *"no longer exist"*)
+    nok "drift R15b: a root whose landmarks are regular files was accepted as a gstack checkout, and every ported rubric was then reported as removed upstream" "out='$_r15bv'" ;;
+  *"no gstack rubrics at any searched root"*)
+    [ -z "$_r15bq" ] && [ "$_r15brc" -eq 0 ] \
+      && ok "drift: a candidate root whose landmarks are regular FILES is rejected by both passes, so the run stays silent instead of reporting every port as removed upstream" \
+      || nok "drift R15b: rejected, but the run was not the quiet no-op" "rc=$_r15brc quiet='$_r15bq'" ;;
+  *) nok "drift R15b: a file-landmark root reached neither the nothing-to-compare path nor the missing-upstream report" "out='$_r15bv'" ;;
+esac
+
+# R16: A `source-path` CONTAINING SPACES IS READ WHOLE, HASHED, AND NAMED WHOLE.
+# The second filed edge. The script's reader captures `\(.*[^[:space:]]\)`, so internal
+# spaces survive and only trailing whitespace is trimmed; `live="$gs_root/$src_path"` is
+# quoted at every use. A reader that split on whitespace would truncate this fixture's
+# path to `review/specialists/alpha` and report the port as no-longer-existing upstream —
+# which is why the FIRST case arm below is that specific wrong answer rather than a
+# catch-all. Reporting a live file as deleted upstream is the same class of false
+# advisory R14e exists for.
+#
+# CHARACTERIZATION, NOT A CONTROL: green against the pre-fix script.
+#
+# THE NEWLINE HALF OF THAT ENTRY IS NOT TESTED HERE AND CANNOT BE. A provenance block is
+# line-oriented, so a `source-path:` value containing a newline is not representable in
+# the format at all — `sed` would read the first line and the rest would be ordinary
+# body text. The place a newline genuinely arrives is the rubric's NAME, which comes
+# from a directory or filename on disk rather than from the file's own text, and that is
+# R18. Splitting the entry this way is the finding, not a dodge around it.
+_r16gs="$TMP/driftgstack-spaced"
+mkdir -p "$_r16gs/review/specialists"
+printf 'Spaced checklist, v1.\n' > "$_r16gs/review/specialists/alpha beta.md"
+_r16sha="$(sha256sum -- "$_r16gs/review/specialists/alpha beta.md" | cut -d' ' -f1)"
+_r16dp="$TMP/driftplugin-spaced"
+mkdir -p "$_r16dp/scripts" "$_r16dp/agents"
+cp "$DRIFT_SRC" "$_r16dp/scripts/forgeward-rubric-drift.sh"
+chmod +x "$_r16dp/scripts/forgeward-rubric-drift.sh"
+{ printf -- '---\nname: spaced-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/alpha beta.md\n'
+  printf '     source-sha256: %s\n-->\n\nBody.\n' "$_r16sha"
+} > "$_r16dp/agents/spaced-reviewer.md"
+_r16ok="$(FORGEWARD_GSTACK_ROOT="$_r16gs" "$_r16dp/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"
+_r16quiet="$(FORGEWARD_GSTACK_ROOT="$_r16gs" "$_r16dp/scripts/forgeward-rubric-drift.sh" 2>&1)"
+printf 'Spaced checklist, v2.\n' > "$_r16gs/review/specialists/alpha beta.md"
+_r16drift="$(FORGEWARD_GSTACK_ROOT="$_r16gs" "$_r16dp/scripts/forgeward-rubric-drift.sh" 2>&1)"
+case "$_r16ok$_r16drift" in
+  *"no longer exist"*)
+    nok "drift R16: a source-path containing a space was truncated and its live file read as deleted upstream" "clean='$_r16ok' drifted='$_r16drift'" ;;
+  *"ok       spaced-reviewer"*"have drifted"*"review/specialists/alpha beta.md"*)
+    [ -z "$_r16quiet" ] \
+      && ok "drift: a source-path containing a space is compared against the right file and named whole in the drift NOTE" \
+      || nok "drift R16: the matching run was not silent" "quiet='$_r16quiet'" ;;
+  *) nok "drift R16: a spaced source-path produced neither the clean nor the drifted answer" "clean='$_r16ok' drifted='$_r16drift'" ;;
+esac
+
+# R16b: A gs_root PATH CONTAINING A BACKSLASH IS HASHED, NOT ESCAPED.  ** PRE-FIX CONTROL **
+#
+# R16 above tests a SPACE and read as covering "paths with metacharacters". It does not.
+# A space is the one metacharacter GNU coreutils does NOT escape, so R16 is green on both
+# sides of this fix and is the exact shape of a sample mistaken for a spec.
+#
+# GIVEN A PATH HOLDING A BACKSLASH OR A NEWLINE, `sha256sum -- FILE` ESCAPES THE WHOLE
+# OUTPUT LINE: it prefixes it with a literal backslash and escapes the offending
+# character. `cut -d' ' -f1` then hands back `\73cb...` where the digest is `73cb...`,
+# `[ "$now" != "$src_sha" ]` can never match, and the rubric is reported as DRIFTED with
+# an instruction to re-port a file that is byte-identical. Hashing through stdin removes
+# the filename from the output line entirely and the class with it.
+#
+# THE BACKSLASH IS IN THE ROOT, NOT THE RUBRIC NAME, AND THAT IS THE SERIOUS FORM. A
+# rubric name is chosen by this repo; `gs_root` comes from `HOME`, `CLAUDE_CONFIG_DIR` or
+# a plugin-cache path, none of which this script chooses or can validate. One backslash
+# there makes EVERY port report as drifted at once -- and `skills/gate/SKILL.md` instructs
+# the gate to relay that output verbatim, so the false advisory reaches the user.
+#
+# RUN AGAINST THE PRE-FIX SCRIPT AND OBSERVED TO FAIL: `git show d9fa699:` reports
+# `1 ported rubric(s) have drifted` for a file whose bytes are unchanged.
+_r16bgs="$TMP/drift\\gsroot"
+mkdir -p "$_r16bgs/review/specialists"
+printf 'Backslash-root checklist, v1.\n' > "$_r16bgs/review/specialists/alpha.md"
+[ -f "$_r16bgs/review/specialists/alpha.md" ] \
+  || nok "drift R16b: fixture was not created under a backslash-bearing root, so the assertion below is vacuous" "root='$_r16bgs'"
+# Hashed the way the FIXED script hashes -- through stdin. Spelling it `sha256sum -- FILE`
+# here would reproduce the defect in the expectation as well as in the code, and the
+# assertion would then be green on both sides while measuring nothing.
+_r16bsha="$(sha256sum < "$_r16bgs/review/specialists/alpha.md" | cut -d' ' -f1)"
+_r16bdp="$TMP/driftplugin-backslash"
+mkdir -p "$_r16bdp/scripts" "$_r16bdp/agents"
+cp "$DRIFT_SRC" "$_r16bdp/scripts/forgeward-rubric-drift.sh"
+chmod +x "$_r16bdp/scripts/forgeward-rubric-drift.sh"
+{ printf -- '---\nname: backslash-reviewer\n---\n\n'
+  printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/alpha.md\n'
+  printf '     source-sha256: %s\n-->\n\nBody.\n' "$_r16bsha"
+} > "$_r16bdp/agents/backslash-reviewer.md"
+_r16bv="$(FORGEWARD_GSTACK_ROOT="$_r16bgs" "$_r16bdp/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r16brc=$?
+_r16bq="$(FORGEWARD_GSTACK_ROOT="$_r16bgs" "$_r16bdp/scripts/forgeward-rubric-drift.sh" 2>&1)"
+if [ -z "$_r16bsha" ]; then
+  nok "drift R16b: the expected digest came back empty, so the comparison below asserts a property of nothing" "root='$_r16bgs'"
+else
+  case "$_r16bv" in
+    *"have drifted"*)
+      nok "drift R16b: a byte-identical rubric under a root whose path holds a backslash was reported as drifted, because the digest tool escaped its output line and the escape prefix was compared as part of the hash" "out='$_r16bv'" ;;
+    *"ok       backslash-reviewer"*)
+      [ -z "$_r16bq" ] && [ "$_r16brc" -eq 0 ] \
+        && ok "drift: a rubric under a gstack root whose path contains a backslash hashes to the same digest as its provenance block, so it is reported clean rather than drifted" \
+        || nok "drift R16b: matched, but the quiet run was not silent" "rc=$_r16brc quiet='$_r16bq'" ;;
+    *) nok "drift R16b: a backslash-bearing root produced neither the clean nor the drifted answer" "out='$_r16bv'" ;;
+  esac
+fi
+
+# R17: AN `agents/` AND `skills/` HOLDING NOTHING AT ALL STILL SAYS SO.
+# The third filed edge, and the one the entry called "the vacuity trap in its purest
+# form": a gstack root IS selected, so the run gets past every guard R5/R13c cover, and
+# then the two globs match no file, the loop body never executes once, and `parsed`
+# stays 0. Before 0.20.0 that printed nothing and was indistinguishable from a clean run.
+#
+# CHARACTERIZATION, NOT A CONTROL: green against the pre-fix script — the guard it
+# depends on landed at 0.20.0, and the entry filed at 0.17.0 was closed by it without
+# anyone noticing. Distinct from R14h all the same, and the distinction is the reason
+# this is not a duplicate: R14h drives `parsed=0` through a file that EXISTS and fails
+# to parse, so the loop runs and every `continue` inside it is exercised. Here the loop
+# has no iterations at all, which is a different way to reach the same counter and the
+# one an empty install produces.
+_r17dp="$TMP/driftplugin-nothing"
+mkdir -p "$_r17dp/scripts" "$_r17dp/agents" "$_r17dp/skills"
+cp "$DRIFT_SRC" "$_r17dp/scripts/forgeward-rubric-drift.sh"
+chmod +x "$_r17dp/scripts/forgeward-rubric-drift.sh"
+_r17gs="$TMP/driftgstack-nothing"
+mkdir -p "$_r17gs/review/specialists" "$_r17gs/cso"
+printf 'Alpha checklist, v1.\n' > "$_r17gs/review/specialists/alpha.md"
+_r17="$(FORGEWARD_GSTACK_ROOT="$_r17gs" "$_r17dp/scripts/forgeward-rubric-drift.sh" 2>&1)"; _r17rc=$?
+case "$_r17" in
+  *"NO ported rubric could be read"*"Drift was NOT checked"*)
+    [ "$_r17rc" -eq 0 ] \
+      && ok "drift: an agents/ and skills/ holding zero rubrics reports that drift was NOT checked, in QUIET mode, and still exits 0" \
+      || nok "drift R17: reported the empty install but exited $_r17rc" "out='$_r17'" ;;
+  "") nok "drift R17: an empty install printed nothing — indistinguishable from a clean run" "rc=$_r17rc" ;;
+  *) nok "drift R17: unexpected output from an install with no ported rubrics" "rc=$_r17rc out='$_r17'" ;;
+esac
+
+# R18: THE THREE NOTE COUNTS ARE ENTRIES, NOT LINES.  ** PRE-FIX CONTROL **
+# Limit 1 of the three the 0.20.0 review filed. `n_drift`, `n_miss` and `n_bad` were
+# `printf '%s' "$x" | grep -c .` over the accumulated report strings, which counts LINES.
+# A rubric whose name carries a newline occupies two lines for one entry, so the NOTE
+# read `2 ported rubric(s) have drifted` while naming one. The name is a skill DIRECTORY
+# name or a reviewer FILENAME — both are filesystem input, not something this script
+# writes — so the over-count is reachable without touching any file's contents.
+#
+# RUN AGAINST THE PRE-FIX SCRIPT AND OBSERVED TO FAIL: `git show
+# d9fa699:scripts/forgeward-rubric-drift.sh` reports 2 on this fixture where the fixed
+# script reports 1. That is what makes this a pre-fix control rather than a restatement
+# of the fix; the entry's own text said the change "changes no output in any reachable
+# case", and this fixture is the reachable case that shows otherwise.
+#
+# The fixture is the whole cost of the entry and it is why the limit was carried rather
+# than fixed. It is CI-safe: `.github/workflows/test.yml` runs `gate-test.sh` only in
+# the `suites` job on `ubuntu-latest`, and the `windows-latest` job runs
+# `windows-hooks-test.sh` alone. It still skips LOUDLY rather than silently if a
+# filesystem refuses the name, because a skip that reads as a pass is the failure this
+# whole block is about.
+_r18nl="$(printf 'be\nta')"
+_r18dp="$TMP/driftplugin-newline"
+mkdir -p "$_r18dp/scripts"
+cp "$DRIFT_SRC" "$_r18dp/scripts/forgeward-rubric-drift.sh"
+chmod +x "$_r18dp/scripts/forgeward-rubric-drift.sh"
+_r18gs="$TMP/driftgstack-newline"
+mkdir -p "$_r18gs/review/specialists"
+printf 'Newline-named checklist, v1.\n' > "$_r18gs/review/specialists/alpha.md"
+#
+# ALL THREE COUNTERS, NOT ONE. The change replaced three tail `grep -c .` subshells, so a
+# fixture exercising only `n_drift` leaves two thirds of it unpinned -- and the two
+# unpinned ones are reachable by the same newline. Round-3 adversarial review made
+# exactly that mutation argument: `n_miss` or `n_bad` moved from `+ 1` to `+ 2` stayed
+# green against the single-counter form of this assertion, while relaying a false count
+# into a gate run. One fixture carries all three: a drifted rubric, one whose source-path
+# names a file the gstack root does not have, and one whose source-path escapes the tree.
+_r18nl2="$(printf 'ga\nmma')"
+_r18nl3="$(printf 'de\nlta')"
+if mkdir -p "$_r18dp/skills/$_r18nl" "$_r18dp/skills/$_r18nl2" "$_r18dp/skills/$_r18nl3" 2>/dev/null \
+   && [ -d "$_r18dp/skills/$_r18nl" ] && [ -d "$_r18dp/skills/$_r18nl2" ] && [ -d "$_r18dp/skills/$_r18nl3" ]; then
+  # (a) DRIFTED: the file exists and hashes to something other than the recorded digest.
+  { printf -- '---\nname: newline-skill\n---\n\n'
+    printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/alpha.md\n'
+    printf '     source-sha256: %s\n-->\n\nBody.\n' \
+      "0000000000000000000000000000000000000000000000000000000000000000"
+  } > "$_r18dp/skills/$_r18nl/SKILL.md"
+  # (b) MISSING: a well-formed provenance block naming a file that is not in the root.
+  { printf -- '---\nname: newline-skill-2\n---\n\n'
+    printf '<!-- PORTED RUBRIC\n     source-path:   review/specialists/absent.md\n'
+    printf '     source-sha256: %s\n-->\n\nBody.\n' \
+      "1111111111111111111111111111111111111111111111111111111111111111"
+  } > "$_r18dp/skills/$_r18nl2/SKILL.md"
+  # (c) MALFORMED: a `..` segment, refused by the traversal guard before any hashing.
+  { printf -- '---\nname: newline-skill-3\n---\n\n'
+    printf '<!-- PORTED RUBRIC\n     source-path:   review/../../etc/passwd\n'
+    printf '     source-sha256: %s\n-->\n\nBody.\n' \
+      "2222222222222222222222222222222222222222222222222222222222222222"
+  } > "$_r18dp/skills/$_r18nl3/SKILL.md"
+  _r18out="$(FORGEWARD_GSTACK_ROOT="$_r18gs" "$_r18dp/scripts/forgeward-rubric-drift.sh" 2>&1)"
+  _r18n="$(printf '%s\n' "$_r18out" | sed -n 's/^NOTE: \([0-9][0-9]*\) ported rubric(s) have drifted.*/\1/p' | head -1)"
+  _r18m="$(printf '%s\n' "$_r18out" | sed -n 's/^NOTE: \([0-9][0-9]*\) ported rubric(s) no longer exist.*/\1/p' | head -1)"
+  _r18b="$(printf '%s\n' "$_r18out" | sed -n 's/^NOTE: \([0-9][0-9]*\) ported rubric(s) record a source-path.*/\1/p' | head -1)"
+  [ "$_r18n" = "1" ] && [ "$_r18m" = "1" ] && [ "$_r18b" = "1" ] \
+    && ok "drift: each of the three NOTE counts reports ONE entry for a rubric whose NAME contains a newline, not the two lines it prints on" \
+    || nok "drift R18: the drift NOTE counts report LINES rather than entries" "drift='${_r18n:-NONE}' missing='${_r18m:-NONE}' malformed='${_r18b:-NONE}' (each expected 1) out='$_r18out'"
+else
+  # A SKIP THAT READS AS A PASS. This arm calls `ok()` on purpose -- a filesystem that
+  # refuses the name is not a defect in this repo and must not redden the suite -- but
+  # `ok()` increments PASS and the tally has no third figure, so the skip is invisible to
+  # anyone reading `# pass N / fail 0`. That is a property of every skip in this file, not
+  # of this one, and it is already filed against goal 11 (`TODOS.md`, "a `SKIP` counter and
+  # a third figure in the tally"). Do not fix it here: it is one line in this assertion and
+  # a suite-wide change everywhere else, and bundling the two is how the second one gets
+  # reviewed as an afterthought. Reachability, so the exposure is bounded rather than
+  # asserted away: ext4 and APFS both accept the name, and CI runs this file only in the
+  # `suites` job on `ubuntu-latest` -- the `windows-latest` job runs `windows-hooks-test.sh`
+  # alone -- so no environment that runs this assertion today is expected to take this arm.
+  ok "drift R18: SKIPPED — this filesystem refused a directory name containing a newline, so the entry-vs-line count is unverified HERE; it is verified on ubuntu-latest, which is where CI runs this suite"
+fi
+
+# R19: THE VERBOSE CANDIDATE LIST SAYS WHAT IT IS.  ** PRE-FIX CONTROL **
+# Limit 2 of the three. The diagnostic ended `Searched: %s`, which reads as a complete
+# account of where the script looked and is not one: a plugin-cache path enters the
+# candidate list only when `[ -d ]` already holds, so the cache locations that do not
+# exist were never candidates and never appear — while the explicit root and the two
+# fixed locations are appended unguarded and appear whether they exist or not. One word
+# covered both, mixing "looked here, nothing there" with "never looked", and the person
+# reading it is by definition debugging a silent run.
+#
+# RUN AGAINST THE PRE-FIX SCRIPT AND OBSERVED TO FAIL: `git show d9fa699:` prints
+# `Searched:` and neither of the two strings asserted below. The last arm keeps the old
+# word pinned as a negative so a revert reddens here rather than passing on the first
+# arm's substring.
+_r19absent="$TMP/driftgstack-never-existed"
+_r19="$(FORGEWARD_GSTACK_ROOT="$_r19absent" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r19rc=$?
+case "$_r19" in
+  *"Searched:"*)
+    nok "drift R19: the verbose diagnostic still calls the candidate list 'Searched', which claims coverage it does not have" "out='$_r19'" ;;
+  *"candidates tested:"*"$_r19absent"*"tested, not considered"*"never tested and cannot appear"*)
+    [ "$_r19rc" -eq 0 ] \
+      && ok "drift: the verbose candidate list is labelled as what was TESTED and says which candidate form can be absent from it" \
+      || nok "drift R19: correct wording but exited $_r19rc" "out='$_r19'" ;;
+  *) nok "drift R19: the verbose diagnostic does not distinguish a candidate that was tested from one that was never a candidate" "out='$_r19'" ;;
+esac
+
+# R19b: THE CACHE GUARD THE R19 WORDING DESCRIBES.  ** WRONG-FIX CONTROL **
+#
+# NOT a pre-fix control, and saying which it is is the whole obligation here: the `[ -d ]`
+# guard is UNCHANGED by this branch, so this assertion is green against
+# `git show d9fa699:scripts/forgeward-rubric-drift.sh` exactly as it is green against the
+# fixed one -- MEASURED both ways, after a first draft that was not. It has no opinion
+# about the bug R19 covers. What it pins is the plausible
+# WRONG fix, which the script's own comment names and rejects: making the candidate list
+# uniform by dropping the `[ -d ]` guard, so that cache paths appear whether they exist or
+# not. Do that and an unmatched glob puts its own literal pattern into the list, and the
+# new wording -- which promises the list is what was TESTED -- becomes false while R19,
+# which only reads the prose, stays green. Round-3 adversarial review made precisely that
+# argument against R19, and it is right about the gap and wrong that R19 is the defect:
+# R19 pins a wording change and the wording is all that changed. This is the missing half.
+#
+# `FORGEWARD_GSTACK_ROOT` must be OUT of the environment, not merely empty, because it
+# short-circuits the whole search order -- which is why R19 above cannot reach this code
+# at all. Run from `$TMP`, which is not inside a git worktree, so `--show-toplevel` fails
+# and the project-local candidate never joins the list either; that leaves exactly one
+# candidate and any `*` in the output can only have come from an unguarded glob.
+_r19bcfg="$TMP/r19b-empty-claude-dir"
+mkdir -p "$_r19bcfg"
+_r19b="$(cd "$TMP" && env -u FORGEWARD_GSTACK_ROOT CLAUDE_CONFIG_DIR="$_r19bcfg" \
+          "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r19brc=$?
+# READ BOTH WORDINGS ON PURPOSE. The first attempt matched only the new
+# `candidates tested: ` prefix, and it reddened against the pre-fix script -- not because
+# the guard was broken there (it was not; the guard is untouched by this branch) but
+# because the pre-fix script spells the same list `Searched: `. It was failing for R19's
+# reason while claiming to measure the guard, which is a check that is not there. The
+# second arm below restores independence: this assertion now has an opinion about exactly
+# one thing, and R19 is the only assertion with an opinion about the wording.
+# THREE ARMS, ONE PER WORDING THIS LIST HAS EVER HAD, AND THAT IS THE WHOLE POINT OF THE
+# BLOCK ABOVE. The fixed script prints one candidate per line under a bare
+# `candidates tested:` header (arm 1); the pre-fix script spells the same list
+# `nothing to compare. Searched: ` (arm 2); the intermediate form this branch shipped and
+# then replaced joined the list onto a `candidates tested: ` header (arm 3). An extractor
+# that reads fewer than all three makes THIS assertion fail whenever the WORDING changes,
+# which is R19's and R19c's business and not its own -- measured twice now: the first
+# draft knew only arm 1 and reddened against the pre-fix script, and the second knew arms
+# 1 and 2 and reddened under the mutation R19c exists for. Both times it was failing for
+# someone else's reason while claiming to measure the `[ -d ]` guard, which is a check
+# that is not there. `head -1` is gone with the joined form: every candidate line is
+# examined, so a `*` anywhere in the list is caught, not only one in the first entry.
+_r19bline="$(printf '%s\n' "$_r19b" | sed -n \
+  -e 's/^rubric-drift:   //p' \
+  -e 's/^rubric-drift: candidates tested: //p' \
+  -e 's/^.*nothing to compare\. Searched: //p')"
+if [ -z "$_r19bline" ]; then
+  nok "drift R19b: no candidate list was printed, so the guard is unverified" "rc=$_r19brc out='$_r19b'"
+else
+  case "$_r19bline" in
+    *"*"*) nok "drift R19b: an unmatched plugin-cache glob put its own literal pattern into the candidate list, so the list names a path that was never tested" \
+               "candidates='$_r19bline'" ;;
+    *)     [ "$_r19brc" -eq 0 ] \
+             && ok "drift: a plugin-cache candidate enters the tested list only when it exists, so an unmatched glob contributes nothing rather than its own pattern" \
+             || nok "drift R19b: guard holds but exited $_r19brc" "out='$_r19b'" ;;
+  esac
+fi
+
+# R19c: THE CANDIDATE LIST IS ONE ENTRY PER LINE.  ** MUTATION-VERIFIED CONTROL **
+#
+# WHAT IT IS, SAID PLAINLY: it is neither a clean pre-fix control nor a clean wrong-fix
+# one, and pretending otherwise is the failure the R19b comment above documents. Against
+# `git show d9fa699:` it DOES redden -- but for R19's wording reason, since the pre-fix
+# script has no `candidates tested:` line at all, so its pre-fix result carries no
+# information about the defect this assertion is for. Its evidence is MUTATION: restore
+# `printf 'rubric-drift: candidates tested: %s\n' "${gs_roots[*]:-<none>}"` in place of the
+# header-plus-per-element form and this assertion reddens on its first arm while R19 and
+# R19b both stay green. That is the whole reason it exists -- and R19b stays green there
+# only because its extractor was given an arm for this exact wording when this mutation
+# caught it failing for R19c's reason. Two assertions reading one line of output have to
+# be made independent deliberately; they are not independent by default.
+#
+# THE DEFECT. `${gs_roots[*]}` joins on the first character of IFS, so a candidate path
+# containing a space renders as two entries and one containing a newline forges an extra
+# -- in the single piece of output whose entire job is to be a precise account of which
+# roots were tested, read by someone debugging a run that said nothing. A space in
+# `HOME`, in `CLAUDE_CONFIG_DIR`, or in a plugin-cache path is ordinary on macOS and
+# Windows, and this script chooses none of the three.
+#
+# Asserting the HEADER is empty after the colon is what separates the two forms: with one
+# candidate the joined form and the per-line form carry identical text, and differ only
+# in which line it lands on.
+_r19cabsent="$TMP/drift gstack never existed"
+_r19c="$(FORGEWARD_GSTACK_ROOT="$_r19cabsent" "$DP/scripts/forgeward-rubric-drift.sh" --verbose 2>&1)"; _r19crc=$?
+_r19chdr="$(printf '%s\n' "$_r19c" | grep -c '^rubric-drift: candidates tested:$')"
+_r19centries="$(printf '%s\n' "$_r19c" | sed -n 's/^rubric-drift:   //p')"
+if [ "$_r19chdr" != "1" ]; then
+  nok "drift R19c: the candidate list is joined onto the header line, so a candidate path containing a space renders as two entries in the one output that claims to enumerate exactly what was tested" "out='$_r19c'"
+elif [ "$_r19centries" != "$_r19cabsent" ]; then
+  nok "drift R19c: the candidate entry did not survive whole onto its own line" "got='$_r19centries' want='$_r19cabsent'"
+else
+  [ "$_r19crc" -eq 0 ] \
+    && ok "drift: the verbose candidate list prints one entry per line under a bare header, so a candidate path containing a space is one entry rather than two" \
+    || nok "drift R19c: list is correct but exited $_r19crc" "out='$_r19c'"
+fi
 
 # =============================================================================
 # A25–A29 — the two repo-wide conventions, pinned.
