@@ -135,14 +135,26 @@ else
 fi
 
 claude_commands="$(jq -r '[.hooks[][] .hooks[] | .command] | join("|")' "$PLUGIN/hooks/hooks.json")"
-claude_windows_commands="$(jq -r '[.hooks[][] .hooks[] | .commandWindows] | join("|")' "$PLUGIN/hooks/hooks.json")"
-codex_windows_commands="$(jq -r '[.hooks[][] .hooks[] | .commandWindows] | join("|")' "$PLUGIN/hooks/codex-hooks.json")"
-# shellcheck disable=SC2016 # the hook variables must remain literal in the manifest
-case "$claude_commands|$claude_windows_commands|$codex_windows_commands" in
-  *'${CLAUDE_PLUGIN_ROOT}'*'forgeward-gate-check.sh expansion'*'forgeward-gate-check.sh pretooluse'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" expansion'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" pretooluse'*'%PLUGIN_ROOT%\scripts\forgeward-gate-check.cmd" prompt-submit'*)
-    ok "Claude keeps its normal command while every native-Windows route uses the tracked adapter" ;;
-  *) nok "dual-client Windows command routing" ;;
+windows_commands="$(jq -r '.hooks[][] .hooks[] | .commandWindows' "$PLUGIN/hooks/hooks.json" "$PLUGIN/hooks/codex-hooks.json")"
+windows_modes="$(printf '%s\n' "$windows_commands" | python3 -I -c 'import base64,re,sys
+for line in sys.stdin:
+    source=base64.b64decode(line.rsplit(None,1)[1]).decode("utf-16le")
+    print(re.search(r"&\$p\s+[^a-z-]*([a-z-]+)", source).group(1))')"
+windows_prefixes="$(printf '%s\n' "$windows_commands" | grep -c '^C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ')"
+windows_routing_ok=true
+# shellcheck disable=SC2016 # the hook variable must remain literal in the manifest
+case "$claude_commands" in
+  *'${CLAUDE_PLUGIN_ROOT}'*'forgeward-gate-check.sh expansion'*'forgeward-gate-check.sh pretooluse'*) ;;
+  *) windows_routing_ok=false ;;
 esac
+expected_windows_modes="$(printf '%s\n' expansion pretooluse prompt-submit pretooluse)"
+if [ "$windows_routing_ok" = true ] \
+  && [ "$windows_modes" = "$expected_windows_modes" ] \
+  && [ "$windows_prefixes" -eq 4 ]; then
+  ok "Claude keeps its normal command while native-Windows routes use the explicit system launcher"
+else
+  nok "dual-client Windows command routing"
+fi
 
 compat_docs="$(sed -n '/That is a packaging contract/,/Lifecycle handlers probe/p' "$PLUGIN/README.md")"
 compat_docs_ok=true
@@ -346,7 +358,7 @@ run_hook pretooluse "$codex_pre"
 # Version agreement across every version-bearing manifest. The Codex marketplace has
 # no version field in the current schema and points to the local plugin manifest.
 versions="$(jq -r '.version' "$PLUGIN/package.json" "$PLUGIN/.claude-plugin/plugin.json" "$PLUGIN/.codex-plugin/plugin.json"; jq -r '.plugins[0].version' "$PLUGIN/.claude-plugin/marketplace.json")"
-if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.27.0 ] \
+if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.27.1 ] \
   && [ "$(jq -r '.plugins[0].source.path' "$PLUGIN/.agents/plugins/marketplace.json")" = './' ] \
   && [ "$(jq -r '.plugins[0].name' "$PLUGIN/.agents/plugins/marketplace.json")" = forgeward ]; then
   ok "all four version-bearing manifests agree and Codex marketplace resolves locally"
