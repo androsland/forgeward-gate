@@ -469,16 +469,25 @@ definition from `hooks/hooks.json`. It must not take over the legitimate Claude 
 Claude continues loading `hooks/hooks.json` through its normal `command` entry and
 `${CLAUDE_PLUGIN_ROOT}`.
 
-The Windows adapter receives `%PLUGIN_ROOT%` quoted for paths containing spaces. It resolves
-`bash.exe` relative to `git.exe` installations on `PATH`; it never invokes bare `bash`, which may be
-the WSL launcher. The served layouts are standard Git for Windows and custom Git distributions
-with the same `cmd`/`bin` or shared-`bin` relationship, including the Laragon-style layout covered
-by the Windows suite. Ordinary non-publish Bash commands remain a legitimate allow. A system with
-no Git-Bash-compatible shell is a deliberate blind spot: the adapter exits 0 without claiming the
-guard ran, because wedging every prompt/tool call would violate Forgeward's fail-open
-lifecycle-hook policy. The adapter also cannot observe whether a Codex-owned global trust record is
-active, orphaned, or later re-materialized; only the client owns that state. These are not claims
-about other Windows Git or POSIX compatibility layers.
+Codex starts native-Windows hooks through `COMSPEC /C` and wraps each configured command as one
+raw argument. Forgeward therefore invokes
+`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly rather than resolving a
+bare `powershell.exe` that a repository could shadow, or trying to execute a batch file directly
+through `PLUGIN_ROOT`. The tracked PowerShell launcher accepts normal drive and UNC roots plus
+Win32 `\\?\` drive and `\\?\UNC\` roots. It preserves spaces, parentheses, and literal percent
+signs, normalizes the extended prefixes, and translates UNC script paths to Git Bash's
+`//server/share` spelling.
+
+The launcher resolves `bash.exe` relative to `git.exe` installations on `PATH`; it never invokes
+bare `bash`, which may be the WSL launcher. The served layouts are standard Git for Windows and
+custom Git distributions with the same `cmd`/`bin` or shared-`bin` relationship, including the
+Laragon-style layout covered by the Windows suite. Ordinary prompts and non-publish Bash commands
+remain legitimate silent allows. A missing guard adapter or a system with no proven compatible Git
+Bash is a deliberate fail-open: the hook exits 0 without claiming the guard ran, because wedging
+every prompt or tool call would violate Forgeward's lifecycle-hook policy. The launcher also cannot
+observe whether a Codex-owned global trust record is active, orphaned, or later re-materialized;
+only the client owns that state. These are not claims about other Windows Git or POSIX
+compatibility layers.
 
 Lifecycle handlers probe and read JSON with working `jq` first, then a functional `python3`, then
 `python`. PATH presence alone is not treated as proof that the Microsoft Store `python3` alias can
@@ -492,11 +501,13 @@ open with an explicit warning if neither JSON parser or its diff-hash helper is 
 committed plugin scripts in `scripts/` and `ci/` against throwaway git
 repos: `gate-test.sh`, `pre-push-test.sh`, `version-check-test.sh`,
 `dual-client-test.sh`, `windows-hooks-test.sh`, `rules-test.sh`, and `transcript-audit-test.sh`.
-The Windows suite stages the scripts unchanged under a spaced Windows temp path and invokes the
-committed `commandWindows` strings through native `cmd.exe`; on a non-Windows host it reports an
-explicit skip rather than claiming Windows coverage. Every suite prints its own count on its last
-line, so these are re-measurable rather than taken on trust; the `package.json` test script, not
-this paragraph, is the roster.
+The Windows suite stages the scripts unchanged under a Windows temp path containing spaces,
+parentheses, and a literal percent sign. It invokes the committed `commandWindows` strings through
+Codex 0.153.4's outer `COMSPEC /C` raw-command boundary, exercises normal and extended drive and
+UNC roots, and retains the pre-fix direct-batch command as a negative control. On a non-Windows
+host it reports an explicit skip rather than claiming Windows coverage. Every suite prints its own
+count on its last line, so these are re-measurable rather than taken on trust; the `package.json`
+test script, not this paragraph, is the roster.
 
 **External tools, stated because `npm test` is not self-contained.** `python3` is a hard
 requirement of `ci/check-version-monotonic.sh`: it reads the four version-bearing manifests with the stdlib

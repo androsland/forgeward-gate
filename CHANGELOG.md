@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.27.1 — 2026-09-09
+
+### Fixed
+
+- Launch native-Windows lifecycle hooks when Codex supplies `PLUGIN_ROOT` as a normal drive or
+  UNC path, or with Win32's `\\?\` drive or `\\?\UNC\` prefix. The hook calls
+  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly, and the tracked
+  launcher normalizes the root before invoking Git Bash.
+- Preserve literal percent signs, spaces, and parentheses in plugin paths, and translate UNC
+  script paths to Git Bash's `//server/share` spelling.
+- Fail open silently when the tracked guard adapter is absent or no compatible Git Bash can be
+  proven runnable.
+
+### Tests
+
+- Execute committed Windows hook definitions through Codex 0.153.4's `COMSPEC /C` raw-command
+  boundary for all four root spellings, exact allow/block/deny behavior, both supported Git
+  layouts, and both fail-open routes.
+- Retain the pre-fix direct-batch command as a negative control and assert its native exit code
+  and stderr.
+
 ## 0.27.0 — 2026-09-04
 
 ### Changed
