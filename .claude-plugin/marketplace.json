@@ -1,6 +1,6 @@
 {
   "name": "forgeward-gate",
-  "description": "Single-plugin marketplace for forgeward gate — an enforced, read-only review gate that blocks the push until every fired conformance reviewer passes.",
+  "description": "Single-plugin marketplace for Forgeward's enforced review gate and opt-in audit, CI, and local pentest skills.",
   "owner": {
     "name": "Andreas Demetriou"
   },
@@ -8,15 +8,15 @@
     {
       "name": "forgeward",
       "source": "./",
-      "description": "Enforced, read-only conformance gate. Fires privacy, accessibility, ai-output, seo, supply-chain, security and quality reviewers on the surfaces a diff touches, and blocks the push until every fired reviewer returns VERDICT: PASS. Hands off to gstack's /ship when installed.",
-      "version": "0.27.1",
+      "description": "Enforced read-only conformance gate with whole-repo audit, CI enforcement, and an explicit local-container pentest skill using OWASP ZAP plus nuclei.",
+      "version": "0.28.0",
       "author": {
         "name": "Andreas Demetriou"
       },
       "homepage": "https://github.com/androsland/forgeward-gate",
       "repository": "https://github.com/androsland/forgeward-gate",
       "license": "MIT",
-      "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain", "security", "sast"],
+      "keywords": ["gstack", "review", "gate", "privacy", "accessibility", "seo", "supply-chain", "security", "sast", "dast", "zap", "nuclei"],
       "category": "workflow"
     }
   ]

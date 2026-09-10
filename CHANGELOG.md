@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.28.0 — 2026-09-10
+
+### Added
+
+- Add explicit-only `/forgeward:pentest`: OWASP ZAP for generic DAST and nuclei for
+  application-specific HTTP templates emitted with Forgeward findings.
+- Add a deterministic Docker runner that refuses caller-controlled active targets and
+  remote Docker contexts, starts the reviewed app and scanners on one `--internal`
+  network, measures external-route isolation before boot, sanitizes the copied worktree
+  and environment, publishes no port, bounds scanner time, and tears down on exit.
+- Add an explicitly authorized ZAP baseline-only fallback when the active envelope cannot
+  be built. The fallback never runs ZAP attack rules or nuclei.
+
+### Changed
+
+- Teach audit findings and Medium/Low security-review findings to emit a confined
+  `{{BaseURL}}` nuclei template when the issue is reproducible over HTTP, or a concrete
+  not-applicable reason otherwise.
+- Recognize the skill-owned `pentest:` config subtree without letting the gate parse,
+  return, or count it as discarded configuration.
+- Replace plugin-wide “no runtime scanning” claims with the narrower truth: the gate and
+  audit remain static, pentest is separate and local-only, and nothing inspects production.
+
+### Tests
+
+- Exercise confirmation refusal, internal-network construction, fixed active targeting,
+  source and image-env scrubbing, custom-template execution, absolute-target rejection,
+  remote-context refusal, passive-only fallback, and non-HTTP URL refusal through a mocked
+  Docker boundary.
+
 ## 0.27.1 — 2026-09-09
 
 ### Fixed

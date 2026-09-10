@@ -374,8 +374,18 @@ Then, for each finding:
 - **Source**: which scanner, or `manual` for a reasoning-only finding
 - **Location**: `file:line` (must be a line the diff changed)
 - **Issue**: the vulnerability class, the input→sink path, and what an attacker achieves
+- **Exploit scenario**: the concrete request sequence an attacker would use
 - **Fix**: the specific change (parameterize with placeholders, add capability+nonce
   check, allowlist the identifier, escape the output, move the secret to config, etc.)
+- **Nuclei template**: for a Medium or Low HTTP finding that can be reproduced against a
+  disposable local instance, include one complete fenced `yaml` template. It must use
+  only an `http:` request rooted at `{{BaseURL}}`, match the vulnerable behavior (not
+  merely any 200 response), carry no credential, absolute URL, Interactsh value, workflow,
+  or non-HTTP protocol, and avoid destructive payloads beyond the state already required
+  to demonstrate the finding. For Critical/High findings, non-HTTP findings, or a probe
+  that needs real auth/external state, write `not applicable — <specific reason>`. The
+  template is unvalidated text here; `/forgeward:pentest` is the component that
+  materializes, validates, and runs it. Never write it to the repository yourself.
 
 End with exactly one line:
 `SECURITY VERDICT: PASS` if zero Critical and zero High, otherwise `SECURITY VERDICT: FAIL`.

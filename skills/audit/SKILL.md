@@ -443,10 +443,12 @@ webhook route with no verification anywhere in its chain is the finding.
 **OAuth scopes** — find OAuth configuration and check for scopes broader than the feature
 needs.
 
-**Code-tracing only — no live requests.** Trace the handler to see whether verification
-exists in a parent router, a middleware stack, or a gateway config. Do **not** send HTTP
-requests to a webhook endpoint. An audit that fires a request at a production integration
-has stopped being read-only in the only sense that matters.
+**This audit is code-tracing only — no live requests.** Trace the handler to see whether
+verification exists in a parent router, a middleware stack, or a gateway config. Do
+**not** send HTTP requests to a webhook endpoint. Runtime reproduction belongs to the
+separately invoked `/forgeward:pentest`, which attacks only a disposable local container;
+it does not relax this audit's boundary. An audit that fires a request at a production
+integration has stopped being read-only in the only sense that matters.
 
 **Severity:** CRITICAL for webhooks with no signature verification at all. HIGH for TLS
 verification disabled in production code, or overly broad OAuth scopes. MEDIUM for
@@ -662,8 +664,8 @@ placeholders), and everything between 2 and 8 is marked `TENTATIVE`.
 12. Root containers in a local-dev `docker-compose.yml` are not findings; in production
     Dockerfiles or K8s they are.
 
-**Active verification.** For each finding that clears the gate, try to prove it *without
-touching anything live*: check that a secret matches a real key format (never test it
+**Static verification.** For each finding that clears the gate, try to prove it *without
+touching anything live in this audit*: check that a secret matches a real key format (never test it
 against the provider); trace a webhook handler's middleware chain (never send a request);
 trace an SSRF path to an internal service (never make the request); parse workflow YAML to
 confirm `pull_request_target` really checks out PR code; check whether a vulnerable
@@ -735,6 +737,14 @@ Then, per finding:
 * **Category:** [Secrets | Supply Chain | CI/CD | Infrastructure | Integrations | LLM Security | Skill Supply Chain | OWASP A01-A10]
 * **Description:** what is wrong
 * **Exploit scenario:** step-by-step attack path
+  * **Nuclei template:** when this is an HTTP flaw reproducible against a disposable
+    local instance, append one complete fenced `yaml` template inside this field. It
+    must use only an `http:` request rooted at `{{BaseURL}}`, match the vulnerable
+    behavior specifically, and carry no credential, absolute URL, Interactsh value,
+    workflow, non-HTTP protocol, or need for external state. Otherwise append
+    `Nuclei template: not applicable — <specific reason>`. This is emitted text only;
+    do not write or validate it here. `/forgeward:pentest` owns materialization and the
+    real nuclei load path.
 * **Impact:** what the attacker gains
 * **Recommendation:** the specific fix, with an example
 ```
@@ -841,12 +851,12 @@ not in the room when it runs.
   about what this scan looked for, never evidence that nothing is there. For production systems handling payments, PII or health
   data, hire penetration testers. Use this between professional audits, not instead of
   them. **Print this paragraph at the end of every report.**
-- **It reads the repository, not the running system.** Platform environment variables,
+- **This audit reads the repository, not the running system.** Platform environment variables,
   secret-manager contents, WAF and gateway rules, actual branch protection, the IAM
   policy really attached in the cloud account — none of it is in the tree, and a clean
   Phase 4 says nothing about whether the checks it names are *required* in GitHub. A repo
   can pass every phase here and be misconfigured in production.
-- **It probes nothing belonging to the audited system.** No endpoint of theirs is
+- **This audit probes nothing belonging to the audited system.** No endpoint of theirs is
   contacted, no key is tested against its provider. **This is not the same as making no
   network requests, and the outbound direction is the one that matters:** the Phase 3
   audit tools reach their own registries — `npm audit` POSTs the resolved dependency tree
@@ -855,6 +865,8 @@ not in the room when it runs.
   graph to a third party. Name the tool you ran in the report so that egress is on the
   record, and use an offline mode where the tool has one. A dependency the local tooling
   cannot resolve is **unscanned**, and the report must say `SKIPPED`, never imply clean.
+  `/forgeward:pentest` is a separate, explicitly confirmed skill with its own local-only
+  runtime envelope; its existence does not authorize this audit to make requests.
 - **It cannot see what the diff-scoped gate sees, and vice versa.** This does not replace
   `/forgeward:gate` — it has no notion of a publish boundary, does not fire the a11y,
   privacy, SEO, AI-output or quality reviewers, and writes no pass marker. Nothing here

@@ -195,7 +195,7 @@ fi
 # commands. Each skill must therefore be able to recover the plugin root from its own
 # catalogued SKILL.md path without searching the versioned cache.
 skill_roots_ok=true
-for skill in gate audit ci-gate; do
+for skill in gate audit ci-gate pentest; do
   skill_file="$PLUGIN/skills/$skill/SKILL.md"
   skill_root="$(cd "$(dirname "$skill_file")/../.." && pwd)"
   [ "$skill_root" = "$PLUGIN" ] \
@@ -358,7 +358,7 @@ run_hook pretooluse "$codex_pre"
 # Version agreement across every version-bearing manifest. The Codex marketplace has
 # no version field in the current schema and points to the local plugin manifest.
 versions="$(jq -r '.version' "$PLUGIN/package.json" "$PLUGIN/.claude-plugin/plugin.json" "$PLUGIN/.codex-plugin/plugin.json"; jq -r '.plugins[0].version' "$PLUGIN/.claude-plugin/marketplace.json")"
-if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.27.1 ] \
+if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.28.0 ] \
   && [ "$(jq -r '.plugins[0].source.path' "$PLUGIN/.agents/plugins/marketplace.json")" = './' ] \
   && [ "$(jq -r '.plugins[0].name' "$PLUGIN/.agents/plugins/marketplace.json")" = forgeward ]; then
   ok "all four version-bearing manifests agree and Codex marketplace resolves locally"
