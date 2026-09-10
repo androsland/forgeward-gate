@@ -5,6 +5,48 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — runtime pentesting is an explicit local-container skill, with ZAP plus finding-specific nuclei templates
+
+**Date:** 2026-09-10 · **Version:** 0.28.0
+
+**The decision, in one line.** `/forgeward:pentest` is a fourth on-demand skill, never a
+reviewer or gate phase. OWASP ZAP owns generic DAST; nuclei runs only HTTP templates
+emitted with Forgeward findings. Active requests can target only an app Forgeward starts
+on a Docker `--internal` network, after one explicit confirmation. When that envelope
+cannot be built, the only fallback is an authorized ZAP baseline scan and it is described
+as unconfined.
+
+**Why the skill owns the boot.** A user-booted server inherits the user's real `.env` and
+can reach shared databases, payment APIs and SMTP while the scanner sees only localhost.
+The bundled runner instead copies a sanitized current worktree into a disposable container,
+passes no host environment, blanks non-runtime image environment values, publishes no port,
+drops capabilities, confines app and scanners to one internal network, and measures that a
+public IP is unreachable before application code starts. The runner accepts no active
+target URL: it constructs `http://target:<port>/<path>` itself. A remote Docker endpoint is
+also refused because it breaks the local-target authorization model.
+
+**Why nuclei does not run its catalog.** ZAP already covers the generic classes. The value
+of nuclei here is executable application knowledge: a reviewer can encode the exact header,
+sequence and vulnerable response for a logic flaw no generic scanner understands. Audit
+findings and Medium/Low gate security findings therefore emit a template inside their
+existing `exploit_scenario`/finding output; Critical/High gate findings are fixed before
+shipping instead. `/forgeward:pentest` materializes that text outside the repository,
+allow-lists a single-target HTTP shape, runs nuclei's validator, and still treats the real
+load path as authoritative because validation alone has accepted unloadable templates.
+
+**What this does not prove.** Docker's internal network is external-routing isolation, not
+a hostile-code sandbox; its gateway retains a host relationship. A secret baked into the
+application image or hidden under an unexpected filename can survive filtering. A health
+response proves only that the configured process answered. Unauthenticated local scans do
+not see authenticated paths, deployment IAM, WAFs, gateways, production secrets or external
+service behavior. The skill writes reports, never a pass marker, and no result is promoted
+to “production is secure.”
+
+**Fallback direction.** Missing Docker, a non-local Docker context, a missing app image,
+unsafe dependencies, or a failed health check removes active capability. It never widens
+the target. Baseline mode still requires the exact URL and an authorization confirmation,
+runs ZAP's passive packaged scan only, and never runs nuclei.
+
 ## DECISION — reviewer model and reasoning selection belongs to the runtime launch
 
 **Date:** 2026-08-29 · **Version:** 0.26.0
@@ -240,8 +282,11 @@ directions across twelve inputs, and against gawk, mawk and busybox awk.
    the sentence asserting the fix was itself the only place the fix had landed. No count of
    the call sites is claimed here, deliberately; `grep -rn '0, 1, 12' --include='*.md'` is
    the check, and it is cheaper to re-run than to keep a list current.
-4. **It reads the repository, not the running system.** No requests are made, and a webhook
-   or an IAM policy is audited as it is written down, never as it is deployed.
+4. **The audit reads the repository, not the running system.** No requests are made by
+   `/forgeward:audit`, and a webhook or an IAM policy is audited as written down, never as
+   deployed. This remains the audit boundary after the later `/forgeward:pentest` addition:
+   that is a separate, explicitly confirmed skill attacking only a disposable local
+   container, and it does not turn an audit run into a runtime scan.
 
 **MIT attribution.** The port is adapted rather than verbatim, and gstack's notice is
 reproduced anyway — conservatively, in `THIRD-PARTY-LICENSES.md`, with one notice covering

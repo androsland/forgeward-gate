@@ -3047,6 +3047,23 @@ E34J="$(envprobe "$EMPTY_CFG")"
   && ok "env: seo.routes and its subtree warn ZERO, and the posture after it is still read" \
   || nok "env E34" "got '$E34J'"
 
+# E34b: `pentest:` is owned by the on-demand runtime skill, not by this probe. It is
+# still a known top-level section, so the gate must neither adopt its values nor call
+# them discarded. The following standalone section proves the skip does not swallow a
+# later gate-owned key.
+mkcfg 'pentest:
+  image: app:test
+  command: npm run dev
+  port: 3000
+  health_path: /health
+standalone:
+  substitutes: [deep-audit]'
+E34BJ="$(envprobe "$EMPTY_CFG")"
+[ "$(jnum "$E34BJ" config_warnings)" = 0 ] \
+  && [ "$(jfield "$E34BJ" substitutes)" = deep-audit ] \
+  && ok "env: the skill-owned pentest subtree warns ZERO and does not swallow later gate config" \
+  || nok "env E34b" "got '$E34BJ'"
+
 # E35: the item-level bounds E14/E15 pin are counted PER ITEM, not once for the list —
 # 40 items against a 32-item cap is 8 discarded settings. Written as the arithmetic of the
 # other two caps rather than a bare 8 so this does not become a third place stating 32.

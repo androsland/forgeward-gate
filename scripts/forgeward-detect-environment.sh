@@ -62,7 +62,8 @@ gs_cso="$(probe cso)"
 
 # --- .forgeward/config.yml -----------------------------------------------------------
 # THIS IS NOT A YAML PARSER, and must never be described as one. It reads a fixed set of
-# shapes under two top-level keys and refuses everything else:
+# shapes under two top-level gate keys. It also recognizes `pentest:` as a section
+# owned by the on-demand runtime skill and deliberately skips that subtree:
 #
 #   standalone:
 #     substitutes:            # block sequence
@@ -81,7 +82,10 @@ gs_cso="$(probe cso)"
 # and still accepts any token that survives its charset and caps: it does not know the set
 # of real axis names, and is not being taught it here.
 #
-# HONOURED KEYS ARE EXACTLY `standalone.substitutes` AND `seo.posture`. `seo.routes` is
+# GATE-HONOURED KEYS ARE EXACTLY `standalone.substitutes` AND `seo.posture`.
+# `pentest:` is consumed by `/forgeward:pentest`, not returned by this probe, and is
+# recognized here only so a valid skill configuration does not increment the gate's
+# discarded-setting count. `seo.routes` is
 # named in `skills/gate/SKILL.md` and `agents/seo-reviewer.md` and is NOT read here — a
 # per-route mapping with glob keys cannot be parsed by this reader without turning it into
 # the YAML parser this header forbids, and a partially-honoured pin is worse than an
@@ -134,7 +138,7 @@ gs_cso="$(probe cso)"
 # change ship unreviewed.
 #
 # WHAT IT COUNTS — one per setting the reader was addressed by and could not use:
-#   1. a top-level key that is not `standalone:` or `seo:`
+#   1. a top-level key that is not `standalone:`, `seo:`, or the skill-owned `pentest:`
 #   2. an indented key under `standalone:` that is not `substitutes:`  (`substitues:`)
 #   3. an indented key under `seo:` that is not `posture:` or `routes:`  (`postures:`)
 #   4. a `posture:` value outside the six literals, including an empty one
@@ -148,6 +152,8 @@ gs_cso="$(probe cso)"
 #     pins it followed the docs; warning about it would fire on a legitimate configuration
 #     and train the reader to ignore the count. Its subtree is skipped by INDENT, which is
 #     the one place this reader looks at indentation as structure.
+#   - `pentest:` and everything indented under it. The on-demand skill owns those
+#     values; the gate probe neither validates nor returns them.
 #   - an empty item (`substitutes: []`, or a trailing comma). Nothing was named, so nothing
 #     was discarded.
 #   - comments and blank lines, at any indent.
@@ -274,6 +280,7 @@ elif [ -n "$cfg" ] && [ -f "$cfg" ] && [ -r "$cfg" ]; then
       # rules that already own section state instead of splitting the invariant in two.
       /^standalone:[[:space:]]*$/ { in_s=1; in_sub=0; in_seo=0; skip=0; next }
       /^seo:[[:space:]]*$/        { in_seo=1; in_s=0; in_sub=0; skip=0; next }
+      /^pentest:[[:space:]]*$/    { in_s=0; in_sub=0; in_seo=0; skip=0; next }
       /^[^[:space:]#]/            { in_s=0; in_sub=0; in_seo=0; skip=0 }
       # Flow sequence, complete on its own line. Requires the closing bracket: an
       # unterminated `[a, b` falls through to the list-closing rule and reads as nothing

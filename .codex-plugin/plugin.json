@@ -1,7 +1,7 @@
 {
   "name": "forgeward",
-  "version": "0.27.1",
-  "description": "Enforced, read-only conformance gate with diff-scoped reviewers and client-independent Git pre-push enforcement.",
+  "version": "0.28.0",
+  "description": "Enforced, read-only conformance gate plus opt-in local-container security audit and pentest skills.",
   "author": {
     "name": "forgeward"
   },
@@ -10,23 +10,28 @@
   "keywords": [
     "security",
     "code-review",
-    "quality-gate"
+    "quality-gate",
+    "dast",
+    "zap",
+    "nuclei"
   ],
   "skills": "./skills/",
   "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "Forgeward",
     "shortDescription": "Read-only review gate before publishing",
-    "longDescription": "Run only the reviewers a diff needs, require explicit PASS verdicts, and write a marker consumed by Forgeward's standalone Git pre-push hook.",
+    "longDescription": "Run only the reviewers a diff needs, enforce PASS before push, audit whole repositories, and opt into confined local DAST with ZAP and nuclei.",
     "developerName": "forgeward",
     "category": "Productivity",
     "capabilities": [
-      "Read"
+      "Read",
+      "Write"
     ],
     "websiteURL": "https://github.com/androsland/forgeward-gate",
     "defaultPrompt": [
       "Run Forgeward's read-only gate on the current diff.",
-      "Audit this repository with Forgeward."
+      "Audit this repository with Forgeward.",
+      "Run Forgeward's confined local pentest."
     ]
   }
 }

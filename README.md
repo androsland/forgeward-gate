@@ -43,7 +43,7 @@ reviewer with the explicit policy, Gate keeps its existing fail-closed behavior:
 no marker. Audit keeps its existing labeled self-verification fallback when no subagent
 facility is available.
 
-This plugin has **three distinct parts**:
+This plugin has **four distinct parts**:
 - **The gate (enforced)** — read-only reviewers, a fast in-editor reminder, and a `pre-push`
   hook that blocks an un-gated push. Everything below describes it.
 - **`/forgeward:ci-gate`** — an on-demand skill that detects your repo's real stack, drafts the
@@ -54,6 +54,10 @@ This plugin has **three distinct parts**:
   secrets, dependency supply chain, CI/CD, infrastructure, integrations, LLM security, skill
   supply chain, OWASP, STRIDE. The gate is diff-scoped and deliberately does not fire it; you
   run it before a release, after an incident, or on a schedule. Nothing enforces that it ran.
+- **`/forgeward:pentest`** — an opt-in runtime check using OWASP ZAP plus
+  finding-specific nuclei templates. Active scans run only against an app Forgeward
+  starts on an internal Docker network, after one explicit confirmation. It never fires
+  from the gate and never treats a local result as proof about production.
 
 The gate fires only the reviewers a diff's surfaces call for and **blocks the push until
 every fired reviewer returns `VERDICT: PASS`.** That refusal is the part most tooling leaves
@@ -170,11 +174,12 @@ installed, because a presence-keyed check would now read `present` everywhere an
 nothing verifies the audit was ever run. Run it deliberately: before a release, after an incident,
 when you inherit a repo. Put `deep-audit` in `standalone.substitutes` to silence the clause.
 
-**Still not covered by anything here:** the running system. Every reviewer and the audit read the
-repository, so platform environment variables, secret-manager contents, WAF and gateway rules, the
-IAM policy actually attached in the cloud account, and whether a branch protection rule is really
-required in GitHub are all outside what a PASS can mean. `/forgeward:ci-gate` moves part of the
-floor server-side; nothing here inspects production. Pin `standalone.substitutes` in
+**Still not covered by anything here:** the deployed system. Every reviewer and the audit read the
+repository, while `/forgeward:pentest` attacks only a disposable local container. Platform
+environment variables, secret-manager contents, WAF and gateway rules, the IAM policy actually
+attached in the cloud account, and whether a branch protection rule is really required in GitHub
+are all outside what a PASS can mean. `/forgeward:ci-gate` moves part of the floor server-side;
+nothing here inspects production. Pin `standalone.substitutes` in
 `.forgeward/config.yml` to silence an axis you cover another way — a disclosure that repeats after
 being answered is nagging, and nagging is how gates get switched off. (A stale `quality` entry
 there is harmless and suppresses nothing, because there is no longer a quality disclosure to
@@ -182,19 +187,29 @@ suppress.)
 
 ### `.forgeward/config.yml`
 
-Optional, and everything works without it. **Exactly two keys are honoured:**
+Optional, and everything works without it. The gate probe honours exactly two fields;
+the on-demand pentest skill separately reads its own block:
 
 ```yaml
 standalone:
   substitutes: [quality, deep-audit]   # or a block list; axes you cover another way
 seo:
   posture: private-shareable           # one of the six postures, for the whole repo
+pentest:                                # ignored by the gate; read only by /forgeward:pentest
+  image: my-app:pentest
+  command: npm run dev -- --hostname 0.0.0.0
+  port: 3000
+  health_path: /health
 ```
 
 - **`seo.routes` is documented in the skill and agent files but is NOT read.** A per-route
   mapping with glob keys would need a real YAML parser; until one exists, a repo that pins it
   is classified by detection instead. Stated here so the pin's absence of effect is not
   discovered from behaviour.
+- **`pentest` is a known but separately owned subtree.** The gate does not parse, return,
+  or act on its values and does not count them as discarded settings. The pentest skill
+  reads them only when explicitly invoked; see its section for the full schema and safety
+  boundary.
 - **It is a reader, not a YAML parser.** Block sequences, flow sequences (`[a, b]`) and
   simply-quoted scalars work; anchors, aliases, multi-document streams, escapes inside quotes
   and an indented `standalone:`/`seo:` do not. Anything it does not understand reads as *not
@@ -383,9 +398,51 @@ This validation covers `ci-gate`'s **drafting** engine (inherited from the forme
 skill); it is **additive** to the gate's own validation below and has no bearing on the
 enforcement contract. `ci-gate`'s branch-protection step is separate and always confirmed. The
 gate's own suite, security scope, and honest limits are unchanged. (This sentence used to
-carry an assertion count. It said 24 against a suite that is now 182 — a number whose only
-job is to say "unchanged" is a number nobody re-measures, so the counts live in one place,
-below.)
+carry a frozen assertion count whose only job was to say “unchanged”; current counts come
+from each suite's own last line.)
+
+## `/forgeward:pentest` — ZAP plus finding-specific nuclei probes
+
+`/forgeward:pentest` is the deliberately opt-in runtime axis. ZAP performs generic dynamic
+checks; nuclei runs only the custom HTTP templates emitted with Forgeward audit findings and
+with non-blocking Medium/Low gate findings. It does not download and sweep nuclei's community
+catalog, and the gate never invokes it.
+
+Active mode starts the application itself from the `pentest` block in
+`.forgeward/config.yml`. The bundled runner copies a sanitized view of the current worktree
+into the app container, removes host environment inheritance, starts app and scanners on one
+Docker `--internal` network, measures that a public address is unreachable, publishes no
+port, and tears the containers and network down even after failure. The runner never pulls
+or builds an application image. Immediately before scanner images are pulled, app code is
+executed, or requests are sent, the skill shows the exact command, images, paths, env names,
+templates and time bound and requires one explicit confirmation.
+
+```yaml
+pentest:
+  image: my-app:pentest             # already local; contains dependencies, no secrets
+  command: npm run dev -- --hostname 0.0.0.0
+  port: 3000
+  health_path: /health
+  target_path: /                    # optional
+  workdir: /workspace               # optional
+  env_file: .forgeward/pentest.env  # optional; disposable local/test values only
+  max_minutes: 15                   # optional, 1..60 per scanner
+  zap_image: ghcr.io/zaproxy/zaproxy:stable
+  nuclei_image: projectdiscovery/nuclei:latest
+```
+
+If Docker, a local app image, safe disposable dependencies, or the health check is missing,
+active mode refuses. The only fallback is ZAP baseline against an exact URL the user confirms
+they are authorized to scan. Baseline spiders and passively analyzes responses; it neither
+runs ZAP attack rules nor runs nuclei, and Forgeward says plainly that it did not start or
+confine that target.
+
+This is not a hostile-code sandbox or a professional penetration test. Docker documents that
+an internal network still has a gateway relationship with its host; source filtering cannot
+remove a secret baked into an image; unauthenticated scans miss authenticated routes; and a
+local result says nothing about the deployed WAF, IAM, gateway rewriting, secret store or
+service configuration. Reports and logs go outside the repository and no pass marker is
+written.
 
 ## Install
 
@@ -436,7 +493,7 @@ codex plugin add forgeward@forgeward-gate
 Codex reads `.agents/plugins/marketplace.json`, then `.codex-plugin/plugin.json`. In a fresh
 installation, that manifest routes Codex to `hooks/codex-hooks.json`, whose lifecycle events are
 `UserPromptSubmit` and `PreToolUse`. Shared skills are available through Codex's skill UI and
-`$gate`, `$audit`, and `$ci-gate` invocation forms.
+`$gate`, `$audit`, `$ci-gate`, and `$pentest` invocation forms.
 
 That is a packaging contract, not a claim that every Codex version or already-running upgrade
 session can only ever materialize that file. Codex can retain an approved `hooks/hooks.json` hash
@@ -497,10 +554,11 @@ open with an explicit warning if neither JSON parser or its diff-hash helper is 
 
 ## Validation / what's tested
 
-**Automated suites — `npm test`.** Seven suites, all framework-free, all exercising the
+**Automated suites — `npm test`.** All suites are framework-free and exercise the
 committed plugin scripts in `scripts/` and `ci/` against throwaway git
 repos: `gate-test.sh`, `pre-push-test.sh`, `version-check-test.sh`,
-`dual-client-test.sh`, `windows-hooks-test.sh`, `rules-test.sh`, and `transcript-audit-test.sh`.
+`merged-prs-landed-test.sh`, `dual-client-test.sh`, `windows-hooks-test.sh`,
+`rules-test.sh`, `transcript-audit-test.sh`, and `pentest-test.sh`.
 The Windows suite stages the scripts unchanged under a Windows temp path containing spaces,
 parentheses, and a literal percent sign. It invokes the committed `commandWindows` strings through
 Codex 0.153.4's outer `COMSPEC /C` raw-command boundary, exercises normal and extended drive and
@@ -519,7 +577,7 @@ green run that checked less than it appears to. Both differ from the **hooks**, 
 JSON with working `jq`, `python3`, or `python` and fail open when none works: for the hooks Python is
 optional, for the version check it is not.
 
-`test/gate-test.sh` (234 assertions) — the in-editor layer:
+`test/gate-test.sh` — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
   `glab mr create` are all reminded; a typed `/ship` is halted at expansion (exit 2).
 - **A delete-only push is allowed, and only that** — `--delete`, `-d` and `:refspec` forms pass;
@@ -614,6 +672,12 @@ UNVERIFIABLE and "rotate regardless" in a run that found nothing, and — with a
 broken `stat` on `PATH` — that a platform without GNU `stat` reports its permissions count as
 `UNAVAILABLE` rather than as a confident `0`.
 
+`test/pentest-test.sh` — the runtime envelope with Docker mocked at its process boundary:
+confirmation refusal before Docker, internal-network creation, fixed active targeting,
+capability dropping, worktree and image-environment scrubbing, ZAP plus custom nuclei,
+absolute-target template rejection, remote-context refusal, baseline-only fallback, and
+non-HTTP URL refusal. It deliberately does not claim a live scanner or container engine ran.
+
 **Live end-to-end.** Beyond the unit suite, the gate was exercised through a real Claude Code
 session (see `live-test/LIVE-TEST.md`): the same `git push` was observed **denied** (no marker)
 → **succeeded** (after a PASS marker) → **denied again** once a typosquatted dependency flipped
@@ -671,8 +735,9 @@ fails a gate on its own, so this widens what the gate *reports* and not what it 
 is also **not** vendored into the `ci-gate` workflow: those findings are advisory, and turning
 CI red on advice would break ci-gate's green-on-arrival rule.
 
-**Honest boundaries.** This is still *static* review — no dynamic/runtime scanning (DAST, e.g.
-OWASP ZAP) and no container-image scanning. The gate's `security-reviewer` is **diff-scoped**: it
+**Honest boundaries.** The enforced gate and whole-repo audit are still *static* review;
+the separately invoked `/forgeward:pentest` adds local-container DAST with OWASP ZAP and
+finding-specific nuclei probes. There is still no container-image scanning. The gate's `security-reviewer` is **diff-scoped**: it
 reviews the change, not the whole repo, and one LLM reviewer won't match a dedicated commercial
 SAST engine's recall. (One narrow exception: when the diff *redefines* an existing callable it
 reads the prior definition to establish a baseline — but the finding must still land on a changed
@@ -684,7 +749,8 @@ on every machine, and **nothing verifies it was run** — no marker, no state, n
 is a skill you invoke, not a gate you pass. The gate's final `/ship` handoff is established standalone as of
 0.8.0: with no gstack it writes the marker and hands back for a manual push instead of reporting
 a handoff that did not happen. Treat the `ci-gate` CI scanners as your unskippable floor. A gate
-PASS means the reviewed change is clean, not that the running application is secure.
+PASS means the reviewed change passed its diff-scoped checks, not that the running application
+or production deployment is secure; a pentest run writes no marker and changes none of that.
 
 ### 0.9.2 — if you ran the gate before this release, check for exposed secrets
 
