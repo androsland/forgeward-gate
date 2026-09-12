@@ -1,6 +1,6 @@
 {
   "name": "forgeward",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "Enforced read-only conformance gate with whole-repo audit, CI enforcement, and an explicit local-container pentest skill using OWASP ZAP plus nuclei.",
   "author": {
     "name": "forgeward"

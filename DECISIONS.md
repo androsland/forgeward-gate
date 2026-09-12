@@ -5,6 +5,69 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — pre-push scans every published commit for credentials with Gitleaks
+
+**Date:** 2026-09-12 · **Version:** 0.29.0
+
+**Engine.** The hook runs `gitleaks git --log-opts=<range> --redact` with Gitleaks'
+built-in rules. A bundled three-line config extends the binary's defaults, and a bundled
+suppression-free, comment-only ignore file replaces repository-controlled configuration and
+suppressions. Gitleaks targets Git's object directory rather than the worktree because it also
+auto-loads a root `.gitleaksignore`; the structural target separation prevents a pushed ignore
+file from suppressing this independent guard. There is no copied regex catalog and no fallback
+scanner: a second pattern set would drift, while
+the existing gate-time reviewer decision already chose Gitleaks commit-range mode and
+mandatory redaction. The human preview is deliberately stricter than “at most four leading
+characters”: it is always `[REDACTED]`, so zero credential characters leave the process.
+Only rule id, sanitized `file:line`, and ref survive JSON parsing; the full scanner result
+is neither printed nor written to an artifact.
+
+**Range and refs.** Existing refs use `remote..local`. A new ref, or a remote object absent
+from the local object database, uses the merge-base of the local commit and the pushed
+remote's default branch. With no merge-base, `git log <local-commit>` scans every reachable
+commit including its root diff — the commit-history equivalent of gstack's empty-tree diff.
+This intentionally improves on gstack's net diff: a credential added in one pushed commit
+and removed in the next still appears in a commit patch and blocks. Deletions are skipped.
+Branches and tags are both scanned; a tag must resolve to a commit, so a blob/tree tag is an
+unresolvable range and blocks. Gitleaks reads commit patches, not commit messages or annotated-tag
+messages; those metadata channels remain an explicit limit rather than an implied coverage claim.
+
+**Failure posture.** No installed Gitleaks fails open with one explicit warning, while the
+existing marker check continues. That follows Forgeward's user-machine dependency rule: a
+missing optional tool must not wedge every push, and server-side enforcement belongs to
+`/forgeward:ci-gate`. Once Gitleaks is present, an unresolvable range or any scanner crash,
+non-finding error status, or invalid JSON fails closed. Those are failed attempts to apply an
+available guard, not absent capability, and treating their empty output as clean is the exact
+failure mode the hook exists to prevent. The existing no-parser and missing diff-hash
+fail-open decisions remain unchanged.
+
+**Switch and bypass.** The scan shares `forgeward.gate=enabled`. The hook can live in a
+global `core.hooksPath`, so a separately default-on scan would inspect repositories that
+never opted into Forgeward. `FORGEWARD_SECRET_SCAN=skip` bypasses only the credential scan,
+prints that it did so, and appends a fixed-string JSON event under
+`<common-git-dir>/forgeward-security/prepush-skip.jsonl`; it accepts no free-form reason or
+ref field that could itself persist a value. Marker enforcement still applies. Git's native
+`--no-verify` continues to bypass the entire hook and cannot be observed by the hook it did
+not run.
+
+**PII.** No PII/internal tier is ported, even as a warning. The measured phone matcher fired
+on test clocks, byte counts, OAuth client ids and documented guest fixtures; a warning on the
+common clean push is an ignore-training mechanism. Gitleaks' credential findings block;
+Forgeward prints no non-blocking scan tier.
+
+**Provenance.** No gstack regex or engine text is copied. The range selection is an
+independent shell implementation of Git operations, and Gitleaks supplies its own rule set at
+runtime. Therefore `THIRD-PARTY-LICENSES.md` gains no redistributed source entry, no upstream
+source sha256 is applicable, and `forgeward-rubric-drift.sh` must not watch this configuration:
+it monitors copied prose snapshots, not a separately installed executable's built-in rules.
+
+**Hook composition.** If the effective `pre-push` is gstack's managed wrapper, the installer
+writes Forgeward to its reserved `pre-push.local` slot and leaves the wrapper byte-identical.
+It refuses an occupied foreign slot and still refuses every other foreign `pre-push`. The
+unterminated-last-line condition is load-bearing: gstack captures stdin with command
+substitution, stripping Git's final newline before replaying it, so Forgeward's read loop must
+process a final record even when `read` returns non-zero.
+
 ## DECISION — runtime pentesting is an explicit local-container skill, with ZAP plus finding-specific nuclei templates
 
 **Date:** 2026-09-10 · **Version:** 0.28.0

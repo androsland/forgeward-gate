@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.29.0 — 2026-09-12
+
+### Added
+
+- Scan every pushed branch and commit-resolving tag with Gitleaks in commit-history mode,
+  independently of PASS-marker freshness, and block credentials with fully redacted
+  rule/file/line output.
+- Add a visible, value-free logged `FORGEWARD_SECRET_SCAN=skip` escape hatch while retaining
+  Git's native `--no-verify` bypass.
+
+### Changed
+
+- Fail open loudly when the optional Gitleaks binary is absent, but fail closed when a
+  pushed range cannot resolve or an installed scanner fails or returns invalid JSON.
+- Install as `pre-push.local` when gstack's managed hook owns `pre-push`, without modifying
+  that wrapper or overwriting any foreign hook.
+- Drop the PII/internal warning tier; the push guard reports only blocking credential
+  findings and the status of missing or bypassed capability.
+
+### Tests
+
+- Cover new branches, hash-excluded `TODOS.md` changes after PASS, add-then-remove history,
+  tags, safe fixtures, output non-disclosure, parser agreement, scanner failure, bypass
+  logging, gstack chaining, foreign-hook preservation, and optional live Gitleaks controls.
+
 ## 0.28.0 — 2026-09-10
 
 ### Added

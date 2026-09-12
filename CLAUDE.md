@@ -232,6 +232,21 @@ commit that was fixing it — a line number cannot survive its own fix.
 
 ## Running other people's tools
 
+- **The push-time credential scan is commit-wise Gitleaks with full redaction, never a
+  working-tree walk or net diff.** `remote..local` preserves every pushed commit, so a
+  credential added and later removed still fires; the new/missing-remote fallback uses a
+  merge-base or all commits reachable from the local tip. Only parsed rule id,
+  `file:line`, ref and the constant `[REDACTED]` may leave the scanner process. Do not
+  relay raw JSON or stderr, add a partial-redaction percentage, or let repository config
+  and ignore files replace the bundled defaults.
+- **Missing optional scanner and failed available scanner are different postures.** No
+  Gitleaks fails open loudly on a user machine while marker enforcement continues. Once
+  found, an unresolvable range, crash, non-finding error, or invalid JSON fails closed;
+  an attempted guard returning no trustworthy answer is not the same as absent capability.
+- **A pre-push stdin reader must accept a final unterminated record.** gstack's managed
+  wrapper captures stdin with `$(cat)`, which strips Git's trailing newline before it
+  pipes the payload through `pre-push.local`. A plain `while read ...; do` sees zero refs
+  on the ordinary one-ref push and silently disables the chained hook.
 - **Allow-list the subcommand; never deny-list flags.** `gitleaks` ships `detect --no-git`
   and `protect` as HIDDEN in 8.30.1 — absent from `--help`, still live, the same
   filesystem walk under older names, and all three read an untracked file before the guard
