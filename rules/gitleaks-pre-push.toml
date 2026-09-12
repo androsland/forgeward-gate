@@ -1,0 +1,5 @@
+# Keep the push-time guard on Gitleaks' built-in rule set. An explicit config wins
+# over a repository's .gitleaks.toml and GITLEAKS_CONFIG(_TOML), so content in the
+# branch being pushed cannot weaken the local guard.
+[extend]
+useDefault = true

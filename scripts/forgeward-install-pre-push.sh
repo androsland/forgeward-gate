@@ -10,6 +10,9 @@
 #      this installer. That is why the opt-in exists.
 #
 # Idempotent. Refuses to clobber a foreign pre-push — prints how to chain instead.
+# gstack's managed wrapper is the one recognized exception: it deliberately chains
+# `pre-push.local` in the effective hooks dir, so forgeward installs there without
+# modifying gstack.
 set -euo pipefail
 
 # Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
@@ -21,6 +24,7 @@ repo="${1:-$(pwd)}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 enforcer="$here/forgeward-pre-push.sh"
 marker_line="# forgeward-pre-push enforcement"
+gstack_marker="# gstack-redact pre-push (managed)"
 
 [ -x "$enforcer" ] || { echo "error: enforcer not found/executable: $enforcer" >&2; exit 1; }
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || { echo "error: not a git repo: $repo" >&2; exit 1; }
@@ -35,21 +39,26 @@ mkdir -p "$(dirname "$hook")"
 
 hooks_path_cfg="$(git -C "$repo" config --get core.hooksPath || true)"
 
-if [ -e "$hook" ] && ! grep -qF "$marker_line" "$hook" 2>/dev/null; then
+target="$hook"
+if [ -f "$hook" ] && grep -qF "$gstack_marker" "$hook" 2>/dev/null; then
+  target="$(dirname "$hook")/pre-push.local"
+fi
+
+if [ -e "$target" ] && ! grep -qF "$marker_line" "$target" 2>/dev/null; then
   echo "A pre-push hook already exists and is not forgeward's:" >&2
-  echo "  $hook" >&2
-  echo "Left it untouched (opt-in is set). To chain forgeward, add inside that hook:" >&2
+  echo "  $target" >&2
+  echo "Left it untouched (the repo was not opted in). To chain forgeward, add inside that hook:" >&2
   echo "  \"$enforcer\" \"\$@\" || exit 1" >&2
   exit 1
 fi
 
-cat > "$hook" <<HOOK
+cat > "$target" <<HOOK
 #!/usr/bin/env bash
 $marker_line — gates every pushed ref against its /forgeward:gate marker.
 # Enforces only in repos with 'git config forgeward.gate enabled'. Bypass: --no-verify
 exec "$enforcer" "\$@"
 HOOK
-chmod +x "$hook"
+chmod +x "$target"
 
 # Opt in only AFTER the hook is in place, so a refused/failed install never leaves a
 # repo flagged as gated without a working hook.
@@ -57,8 +66,11 @@ git -C "$repo" config forgeward.gate enabled
 
 echo "forgeward: pre-push enforcement enabled for this repo."
 echo "  opt-in:   git config forgeward.gate = enabled  (in $repo)"
-echo "  hook:     $hook"
+echo "  hook:     $target"
 echo "  enforcer: $enforcer"
+if [ "$target" != "$hook" ]; then
+  echo "  chained:  gstack's managed pre-push runs this pre-push.local first"
+fi
 if [ -n "$hooks_path_cfg" ]; then
   echo "  NOTE: core.hooksPath is set ($hooks_path_cfg), so this hook is SHARED across"
   echo "        your repos — but it enforces ONLY where forgeward.gate is enabled, so"
@@ -70,4 +82,7 @@ echo "    - 'git push --no-verify' skips it (a deliberate, visible opt-out)."
 echo "    - the marker is a local file; it can be forged by anyone with repo access."
 echo "    - git hooks are not cloned; re-run this installer in a fresh clone, and after"
 echo "      a forgeward plugin update (the enforcer path is baked into the hook above)."
+echo "    - the credential scan needs Gitleaks; without it the hook warns and keeps only"
+echo "      marker enforcement active. FORGEWARD_SECRET_SCAN=skip bypasses that scan"
+echo "      visibly and logs a value-free event under the repository's common git dir."
 echo "  For an unbypassable boundary, gate the MERGE server-side with /forgeward:ci-gate."

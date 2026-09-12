@@ -275,24 +275,45 @@ pentest:                                # ignored by the gate; read only by /for
      with `scripts/forgeward-install-pre-push.sh`. Git runs it *inside* the push and hands it the
      exact refs + SHAs on stdin, after the shell has resolved `git -C` / quoting / `$vars` /
      `xargs` — so none of those can evade it. It blocks the push if any branch ref being pushed
-     lacks a fresh marker. It is **opt-in per repo** (`git config forgeward.gate enabled`, set by
-     the installer), so it is safe to live in a shared/global `core.hooksPath` dir — a no-op
-     everywhere except repos that opted in.
+     lacks a fresh marker. Independently, when Gitleaks is installed, it scans every pushed
+     branch or commit-resolving tag in commit-history mode and blocks credentials even when the
+     marker is fresh. That includes `VERSION`, `CHANGELOG*` and `TODOS.md`, which are intentionally
+     omitted from the marker hash. It is **opt-in per repo** (`git config forgeward.gate enabled`,
+     set by the installer), so it is safe to live in a shared/global `core.hooksPath` dir — a
+     no-op everywhere except repos that opted in.
+
+The credential scan uses Gitleaks' built-in rules through an explicit Forgeward config and
+suppression-free ignore file. It targets Git's object directory instead of the worktree, so a
+pushed `.gitleaks.toml`, `.gitleaksignore`, or config environment variable cannot weaken it.
+`--redact` is mandatory. Findings show only rule id, `file:line`, ref, and
+`preview=[REDACTED]`; Forgeward discards the rest of the scanner JSON and never writes it to an
+artifact. It blocks credentials and prints no PII/internal warning tier. Existing refs scan
+`remote..local`; a new ref or locally missing remote object uses the merge-base with that remote's
+default branch, then scans all commits reachable from the local tip when no merge-base exists (the
+commit-history equivalent of an empty-tree diff). Because commits are scanned individually, a
+credential added in one pushed commit and removed in the next still blocks. A tag that does not
+resolve to a commit cannot produce that range and fails closed. Annotated-tag messages and commit
+messages are metadata rather than file patches and are not inspected.
 
 **Honest limits — strong, not indestructible.** `git push --no-verify` skips the pre-push hook;
-the marker is a local file that can be forged; git hooks are not cloned (re-install in a fresh
-clone, and after a plugin update — the enforcer path is baked into the installed hook). No
-purely-local gate escapes these. For an **unbypassable** boundary, gate the MERGE server-side
-with the CI-gate skill (required checks + branch protection). Lifecycle hooks are intentionally
-fast feedback, not a complete policy boundary: Codex does not expose every hosted tool through
-`PreToolUse`, and neither client can reliably infer resolved Git refs from shell command text.
+`FORGEWARD_SECRET_SCAN=skip` skips only its credential scan and records a value-free event under
+the repository's common git dir; the marker is a local file that can be forged; git hooks are not
+cloned (re-install in a fresh clone, and after a plugin update — the enforcer path is baked into
+the installed hook). The scan cannot inspect a clone where the hook was never installed,
+binary/LFS content, submodule contents, commit/tag messages, encoded or split secrets reliably,
+or anything already reachable from the remote boundary. No purely-local gate escapes these. For an **unbypassable**
+boundary, gate the MERGE server-side with the CI-gate skill (required checks + branch protection).
+Lifecycle hooks are intentionally fast feedback, not a complete policy boundary: Codex does not
+expose every hosted tool through `PreToolUse`, and neither client can reliably infer resolved Git
+refs from shell command text.
 
 The marker pins a hash of the **reviewed code and dependencies** (`base...HEAD`), excluding
 only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and exact
 version-field-only bumps in the four version-bearing package/client manifests. Any other
-manifest change, and any change to source **or dependencies** after the
-gate flips the hash and forces a re-gate — a dependency added between gate and push does
-**not** sail through.
+manifest change, and any change to source **or dependencies** after the gate flips the hash and
+forces a re-gate — a dependency added between gate and push does **not** sail through. The
+push-time credential scan is separate from that hash and still reads commits touching every one
+of those excluded paths.
 
 ## Turn on enforcement (one command per repo)
 
@@ -313,10 +334,14 @@ bash "$FORGEWARD_PLUGIN_DIR/scripts/forgeward-install-pre-push.sh" /path/to/repo
 
 (The script lives in the plugin's `scripts/` dir — adjust the path if your plugins live
 elsewhere.) It sets the per-repo opt-in (`git config forgeward.gate enabled`) and installs the
-hook into the repo's effective hooks dir (honoring `core.hooksPath`). From then on, **any**
+hook into the repo's effective hooks dir (honoring `core.hooksPath`). If that hook is gstack's
+managed redaction wrapper, Forgeward installs as its `pre-push.local`, which gstack runs first
+with the same stdin; every other foreign hook is left untouched. From then on, **any**
 `git push` from that repo — Claude Code, Codex, or a plain terminal — is blocked unless the branch
-has passed the Forgeward gate. Re-run it in a fresh clone and after a plugin update (git hooks aren't
-cloned, and the enforcer path is baked into the installed hook).
+has passed the Forgeward gate. Install Gitleaks as well to activate the independent credential
+scan; if it is absent the hook says so and keeps marker enforcement active. Re-run the installer
+in a fresh clone and after a plugin update (git hooks aren't cloned, and the enforcer path is
+baked into the installed hook).
 
 Turn it back **off** for a repo (leaves any shared hook in place; just no-ops there):
 
@@ -332,11 +357,12 @@ The three layers stack — pick per repo:
 |---|---|---|
 | A heads-up in Claude Code before an ungated push | install the plugin | anything (it's only a reminder) |
 | A heads-up in Codex before an ungated push | install the plugin and trust its hooks with `/hooks` | anything (it's only a reminder) |
-| Ungated pushes **blocked** on your machine | run the installer above (per repo) | `git push --no-verify`, or forging the local marker |
+| Ungated pushes **blocked** and pushed credentials scanned on your machine | run the installer above (per repo), and install Gitleaks | `git push --no-verify`; marker checks can also be bypassed by forging the local marker, and the credential scan alone by its logged environment switch |
 | An **unbypassable** gate for everyone, any machine | `/forgeward:ci-gate` → GitHub required check + branch protection | only a deliberate repo-admin override |
 
-Rows 1–2 are local convenience and honest-mistake protection. The server-side check (row 3) is
-the only *hard* guarantee — that's where enforcement lives when it must not be skippable.
+The first two rows are editor convenience and the third is local honest-mistake protection.
+The final, server-side row is the only *hard* guarantee — that's where enforcement lives when it
+must not be skippable.
 
 ## `/forgeward:ci-gate` — draft the CI, then enforce it
 
@@ -575,7 +601,11 @@ without it gets a named failure, never a quiet skip. `semgrep` is optional — w
 `rules-test.sh` prints `1..0 # SKIP` and says the rulepack was **not** verified, which is a
 green run that checked less than it appears to. Both differ from the **hooks**, which read
 JSON with working `jq`, `python3`, or `python` and fail open when none works: for the hooks Python is
-optional, for the version check it is not.
+optional, for the version check it is not. Gitleaks is optional on user machines: when present,
+the pre-push hook uses it for the credential scan; when absent, the hook warns and fails open for
+that scan while preserving marker enforcement. `pre-push-test.sh` always exercises the hook with
+a deterministic redacted stand-in and adds live positive/negative controls when the real Gitleaks
+binary is installed.
 
 `test/gate-test.sh` — the in-editor layer:
 - **Deny when there's no fresh PASS marker** — `git push`, `gh pr create`, and
@@ -1006,6 +1036,10 @@ fires — the line is tracked vs untracked, not the filename.
   that enforcement is unavailable. Install `jq` or Python. With a parser present, the
   standalone Git `pre-push` hook is the client-independent enforcement boundary and validates
   resolved refs rather than shell text.
+- **If Gitleaks is absent, the push-time credential scan fails open loudly.** Marker enforcement
+  still runs. An unresolvable pushed range or a present-but-failing scanner is different: both
+  block, because allowing an attempted scan whose result is unknown would silently defeat the
+  guard. Server-side enforcement belongs to `/forgeward:ci-gate`.
 
 ## License
 

@@ -1,0 +1,2 @@
+# Intentionally empty: a repository-controlled .gitleaksignore must not suppress
+# the independent push-time guard.
