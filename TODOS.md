@@ -949,6 +949,17 @@ themselves so that none of them requires the commit to be actionable.
   the guard addresses. Revisit only if forgeward ever runs scanners against a tree a
   less-trusted process can write. (security review, 2026-08-10) **Priority:** P3
 
+- **`supply-chain-reviewer` still permits `npm audit`, which `/forgeward:audit` now
+  forbids.** (0.30.0 re-port, 2026-10-13) The reviewer's osv-scanner bullet says
+  "`npm audit` itself is acceptable only where a lockfile is already committed". Phase 3
+  of the re-ported audit forbids every package manager's own audit on the host, because it
+  loads the audited project's configuration: a project `.npmrc` can redirect the registry
+  and expand environment tokens into the request. The lockfile condition does not change
+  that. The same reasoning applies to a gate run on a branch you were sent to review.
+  **Not fixed here:** changing what a gate reviewer may execute is a reviewer-prompt change
+  with its own blast radius, and it should not ride along in a rubric re-port. **What would
+  settle it:** delete the `npm audit` sentence, leave osv-scanner and trivy as the only CVE
+  sources, and keep "states the gap" for a machine with neither. **Priority:** P2
 ## Standalone posture (no gstack installed)
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
@@ -1249,6 +1260,39 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   against and a dishonest re-port updates both at once. A `git log` based check against
   gstack's `review/specialists/` would be a better instrument than a hash, but it needs a
   gstack **checkout**, not an install, which most machines will not have. **Priority:** P3
+
+  **0.30.0 (2026-10-13) is the first re-port, and it shows the honesty half is real.** It
+  was prompted by a person reading the drift line in a gate run, which is still the only
+  trigger. The recorded `source-commit` (`9ca8f1d7…`) was **unreachable** in the installed
+  clone, which is shallow, so the diff base was found by hash rather than by commit: the
+  recorded `source-sha256` matched the file at `a861c00c`, the shallow root. That worked
+  only because the hash was honest. A re-port whose hash had been edited to match would
+  have left no base to diff from, and nothing would have said so. A commit id that the
+  installed copy cannot resolve is not evidence of anything.
+- **`maintainability-reviewer` reports a shared-helper extraction itself at Low, where
+  upstream defers it to "the core shared-code check".** (0.30.0 re-port, 2026-10-13)
+  Upstream's 2026 checklist replaced "DRY Violations" with "Duplicated Behavior with
+  Defects" and moved optional extractions to a core check in gstack's `/review`. This gate
+  has no such check, and the two rules above forbid the move: forgeward owns `quality`
+  outright and never names gstack as an owner, and an axis deferred to a gstack skill went
+  silently uncovered once already. The checklist stays verbatim so drift stays detectable;
+  the agent's "Reading the ported checklist" section overrides that one sentence. The Low
+  pin means the blocking surface is unchanged. **Revisit if** this repo ever grows its own
+  shared-code reviewer. **Priority:** P4
+- **`testing-reviewer` keeps three forgeward decisions that the 0.30.0 checklist reads
+  differently.** (0.30.0 re-port, 2026-10-13) All three are in the agent's "Reading the
+  ported checklist" section. The checklist itself is verbatim.
+  - **A test that asserts nothing stays High.** Upstream now lists assertion-free probes
+    among its INFORMATIONAL low-value patterns. Here a test that cannot fail is a false
+    green on the axis, which is what the Severity section has blocked on since 0.17.0.
+    Lowering it would narrow what the gate blocks, and nothing in this repo decided that.
+  - **A path covered only by weak tests is Medium.** Upstream says to keep "the existing
+    severity", which for a security path is High. That would widen the blocking surface.
+    This repo widens it only deliberately and on the record, as the a11y entry in
+    `CLAUDE.md` shows, so the re-port does not do it as a side effect.
+  - **The "Repo-wide sweep: run /test-audit" suffix is dropped.** It names a gstack skill
+    this gate neither ships nor depends on.
+  **Revisit** any of the three as its own decision, not as part of a re-port. **Priority:** P4
 - **forgeward still describes itself as a gate *for gstack*, and three of five couplings
   remain.** (0.17.0, 2026-08-26; re-counted 0.19.0) The quality port closed one and the
   audit port closed a second, so two of five are shut. The list below is the five
@@ -1490,6 +1534,35 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   is a new path convention, a reaping policy and a collision story, none of which the port
   needed. Do not fix it by writing into the repo. **Priority:** P4
 
+- **Re-port Phase 12 (and with it 0, 1, 13, 14) so the held-back Phases 2-11 changes can
+  land.** (0.30.0 re-port, 2026-10-13) Upstream moved its false-positive policy out of the
+  phases and into a Phase 12 that now says: "Do not apply blanket exclusions for
+  development dependencies, availability/resource attacks, historical secrets, user-role
+  prompt injection, or gstack-owned skills… UUIDs do not provide authorization;
+  user-controlled URL paths can still cross a sensitive boundary; environment variables may
+  originate from untrusted workflows." forgeward's Phase 12, ported at `ad840054`, still
+  carries hard exclusions #1, #12, #13, #18, #19 and #20 and precedents #2, #3, #11 and #12,
+  which say the opposite. Porting the new Phases 2-11 whole would have made the skill
+  contradict itself. These five reversals were therefore held back, and each phase keeps
+  its old false-positive rule:
+  - **Phase 2:** a secret committed and removed in the same initial PR (#18).
+  - **Phase 3:** the CVSS floor (#19). The dev-dependency ceiling *was* removed, because no
+    Phase 12 rule depends on it.
+  - **Phase 4:** `pull_request_target` with no checkout of PR code (precedent #11).
+  - **Phase 5:** dev-only filenames and localhost (precedent #12, #20).
+  - **Phase 7:** the message-role rule (#13).
+  **What would settle it:** a Phase 12 re-port from `cso/SKILL.md`, which is not
+  hash-pinned (see the entry above). Do it as one change, so that the exclusion list and
+  the phases it governs move together. **Priority:** P2
+- **Upstream's scanner contract was ported only as far as the wrapper reaches.** (0.30.0
+  re-port, 2026-10-13) Phases 2-11 at `dbf400ec` refer to machinery forgeward does not
+  have. None of it was ported: Schemathesis, CodeQL and SARIF import, zizmor wiring, the
+  helper, sandbox and runtime catalog, and the Node/Bun/Python/Rails acquisition matrix.
+  Each would need a `forgeward-scan.sh` arm, or a runtime the audit does not run in. The
+  skill's *Scanner evidence* section carries only the part that fits: osv-scanner and trivy
+  through the wrapper, coverage read from stderr, and the measured exit-127 `--offline`
+  behaviour. **Not a defect;** this records the boundary so that a later re-port does not
+  read the gap as an oversight. **Priority:** P4
 ## Property-based testing
 
 - **Build `/forgeward:properties` as an on-demand skill, never a 7th reviewer.** Shaped
@@ -1674,7 +1747,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Housekeeping
 
-- **`test/dual-client-test.sh:303` pins the release version as a literal, so every bump
+- **`test/dual-client-test.sh` pins the release version as a literal, so every bump
   hand-edits an assertion whose stated property is agreement, not value.** (surfaced by
   the 0.27.0 re-land, 2026-09-04) The assertion collects `.version` from all four
   manifests and compares `sort -u` against `0.26.0`; the 0.27.0 bump turned it red and the
@@ -1696,6 +1769,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   permits — it enforces "never backward", so four manifests agreeing at an unbumped value
   pass both checks. **Not urgent and deliberately not fixed here:** a release-mechanics
   change riding along inside a prompt re-land is the bundling this repo's own rule refuses.
+  0.30.0 retyped it again. `git log --first-parent -G` on the literal finds six earlier
+  merges on `master` that changed the line: #56, #58, #62, #66, #67 and #68.
   **Priority:** P3
 
   **`CHANGELOG.md` is the second member of the same class and it fails the OTHER way,
@@ -2436,6 +2511,20 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **The three drifted rubrics are re-ported from gstack `dbf400ec`.** (0.30.0, branch
+  `chore/report-gstack-rubrics`, 2026-10-13. **Not merged when this was written.** Check
+  with `git merge-base --is-ancestor` before reading it as landed.) The drift script flagged
+  `maintainability-reviewer`, `testing-reviewer` and `audit` on a gate run. After this
+  branch, it prints nothing. The two reviewer checklists are verbatim upstream. Audit Phases
+  2-11 are re-ported except for the five reversals that the unported Phase 12 contradicts.
+  Five entries were filed above:
+  - the maintainability deferral;
+  - the testing reviewer's three kept decisions;
+  - the Phase 12 re-port;
+  - the scanner-contract boundary;
+  - the supply-chain `npm audit` contradiction.
+  No goal draws any of the five yet. The re-port entry under `## Quality axis` gained its
+  first data point: the recorded commit was unreachable, and only the hash found the base.
 - **The ported quality axis is verified by something other than the port — as far as
   anything short of a person at a terminal can verify it.** (goal 1; branch
   `test/quality-axis-verification`, 2026-09-04 — **not merged at the time of writing**;
