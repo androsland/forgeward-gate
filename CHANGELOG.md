@@ -20,21 +20,41 @@
   and private networks no longer cap severity, an unpinned third-party action is HIGH only
   on a traced chain to a credential or write capability, and the no-fix-available
   exclusion is gone.
-- `testing-reviewer`: a test that cannot fail, including a self-comparison, stays High; a
-  weak test does not replace a deleted one; and the new `gstack:test-value keep` marker and
-  retention bar lower only the low-value grading, never a High.
+- `testing-reviewer`: a test that cannot fail, including a self-comparison, stays High,
+  and does not replace a deleted test; a smoke check that replaces one is Medium. The new
+  `gstack:test-value keep` marker and retention bar lower only the low-value grading, never
+  a High, and the reviewer never repeats a marker's reason text.
 
 ### Fixed
 
 - `/forgeward:audit` passes `--config /dev/null` to every trivy call, so the audited repo's
   `trivy.yaml` cannot redirect the report to a path it chooses (measured on trivy 0.74.0).
-  It never opens a tracked `.env`, scanning it through redacted gitleaks instead, runs every
-  scanner offline, runs zizmor with no GitHub token, and never fetches the ASVS standard.
-  The gate's reviewers have the same trivy exposure; it is filed at P1 in `TODOS.md`.
+  It never opens a tracked `.env`, scanning it through redacted gitleaks instead. It gives
+  each trivy subcommand only the offline flags that subcommand accepts, runs osv-scanner
+  offline, runs zizmor with no GitHub token, and never fetches the ASVS standard. The
+  gate's reviewers have the same trivy exposure; it is filed at P1 in `TODOS.md`.
+- `/forgeward:audit` keeps commit messages out of the transcript. On gitleaks 8.30.1,
+  `--redact` blanks a history finding's secret but leaves the commit message, which can
+  quote the credential. Phase 2 now passes gitleaks JSON through a `jq` filter that keeps
+  only the rule id, file, line, commit and entropy. Its `git log` searches print the commit
+  hash instead of the subject.
+- `/forgeward:audit` lists and scans tracked `.env` files in one loop that reads each name
+  as data, so a committed filename holding `$(…)` cannot run. It also finds `.env.*` files
+  below the repository root, which the old pathspec missed.
+- `/forgeward:audit` scans development dependencies with trivy's `--include-dev-deps`, now
+  that they no longer cap severity, and reports pnpm and other uncovered ecosystems as a
+  gap.
+- `/forgeward:audit` hands a secret candidate's Phase 12 verifier the filtered scanner
+  record, never the file, and that record satisfies the quote rule. This is forgeward's own
+  rule, not part of the upstream port.
 
 ### Tests
 
 - Bump the manifest version-agreement literal in `test/dual-client-test.sh` to 0.30.0.
+- R6b: each ported reviewer's `source-commit` must appear in its row of
+  `THIRD-PARTY-LICENSES.md`.
+- P8n: a scanner the wrapper cannot find exits 127 with exactly the stderr line
+  `/forgeward:audit` tells the model to look for.
 
 ### Docs
 

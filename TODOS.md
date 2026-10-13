@@ -975,10 +975,16 @@ themselves so that none of them requires the commit to be actionable.
   its environment, and trivy with `--config /dev/null`. The wrapper bounds report paths and
   the gitleaks target, and nothing else per tool. Prose is not a control, and the
   osv-scanner rule can name only the two languages 2.5.1 lists, so a language a later
-  release turns on would not be covered. **What would settle it:** per-tool arms in the
+  release turns on would not be covered. The second review pass added three more prose-only
+  rules. Each trivy subcommand gets its own offline flags, because `trivy config` rejects
+  `--skip-db-update` and `--offline-scan` outright. The dependency scan carries
+  `--include-dev-deps`. And gitleaks JSON goes through a `jq` field filter, because
+  `--redact` leaves a history finding's commit message intact. The wrapper enforces none of
+  them. **What would settle it:** per-tool arms in the
   shape `_gl_target_guard` already has: refuse `--serve` and every `--call-analysis` value
-  for osv-scanner, unset `GH_TOKEN` and `GITHUB_TOKEN` for zizmor, and require
-  `--config /dev/null` for trivy (the P1 above). Allow-list, never deny-list, as
+  for osv-scanner, unset `GH_TOKEN` and `GITHUB_TOKEN` for zizmor, require
+  `--config /dev/null` for trivy (the P1 above), and emit only the parsed fields of a
+  gitleaks finding, as `forgeward-pre-push.sh` already does. Allow-list, never deny-list, as
   `CLAUDE.md` says. **Priority:** P2
 
 - **`supply-chain-reviewer` still permits `npm audit`, which `/forgeward:audit` now
@@ -1314,12 +1320,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   upstream defers it to "the core shared-code check".** (0.30.0 re-port, 2026-10-13)
   Upstream's 2026 checklist replaced "DRY Violations" with "Duplicated Behavior with
   Defects" and moved optional extractions to a core check in gstack's `/review`. This gate
-  has no such check, and the two rules above forbid the move: forgeward owns `quality`
+  has no such check, and two `CLAUDE.md` rules forbid the move: forgeward owns `quality`
   outright and never names gstack as an owner, and an axis deferred to a gstack skill went
   silently uncovered once already. The checklist stays verbatim so drift stays detectable;
   the agent's "Reading the ported checklist" section overrides that one sentence. The Low
-  pin for an extraction, and a Medium ceiling for a divergent copy's defect (anything worse
-  is named to the reviewer that owns it), mean the blocking surface is unchanged. Upstream's
+  pin for an extraction, and a Medium ceiling for a divergent copy's defect, mean the
+  blocking surface is unchanged. A security or performance defect in the copy is attributed
+  to the reviewer that owns it, which blocks nothing by itself, and the load-bearing
+  dead-code High still applies. Upstream's
   "report the concrete defect" alone would have let a High through here. **Revisit if**
   this repo ever grows its own shared-code reviewer. **Priority:** P4
 - **`testing-reviewer` keeps forgeward's blocking surface where the 0.30.0 checklist would
@@ -1332,12 +1340,13 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
     with `expect(true)` as its example. Lowering it would narrow what the gate blocks, and
     nothing in this repo decided that. The first draft kept only the assertion-free case
     and let self-comparisons fall to Low; the branch's own review caught it.
-  - **A weak test does not replace a deleted one.** A deleted test whose only replacement
-    cannot fail, or is a smoke check of the same path, is still "deleted with nothing
-    replacing it". The checklist's own "a low-value test never closes a gap" says the same.
-    This is how the 0.17.0 rule reads, not a widening of it: what the deleted test checked
-    is no longer checked by anything. Without it, the new weak-only Medium rule could be
-    read as lowering that High.
+  - **A test that cannot fail does not replace a deleted one.** A deleted test whose only
+    replacement cannot fail is still "deleted with nothing replacing it", which is High,
+    because nothing checks what the deleted test checked. A smoke or existence check as the
+    replacement is the weak-only Medium, naming the deleted test. The first draft put the
+    smoke check under the High too, and the branch's second review pass caught that this
+    widened the 0.17.0 rule. This repo widens a blocking surface only deliberately and on
+    the record.
   - **A path covered only by weak tests is Medium.** Upstream says to keep "the existing
     severity", which for a security path is High. That would widen the blocking surface.
     This repo widens it only deliberately and on the record, as the a11y entry in
@@ -1346,7 +1355,9 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
     `gstack:test-value keep` marker and its "never flag" retention bar sit in the
     low-value section, and that section lists assertion-free probes. Read unscoped, a diff
     that strips a test's assertions and adds the marker would PASS. Here neither ever
-    suppresses a Severity-section High. The marker is new upstream in this re-port.
+    suppresses a Severity-section High. The marker is new upstream in this re-port. The
+    reviewer reports the skipped tests' count and `file:line`, never the reason text,
+    which the diff's author wrote.
   - **The "Repo-wide sweep: run /test-audit" suffix is dropped, and
     `docs/test-value-bar.md` is never read**, installed or not. Both are gstack machinery,
     and reading the doc only where gstack happens to be installed would make the verdict
@@ -1356,13 +1367,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
     proof in a pipeline that runs things; this gate snapshots the tree to prove it is
     read-only.
   **Revisit** any of these as its own decision, not as part of a re-port. **Priority:** P4
-- **Nothing tests the `testing-reviewer` overrides above.** (0.30.0 review, 2026-10-13)
-  The "Reading the ported checklist" section is prose that decides what the gate blocks,
-  and no assertion or live run reads it. `live-test/LIVE-TEST.md` §5c's fixture would need
-  two more legs: a change to an auth path whose only test is a smoke check (expected
-  Medium, PASS), and an added test that cannot fail, one copy carrying
-  `gstack:test-value keep` (expected High, FAIL). The same constraint as §5c applies: a
-  person at a terminal, or nothing. **Priority:** P3
+- **Nothing tests the `testing-reviewer` or `maintainability-reviewer` overrides above.**
+  (0.30.0 review, 2026-10-13) In both agents the "Reading the ported checklist" section is
+  prose that decides what the gate blocks, and no assertion or live run reads it.
+  `live-test/LIVE-TEST.md` §5c's fixture would need three more legs: a change to an auth
+  path whose only test is a smoke check (expected Medium, PASS); an added test that cannot
+  fail, one copy carrying `gstack:test-value keep` (expected High, FAIL); and a divergent
+  duplicated helper with a demonstrated defect (expected Medium at most, PASS). The same
+  constraint as §5c applies: a person at a terminal, or nothing. **Priority:** P3
 - **forgeward still describes itself as a gate *for gstack*, and three of five couplings
   remain.** (0.17.0, 2026-08-26; re-counted 0.19.0) The quality port closed one and the
   audit port closed a second, so two of five are shut. The list below is the five
@@ -1619,7 +1631,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   - **Phase 3:** the CVSS floor (#19). The dev-dependency ceiling *was* removed, because no
     Phase 12 rule depends on it.
   - **Phase 4:** `pull_request_target` with no checkout of PR code (precedent #11).
-  - **Phase 5:** dev-only filenames and localhost (precedent #12, #20).
+  - **Phase 5:** dev-only filenames and localhost (precedent #12, exclusion #20).
   - **Phase 7:** the message-role rule (#13).
 
   **One more conflict was ported rather than held back, because upstream added a check
@@ -1633,7 +1645,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   this Phase 0 writes down (components, trust boundaries, entry points, invariants), not the
   actors and assets that upstream's Phase 0 names.
   **What would settle it:** a Phase 12 re-port from `cso/SKILL.md`, which is not
-  hash-pinned (see the entry above). Do it as one change, so that the exclusion list and
+  hash-pinned (see the entry "Phases 0, 1, 12, 13 and 14 of `/forgeward:audit` are ported
+  from `cso/SKILL.md` and are deliberately NOT hash-pinned"). Do it as one change, so that the exclusion list and
   the phases it governs move together. **Priority:** P2
 - **Upstream's scanner contract was ported only as far as the wrapper reaches.** (0.30.0
   re-port, 2026-10-13) Phases 2-11 at `dbf400ec` refer to machinery forgeward does not
@@ -1652,9 +1665,14 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   helper. This port has no such helper, and `Read`, `cat` and `git show` put the values in
   the transcript, which is the failure Phase 2 exists to prevent. So the skill keeps the
   earlier rule (a tracked non-template `.env` is HIGH, validity unknown) and judges the
-  contents only through `gitleaks dir <path> --redact` via the wrapper. The first draft of
+  contents only through `gitleaks dir --redact` via the wrapper. The first draft of
   the re-port took upstream's wording without the reader; the branch's own review caught
-  it. **Revisit if** forgeward gains a redacting reader of its own. **Priority:** P4
+  it. The second review pass found that the recipe it added asked for each path to be typed
+  into a Bash call, which runs any `$(…)` a committed filename holds. Phase 2 now lists and
+  scans the files in one loop that reads each name as data. That pass also found that Phase
+  12's verifier would open the file anyway, so a secret candidate now reaches Phase 12 as
+  its filtered scanner record only. That verifier line is forgeward's own, not a port.
+  **Revisit if** forgeward gains a redacting reader of its own. **Priority:** P4
 
 ## Property-based testing
 
@@ -2612,14 +2630,17 @@ shipped on its own branch instead.
   2-11 are re-ported except for the five reversals that the unported Phase 12 contradicts.
   Five entries were filed above:
   - the maintainability deferral;
-  - the testing reviewer's three kept decisions;
+  - the testing reviewer's kept decisions;
   - the Phase 12 re-port;
   - the scanner-contract boundary;
   - the supply-chain `npm audit` contradiction.
   Review of the branch filed four more (the gate reviewers' trivy config write at P1, the
   missing wrapper arms, the untested testing overrides, and the audit's `.env` divergence)
-  and added the resource-limit tension to the Phase 12 entry. No goal draws any of them
-  yet. The re-port entry under `## Quality axis` gained its
+  and added the resource-limit tension to the Phase 12 entry. A second review pass fixed a
+  command injection in the new tracked-`.env` recipe, Phase 12's verifier opening a
+  secret's file, trivy flags that `trivy config` rejects, and a commit-message leak that
+  predates the branch, through gitleaks' `Message` field and the `--oneline` history
+  searches. No goal draws any of the filed entries yet. The re-port entry under `## Quality axis` gained its
   first data point: the recorded commit was unreachable, and only the hash found the base.
 - **The ported quality axis is verified by something other than the port — as far as
   anything short of a person at a terminal can verify it.** (goal 1; branch

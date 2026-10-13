@@ -79,11 +79,12 @@ does not have; read them this way:
   This reviewer is read-only and never fixes anything.
 - **"the core shared-code check"** does not exist here — nothing else in this gate looks
   for an extractable helper, so do not defer to it. A divergent copy with a demonstrated
-  defect is reported here at **Medium** at most, like everything else on the checklist.
-  If the defect is a security or performance problem, name the reviewer that owns it, as
-  the Critical rule above says, rather than raising the severity here. A clear
-  shared-helper extraction with no defect is reported by you at **Low**, never on matching
-  syntax or repeated line counts alone.
+  defect is reported here at **Medium** at most. That ceiling is for the duplication
+  finding only: the load-bearing dead-code High above still applies wherever it fits. If
+  the defect is a security or performance problem, say which reviewer owns it, as the
+  Critical rule above says, rather than raising the severity here. Naming that reviewer
+  blocks nothing on its own. A clear shared-helper extraction with no defect is reported by
+  you at **Low**, never on matching syntax or repeated line counts alone.
 
 ---
 

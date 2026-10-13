@@ -163,16 +163,26 @@ Any deterministic scanner goes through the wrapper, never invoked directly:
 It refuses output-file flags, refuses drive-letter arguments, and reports anything new
 that appears in the repo's untracked set across the run.
 
-**Its `gitleaks` target guard is per-subcommand, and the subcommand this skill tells you
-to run is not one of the guarded ones.** `dir`, `file` and `directory` — the filesystem
-walk — are constrained to exactly one existing tracked regular file. `git`, `stdin`,
-`version`, `completion` and `help` return unguarded, because their target is a commit
-range or a pipe rather than a path, and an unrecognised subcommand is refused outright.
-Phase 2 uses `git`. So the wrapper is not what bounds that invocation: **the `--log-opts`
-range you pass is**, and `--redact` is what keeps matched values out of the transcript.
-Pass both, every time. Reading this sentence as "the wrapper constrains it to one tracked
-file" is exactly backwards for the one call the skill actually instructs. A scanner that is not installed is a **SKIPPED** line in the report
-with an install hint — informational, never a finding, and never a reason to stop.
+**Its `gitleaks` target guard is per-subcommand, and only one of the two calls this skill
+makes is guarded.** `dir`, `file` and `directory` — the filesystem walk — are constrained
+to exactly one existing tracked regular file. `git`, `stdin`, `version`, `completion` and
+`help` return unguarded, because their target is a commit range or a pipe rather than a
+path, and an unrecognised subcommand is refused outright. Phase 2 makes two calls:
+
+- **`gitleaks git`, over history.** The wrapper does not bound it: **the `--log-opts`
+  range you pass does.** Pass it every time.
+- **`gitleaks dir`, on one tracked `.env` at a time.** The wrapper's guard applies, and
+  the file must be tracked.
+
+Reading this as "the wrapper constrains every gitleaks call to one tracked file" is
+exactly backwards for the history scan. **`--redact` does not cover the whole finding
+either.** It blanks the `Secret` and `Match` fields. Measured on gitleaks 8.30.1, a `git`
+finding still carries the commit message in `Message`, and a message that quotes the
+credential printed it in full. So Phase 2 pipes every gitleaks JSON report through `jq`
+and keeps only the fields the report uses. Never read one unfiltered.
+
+A scanner that is not installed is a **SKIPPED** line in the report with an install hint —
+informational, never a finding, and never a reason to stop.
 
 **Never run a tool that writes into the repo under audit.** `npm audit fix`,
 `pip-audit --fix`, `cargo update`, `gitleaks --report-path`, `semgrep --autofix` and
@@ -325,32 +335,43 @@ secrets baked into image layers, logs, and agent configuration.
 This audit reads a tree, not a registry. Judge image layers only from the Dockerfile and
 build context in the repository (a secret passed as `ARG`, a credential file `COPY`ed in);
 never build, pull, run or inspect an image. "Logs" and "agent configuration" mean files
-tracked in this repository. Anything outside it needs the consent Phase 8's Tier 2 asks
-for.
+tracked in this repository. Anything outside the repository is outside this phase: leave
+it unread, and name it as a gap where the report would otherwise rely on it. Phase 8 reads
+outside the repo on its own terms, and its consent does not extend to this phase.
 
 **Never print raw `git log -p --all`, a credential-bearing file, or unredacted scanner
 output.**
-That is the whole reason the history commands below are `--oneline --name-only`, never
-`-p`: `-S` and `-G` locate the commit that introduced the string, and `-p` then prints the
-whole patch — which renders the credential itself into your transcript. The commit, the
-file and the fact of the match are all the reporting rule permits you to use anyway.
+That is the whole reason the history commands below are `--format=%h --name-only`, never
+`-p` and never `--oneline`: `-S` and `-G` locate the commit that introduced the string,
+and `-p` then prints the whole patch — which renders the credential itself into your
+transcript. `--oneline` prints each commit's subject, and a subject can quote the
+credential too; measured on a scratch repo, `--oneline` printed a token from the subject
+and `--format=%h` did not. The commit, the file and the fact of the match are all the
+reporting rule permits you to use anyway.
 ```bash
-git log --oneline --name-only --all -S "AKIA" --diff-filter=A -- "*.env" "*.yml" "*.yaml" "*.json" "*.toml" 2>/dev/null
-git log --oneline --name-only --all -S "sk-" --diff-filter=A -- "*.env" "*.yml" "*.json" "*.ts" "*.js" "*.py" 2>/dev/null
-git log --oneline --name-only --all -G "ghp_|gho_|github_pat_" 2>/dev/null
-git log --oneline --name-only --all -G "xoxb-|xoxp-|xapp-" 2>/dev/null
-git log --oneline --name-only --all -G "BEGIN [A-Z ]*PRIVATE KEY" 2>/dev/null
-git log --oneline --name-only --all -G "password|secret|token|api_key" -- "*.env" "*.yml" "*.json" "*.conf" 2>/dev/null
+git log --format=%h --name-only --all -S "AKIA" --diff-filter=A -- "*.env" "*.yml" "*.yaml" "*.json" "*.toml" 2>/dev/null
+git log --format=%h --name-only --all -S "sk-" --diff-filter=A -- "*.env" "*.yml" "*.json" "*.ts" "*.js" "*.py" 2>/dev/null
+git log --format=%h --name-only --all -G "ghp_|gho_|github_pat_" 2>/dev/null
+git log --format=%h --name-only --all -G "xoxb-|xoxp-|xapp-" 2>/dev/null
+git log --format=%h --name-only --all -G "BEGIN [A-Z ]*PRIVATE KEY" 2>/dev/null
+git log --format=%h --name-only --all -G "password|secret|token|api_key" -- "*.env" "*.yml" "*.json" "*.conf" 2>/dev/null
 ```
 
 If one hunk genuinely has to be read byte-for-byte to classify a shape, route it through
 the wrapper rather than through `git log -p`. Under `--diff`:
-`"<forgeward-root>/scripts/forgeward-scan.sh" gitleaks git --log-opts="$base...HEAD" --no-banner --redact -f json -r -`
+```bash
+"<forgeward-root>/scripts/forgeward-scan.sh" gitleaks git --log-opts="$base...HEAD" --no-banner --redact -f json -r - \
+  | jq -c '.[] | {RuleID, File, StartLine, Commit, Entropy}'
+echo "gitleaks rc=${PIPESTATUS[0]} jq rc=${PIPESTATUS[1]}"
+```
 On a full audit pass `--log-opts="--all"` instead. `$base` is set only under `--diff`, and
 an unset one leaves `...HEAD`, an empty range: gitleaks scans no commits and reports
-nothing. The wrapper refuses a report file, so the JSON comes back on stdout, redacted only
-because you passed `--redact`. Take the rule id, file, line, commit and entropy from it
-into the report, and nothing else.
+nothing. The wrapper refuses a report file, so the JSON comes back on stdout. `--redact`
+blanks the matched value, and the `jq` filter drops the commit message, author and email,
+which `--redact` leaves in place. Report the rule id, file, line, commit and entropy, and
+nothing else. gitleaks exits 1 when it finds something, so a 1 there means findings, not a
+failed run. Any other non-zero gitleaks status, or a non-zero `jq` status, is a named gap.
+With no `jq` on the machine, do not run the scan unfiltered: name it as a gap.
 
 **A prefix match is a candidate, not proof** that a key is valid or still active. Never
 call a provider's API to test one. Distinguish synthetic placeholders from material that
@@ -358,20 +379,39 @@ could confer authority, and label current validity **unknown** when it is unknow
 that call from the redacted scanner output (rule id, entropy) and the file and commit the
 match sits in, never by reading the value.
 
-**`.env` files tracked by git:**
+**`.env` files tracked by git.** List and scan them in one loop, run exactly as written:
 ```bash
-git ls-files '*.env' '.env.*' 2>/dev/null | grep -v '.example\|.sample\|.template'
+git ls-files -z -- '*.env' '.env.*' '*/.env.*' | while IFS= read -r -d '' p; do
+  case "$p" in *.example*|*.sample*|*.template*) continue ;; esac
+  printf 'tracked: %s\n' "$p"
+  "<forgeward-root>/scripts/forgeward-scan.sh" gitleaks dir "./$p" --no-banner --redact -f json -r - \
+    | jq -c '.[] | {RuleID, File, StartLine, Entropy}'
+  echo "gitleaks rc=${PIPESTATUS[0]} jq rc=${PIPESTATUS[1]}"
+done
 grep -q "^\.env$\|^\.env\.\*" .gitignore 2>/dev/null && echo ".env IS gitignored" || echo "WARNING: .env NOT in .gitignore"
 ```
+**Never type a tracked filename into a command.** Whoever committed the file chose its
+name, and a name holding `$(…)` or a backtick runs as a command when it is pasted into a
+Bash call. The loop reads each name as data and never re-parses it, and the `./` prefix
+keeps a name that starts with `-` from being read as a flag. Both were tried on a scratch
+repo: nothing ran, the dash-led file was scanned as a file, and no value reached the
+output. With no `jq`, the loop still lists the files; name the content scan as a gap.
+
 **Never open a tracked `.env` to see what it holds.** `Read`, `cat` and `git show` all put
 its values in your transcript, and upstream's redacting reader is not part of this port.
-Scan it through the wrapper, one tracked file per call:
-`"<forgeward-root>/scripts/forgeward-scan.sh" gitleaks dir <path> --no-banner --redact -f json -r -`
 Upstream now treats a tracked `.env` name alone as no vulnerability and grades what the
 file contains. This port cannot see the contents safely, so it keeps the earlier rule: a
 tracked `.env` that is not a template (`.example`, `.sample`, `.template`) is **HIGH,
 validity unknown**. A rule id in the scan output names a credential shape; no finding does
 not prove the values are placeholders. Say which of the two the report rests on.
+
+**A secret candidate goes to Phase 12 as its scanner record, never as a file to read.**
+Its evidence, and the "motivating line" Phase 12's quote rule asks for, is the filtered
+record: rule id, `file:line` and commit, or for a tracked `.env` the `tracked:` line the
+loop printed. Quoting that record satisfies the rule. Phase 12's verifier for a secret
+candidate gets that record only and judges from it. It never opens the file, never runs
+`git show` or `-p` on the commit, and never prints a value. This rule is forgeward's own,
+not part of the port.
 
 **CI configs with inline secrets** — for each workflow file and `.gitlab-ci.yml` /
 `.circleci/config.yml`, look for `password:`, `token:`, `secret:`, `api_key:` on lines
@@ -421,7 +461,11 @@ project's configuration: a project `.npmrc` can point the registry somewhere els
 expand environment tokens into the request, and resolving a requirements file can build an
 sdist, which runs the audited project's code on your machine. Use a scanner that reads the
 lockfile as data, **through the wrapper** — `osv-scanner --offline` or `trivy fs --config
-/dev/null --scanners vuln`, each with the flags *Scanner evidence* requires.
+/dev/null --scanners vuln --include-dev-deps`, each with the flags *Scanner evidence*
+requires. trivy leaves development dependencies out unless told otherwise, and this phase
+no longer caps their severity, so the flag is not optional. Its help scopes it to npm,
+yarn and gradle. Development dependencies on pnpm, or on any ecosystem the flag does not
+cover, are a named gap in the report.
 Each is optional, and a missing one is a `SKIPPED — tool not installed` line with an
 install hint, not a finding.
 
@@ -488,8 +532,8 @@ are handled by the runtime.
 
 Trace deployment configuration, network exposure, identity privileges, data access, image
 contents and trust between environments. Read IaC and container configuration as data;
-Trivy results (`trivy config --config /dev/null`, `trivy fs --config /dev/null --scanners
-misconfig`, through the wrapper) are candidates, not findings. Root containers, privileged
+Trivy results (`trivy config` or `trivy fs --scanners misconfig`, through the wrapper, each
+with the flags *Scanner evidence* gives that subcommand) are candidates, not findings. Root containers, privileged
 mounts, host networking, wildcard IAM and debug endpoints matter through the impact
 actually attainable from them.
 
@@ -803,11 +847,24 @@ database was, whether it touched the network, how long it took, and how it ended
   anywhere else: a config path that does not exist is a fatal error. With `--format json`,
   a run that exits 0 and prints nothing on stdout sent its report somewhere else, and is a
   gap.
-- **Pass the privacy flags:** `semgrep --metrics=off`, `gitleaks … --redact`,
-  `trivy … --disable-telemetry`. **Always offline:** `trivy --skip-db-update
-  --offline-scan`, `osv-scanner --offline`. With no local database that scanner is
-  `SKIPPED (offline database absent)`, not retried online. Go online only when the user
-  asks, and then the report names the egress.
+- **Pass the privacy flags:** `semgrep --metrics=off`, `gitleaks … --redact` with the
+  Phase 2 `jq` filter, and `trivy … --disable-telemetry`.
+- **Always offline, and trivy's offline flags are per subcommand.** Measured on trivy
+  0.74.0, `trivy config` rejects `--skip-db-update` and `--offline-scan` as unknown flags
+  and exits 1, so one flag list for every trivy call breaks Phase 5.
+  - `trivy fs`: `--config /dev/null --disable-telemetry --skip-db-update
+    --skip-java-db-update --offline-scan`, plus `--include-dev-deps` with
+    `--scanners vuln` and `--skip-check-update` with `--scanners misconfig`.
+  - `trivy config`: `--config /dev/null --disable-telemetry --skip-check-update`, and
+    nothing else from the `trivy fs` list.
+  - `osv-scanner --offline`.
+
+  Pass no `--vex` flag. With no local vulnerability database the scanner is
+  `SKIPPED (offline database absent)`, not retried online. With no checks bundle in the
+  cache, `trivy config` fell back to the checks built into the binary, still reported
+  findings, and said `Falling back to embedded checks` on stderr. When that line appears,
+  the report says the run used the embedded checks. Go online only when the user asks, and
+  then the report names the egress.
 - **Judge the exit status and stderr, never the JSON alone.** Measured on osv-scanner
   2.5.1: `--offline` with no downloaded database exits **127** and still prints a valid
   `"results": []` on stdout. Read that JSON by itself and the dependency scan reports
@@ -897,8 +954,8 @@ placeholders), and everything between 2 and 8 is marked `TENTATIVE`.
     Dockerfiles or K8s they are.
 
 **Static verification.** For each finding that clears the gate, try to prove it *without
-touching anything live in this audit*: check that a secret matches a real key format (never test it
-against the provider); trace a webhook handler's middleware chain (never send a request);
+touching anything live in this audit*: check that a secret's scanner rule id names a real key
+format (never read the value, and never test it against the provider); trace a webhook handler's middleware chain (never send a request);
 trace an SSRF path to an internal service (never make the request); parse workflow YAML to
 confirm `pull_request_target` really checks out PR code; check whether a vulnerable
 dependency function is actually imported and called; trace whether user input truly
@@ -914,7 +971,9 @@ the initialization. If you cannot quote it, force confidence to 4-5 and move it 
 appendix. Do not work around this by inventing a 7. Where the symbol is generated by a
 framework — an ORM `Meta`, a migration, a decorator, a schema file — quote the construct
 that creates it; the test is "I read the source that creates this symbol", never "I
-grepped for the name and did not find it".
+grepped for the name and did not find it". A secret candidate is the exception: its
+filtered scanner record is the quote, as Phase 2 says, and the line holding the value is
+never read.
 
 **Variant analysis.** When a finding is VERIFIED, search the whole repo for the same
 pattern. One confirmed SSRF usually means more. Report variants as separate findings
@@ -928,8 +987,9 @@ runtime policy above on every call. A Claude Agent call explicitly passes
 those match the parent. Give it the absolute repository root, then the candidate file
 path and line **only** — not your reasoning, which anchors it — plus the complete FP
 rules and verification instructions, and ask: *read the code at this location; is there
-a real vulnerability here; score 1-10; below 8, explain why not.* Launch them in one
-message so they run in parallel. Audit verifiers are whole-repo candidate checks, not
+a real vulnerability here; score 1-10; below 8, explain why not.* For a secret candidate,
+give it the filtered scanner record in place of a location to read, and tell it not to
+open the file, as Phase 2 says. Launch them in one message so they run in parallel. Audit verifiers are whole-repo candidate checks, not
 gate reviewers, so do not add an irrelevant gate base/head range to their context.
 
 **Give the verifier the anti-manipulation rule too, verbatim** — it is the one agent that

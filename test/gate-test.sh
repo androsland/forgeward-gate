@@ -1787,6 +1787,25 @@ case "$fcol" in *sarif*) ;; *) col_bad="$col_bad [the written path was not named
   && ok "forgeward-scan: forgery 3/3 (basename collision) — a project's own './tools/grype' inherits the exemption at layer 1, and layer 3 reports the file it wrote (exit 3)" \
   || nok "forgeward-scan basename forgery: collision containment" "$col_bad"
 
+# P8n: THE MISSING-TOOL CONTRACT that /forgeward:audit's Scanner evidence section quotes.
+# A tool the wrapper cannot find exits 127 with one stderr line,
+# `forgeward-scan: <tool> not installed (skipped)`. osv-scanner --offline with no database
+# ALSO exits 127, so the audit tells the model that a 127 with this line is SKIPPED and any
+# other 127 is a failed run. The line is the whole distinction: reword it and every
+# skipped scanner reads as a failure, with nothing else going red. The expected text is
+# DERIVED from the skill's own sentence, never copied here.
+_p8n_tool="forgeward-no-such-scanner-$$"
+_p8n_tpl="$(grep -o 'forgeward-scan: <tool> not installed (skipped)' "$PLUGIN/skills/audit/SKILL.md" | head -1)"
+_p8n_want="${_p8n_tpl/<tool>/$_p8n_tool}"
+_p8n_err="$( cd "$FGR" && "$SCAN" "$_p8n_tool" --version 2>&1 >/dev/null )"; rc=$?
+_p8n_bad=""
+[ -n "$_p8n_tpl" ] || _p8n_bad="$_p8n_bad [the audit skill no longer quotes the message, so there is nothing to derive from]"
+[ "$rc" = 127 ] || _p8n_bad="$_p8n_bad [rc=$rc, expected 127]"
+[ "$_p8n_err" = "$_p8n_want" ] || _p8n_bad="$_p8n_bad [stderr='$_p8n_err', expected '$_p8n_want']"
+[ -z "$_p8n_bad" ] \
+  && ok "forgeward-scan: a tool that is not installed exits 127 with exactly the stderr line /forgeward:audit tells the model to look for" \
+  || nok "forgeward-scan P8n: the missing-tool contract the audit quotes has drifted" "$_p8n_bad"
+
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
 ad="$( cd "$R" && "$ARTDIR" )"
 case "$ad" in
@@ -3278,6 +3297,28 @@ _r6n="$_sp_n"; _r6bad="$_sp_bad"
 [ "$_r6n" -ge 5 ] && [ -z "$_r6bad" ] \
   && ok "drift: all $_r6n shipped ported rubrics record BOTH source-path and a 64-hex source-sha256 (the fixtures above are not the only thing covered)" \
   || nok "drift R6: a ported rubric is not drift-checkable" "complete: $_r6n (expected >= 5) | half-recorded:${_r6bad:- none}"
+
+# R6b: THIRD-PARTY-LICENSES.md names the same port commit as each rubric's own header. A
+# re-port updates `source-commit` because the header comment says to, and the licence
+# table is the one other place that names the commit. Nothing read it, so a re-port could
+# leave the table pointing at the old commit indefinitely. The expected commit is DERIVED
+# from each agent's header, never copied here, and the floor keeps an empty extraction
+# from passing. The audit's provenance is a sentence in a paragraph rather than a table
+# row, and this does NOT cover it.
+_r6b_n=0; _r6b_bad=""
+for _r6b_f in "$PLUGIN"/agents/*-reviewer.md; do
+  _r6b_c="$(sed -n 's/^ *source-commit: *\([0-9a-f]\{40\}\) *$/\1/p' "$_r6b_f" | head -1)"
+  [ -n "$_r6b_c" ] || continue
+  _r6b_n=$((_r6b_n+1))
+  _r6b_row="$(grep -F "| \`agents/$(basename "$_r6b_f")\` |" "$PLUGIN/THIRD-PARTY-LICENSES.md")"
+  case "$_r6b_row" in
+    *"\`$_r6b_c\`"*) ;;
+    *) _r6b_bad="$_r6b_bad $(basename "$_r6b_f")" ;;
+  esac
+done
+[ "$_r6b_n" -ge 5 ] && [ -z "$_r6b_bad" ] \
+  && ok "drift: all $_r6b_n ported rubrics' source-commit appears in their THIRD-PARTY-LICENSES.md row (a re-port cannot leave the licence table on the old commit)" \
+  || nok "drift R6b: THIRD-PARTY-LICENSES.md disagrees with a rubric's source-commit" "checked: $_r6b_n (expected >= 5) | mismatched:${_r6b_bad:- none}"
 
 # R7: the two sha256 arms agree. CLAUDE.md's rule is one reader per shape and this
 # script has two — `sha256sum` and `shasum -a 256` — allowed only because a digest has a
