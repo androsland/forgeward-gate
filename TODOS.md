@@ -969,6 +969,39 @@ themselves so that none of them requires the commit to be actionable.
   invocations, have `forgeward-scan.sh` require or inject it in a trivy arm, decide whether
   `snap` should see ignored paths too, and add a fixture that plants `output:` and asserts
   no file is written. **Priority:** P1
+- **`security-reviewer` still runs the scanner calls the audit stopped trusting.** (0.30.0
+  review, third pass, 2026-10-13) The third review pass of this branch closed these in
+  `/forgeward:audit`'s recipes. The gate's security reviewer runs the unclosed form of
+  each:
+  - **Its gitleaks call prints raw `--redact -f json`.** The reviewer says `--redact`
+    replaces every `Secret` and `Match` value, which is true, but a record's `Message` is
+    the commit message, printed whole. A commit whose message quotes the key prints the
+    key. Measured on gitleaks 8.30.1, and P8k's Message leg now carries it as a control.
+  - **Its trivy bullet says vuln and misconfig "do not emit secret values".** That is
+    false. Measured on trivy 0.74.0 with the bullet's own invocation (`<ONE path>` = `.`),
+    a canary password in a Terraform resource appeared 10 times on stdout, because a
+    misconfiguration record carries the code of the resource it flags.
+  - **The same invocation reaches the network.** It connected twice, on port 443, to a
+    module host that a `.tf` file in the repo named. It also contacted the vulnerability-DB
+    and version-check hosts, because it carries none of `--skip-db-update`,
+    `--skip-version-check` or `--disable-telemetry`. No trivy flag stops the module fetch.
+    The audit runs its misconfiguration scan under `unshare -rn`, and measured each fetch
+    failing with `ENETUNREACH`.
+  - **trivy's own log can print a credential.** When a module failed to load, the log
+    printed its source URL with a token in the username position in full; a password in
+    the same URL was masked. The audit passes trivy's stderr through an `awk` allow-list.
+  - **gitleaks loads the reviewed repo's `.gitleaks.toml` and `.gitleaksignore`.** So the
+    branch under review can suppress findings about itself. The audit passes the bundled
+    `--config` and `--gitleaks-ignore-path`, and points the scan at the git dir, because a
+    `.gitleaksignore` in the working directory loads even beside the flag.
+  **Not fixed in the gate here**, for the same reason as the P1 above: changing what the
+  enforced gate's reviewers run belongs on its own branch, with its own fixtures. **What
+  would settle it:** carry the audit's recipes into the reviewer, meaning the `jq` field
+  filters, the stderr allow-list, the offline flags, `unshare -rn` or the embedded-scanner
+  list for misconfiguration, and the bundled gitleaks config. Add a fixture per leak in
+  the shape of P8k's Message leg. Delete the two false sentences rather than qualifying
+  them. The wrapper arms in the P2 below are the enforced form of the same fix.
+  **Priority:** P1
 - **`forgeward-scan.sh` enforces none of the per-tool rules `/forgeward:audit` now states
   in prose.** (0.30.0 review, 2026-10-13) The audit's *Scanner evidence* section says to
   run osv-scanner with call analysis off and never `--serve`, zizmor with no GitHub token in
@@ -979,8 +1012,13 @@ themselves so that none of them requires the commit to be actionable.
   rules. Each trivy subcommand gets its own offline flags, because `trivy config` rejects
   `--skip-db-update` and `--offline-scan` outright. The dependency scan carries
   `--include-dev-deps`. And gitleaks JSON goes through a `jq` field filter, because
-  `--redact` leaves a history finding's commit message intact. The wrapper enforces none of
-  them. **What would settle it:** per-tool arms in the
+  `--redact` leaves a history finding's commit message intact. The third pass added four
+  more:
+  - trivy's JSON goes through a field filter;
+  - its stderr goes through an allow-list;
+  - the misconfiguration scan runs under `unshare -rn`;
+  - both gitleaks calls carry the bundled config and ignore file.
+  The wrapper enforces none of them. **What would settle it:** per-tool arms in the
   shape `_gl_target_guard` already has: refuse `--serve` and every `--call-analysis` value
   for osv-scanner, unset `GH_TOKEN` and `GITHUB_TOKEN` for zizmor, require
   `--config /dev/null` for trivy (the P1 above), and emit only the parsed fields of a
@@ -1665,13 +1703,20 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   helper. This port has no such helper, and `Read`, `cat` and `git show` put the values in
   the transcript, which is the failure Phase 2 exists to prevent. So the skill keeps the
   earlier rule (a tracked non-template `.env` is HIGH, validity unknown) and judges the
-  contents only through `gitleaks dir --redact` via the wrapper. The first draft of
+  contents only through `gitleaks stdin --redact`, run via the wrapper from inside the git
+  dir and fed the blob the index holds. The first draft of
   the re-port took upstream's wording without the reader; the branch's own review caught
   it. The second review pass found that the recipe it added asked for each path to be typed
   into a Bash call, which runs any `$(…)` a committed filename holds. Phase 2 now lists and
   scans the files in one loop that reads each name as data. That pass also found that Phase
   12's verifier would open the file anyway, so a secret candidate now reaches Phase 12 as
   its filtered scanner record only. That verifier line is forgeward's own, not a port.
+  The third pass fixed three more things:
+  - The loop skipped templates unscanned, though a live token in `.env.example` is a
+    finding. Templates are now scanned, and a rule-id hit in one is MEDIUM.
+  - The labels print each name with `%q`, so a newline in a committed name cannot forge a
+    second label line.
+  - The verifier grades a `tracked:` file by Phase 2's rule and checks it by path only.
   **Revisit if** forgeward gains a redacting reader of its own. **Priority:** P4
 
 ## Property-based testing
@@ -2635,12 +2680,34 @@ shipped on its own branch instead.
   - the scanner-contract boundary;
   - the supply-chain `npm audit` contradiction.
   Review of the branch filed four more (the gate reviewers' trivy config write at P1, the
-  missing wrapper arms, the untested testing overrides, and the audit's `.env` divergence)
-  and added the resource-limit tension to the Phase 12 entry. A second review pass fixed a
-  command injection in the new tracked-`.env` recipe, Phase 12's verifier opening a
-  secret's file, trivy flags that `trivy config` rejects, and a commit-message leak that
-  predates the branch, through gitleaks' `Message` field and the `--oneline` history
-  searches. No goal draws any of the filed entries yet. The re-port entry under `## Quality axis` gained its
+  missing wrapper arms, the untested testing and maintainability overrides, and the audit's
+  `.env` divergence) and added the resource-limit tension to the Phase 12 entry. A second
+  review pass fixed four things in the audit:
+  - a command injection in the new tracked-`.env` recipe;
+  - Phase 12's verifier opening a secret's file;
+  - trivy flags that `trivy config` rejects;
+  - a commit-message leak that predates the branch, through gitleaks' `Message` field and
+    the `--oneline` history searches.
+  The fix covers the audit only. The gate's security reviewer still prints that field, and
+  is filed at P1.
+  A third pass fixed more in the audit, most of them introduced by the earlier passes:
+  - a password printed from trivy's misconfiguration excerpt;
+  - a module token printed in trivy's log;
+  - trivy's version-check egress;
+  - a Terraform module fetch from a host the repo names;
+  - credential searches that printed the matching line;
+  - the reviewed repo's own gitleaks config and ignore file suppressing findings;
+  - a gitleaks exit 1 with no records read as findings;
+  - an unresolvable range read as clean;
+  - a `PIPESTATUS` read that zsh does not have;
+  - templates skipped unscanned;
+  - the work-tree copy of a skip-worktree file scanned in place of the index blob;
+  - a newline in a file name forging a label;
+  - a three-dot range in diff mode.
+  It filed the gate reviewer's copies of five of these at P1. It also added two
+  assertions, P8o and P8k's Message leg, and tightened P8n to exactly one quoted template
+  and R6b to cover the audit, so `test/gate-test.sh` goes 246 → 248. Each new assertion
+  was checked by mutation. No goal draws any of the filed entries yet. The re-port entry under `## Quality axis` gained its
   first data point: the recorded commit was unreachable, and only the hash found the base.
 - **The ported quality axis is verified by something other than the port — as far as
   anything short of a person at a terminal can verify it.** (goal 1; branch

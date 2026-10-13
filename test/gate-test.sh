@@ -1676,8 +1676,48 @@ if command -v gitleaks >/dev/null 2>&1; then
   [ -z "$env_bad" ] \
     && ok "forgeward-scan: an untracked gitignored .env is never read by any endorsed gitleaks shape, and a COMMITTED .env still fires (redacted)" \
     || nok "forgeward-scan gitleaks untracked-.env exposure" "$env_bad"
+
+  # P8k (Message leg): `--redact` masks a record's Secret and Match and NOT its commit
+  # Message, so a commit whose message quotes the key prints the key in full in every
+  # record from that commit. /forgeward:audit's history recipe filters each record down
+  # to RuleID/File/StartLine/Commit/Entropy for that reason, and this runs that recipe
+  # as the skill prints it: the fence is extracted from SKILL.md and only
+  # `<forgeward-root>` is substituted. The control runs the raw `--redact` shape first;
+  # if it stops carrying the key, the filtered assertion proves nothing.
+  if command -v jq >/dev/null 2>&1; then
+    MR="$TMP/msgrepo"; mkrepo "$MR"
+    ( cd "$MR"
+      printf 'clean\n' > app.php; git add -A; git commit -qm base
+      printf 'AWS_ACCESS_KEY_ID=%s\n' "$FAKE_AWS" > .env
+      git add -A; git commit -qm "rotate $FAKE_AWS" ) >/dev/null 2>&1
+    msg_bad=""
+    out="$( cd "$MR" && "$SCAN" gitleaks git --log-opts="HEAD~1..HEAD" --no-banner --redact -f json -r - 2>/dev/null )"
+    case "$out" in
+      *"$FAKE_AWS"*) ;;
+      *) msg_bad="$msg_bad [control: raw --redact JSON did not carry the key in Message, so this fixture no longer reproduces the leak]" ;;
+    esac
+    _p8k_hist="$(awk -v m='**Run the gitleaks history scan on every pass' 'index($0,m)==1{f=1;next} f&&/^```bash$/{on=1;next} on&&/^```$/{exit} on{print}' "$PLUGIN/skills/audit/SKILL.md")"
+    printf '%s\n' "${_p8k_hist//<forgeward-root>/$PLUGIN}" > "$TMP/p8k-hist.sh"
+    case "$_p8k_hist" in
+      *"gitleaks git"*"jq -c"*) ;;
+      *) msg_bad="$msg_bad [could not extract the history recipe from SKILL.md]" ;;
+    esac
+    out="$( cd "$MR" && bash "$TMP/p8k-hist.sh" 2>&1 )"
+    case "$out" in *"$FAKE_AWS"*) msg_bad="$msg_bad [the audit's history recipe printed the key]" ;; esac
+    case "$out" in
+      *'"RuleID":"aws-access-token"'*) ;;
+      *) msg_bad="$msg_bad [the recipe reported no aws-access-token record, so there was nothing to filter]" ;;
+    esac
+    case "$out" in *"gitleaks rc=1"*) ;; *) msg_bad="$msg_bad [the recipe did not print its gitleaks rc line]" ;; esac
+    [ -z "$msg_bad" ] \
+      && ok "audit: the history recipe keeps the finding and drops a key quoted in the commit message, which raw --redact JSON prints" \
+      || nok "audit P8k: the gitleaks history recipe leaks the commit Message" "$msg_bad"
+  else
+    ok "audit gitleaks history recipe Message filter: SKIPPED (jq not installed)"
+  fi
 else
   ok "forgeward-scan gitleaks untracked-.env exposure: SKIPPED (gitleaks not installed)"
+  ok "audit gitleaks history recipe Message filter: SKIPPED (gitleaks not installed)"
 fi
 
 # P8l: layer 1 refuses output-file FLAGS, but it matches whole tokens and therefore cannot
@@ -1794,17 +1834,101 @@ case "$fcol" in *sarif*) ;; *) col_bad="$col_bad [the written path was not named
 # other 127 is a failed run. The line is the whole distinction: reword it and every
 # skipped scanner reads as a failure, with nothing else going red. The expected text is
 # DERIVED from the skill's own sentence, never copied here.
+# The skill must quote the template exactly ONCE. `head -1` on several copies would test
+# the first and let a second, reworded copy be the one the model reads; `grep -o | wc -l`
+# counts occurrences, where `grep -c` would count lines.
 _p8n_tool="forgeward-no-such-scanner-$$"
 _p8n_tpl="$(grep -o 'forgeward-scan: <tool> not installed (skipped)' "$PLUGIN/skills/audit/SKILL.md" | head -1)"
+_p8n_cnt="$(grep -o 'forgeward-scan: <tool> not installed (skipped)' "$PLUGIN/skills/audit/SKILL.md" | wc -l)"
 _p8n_want="${_p8n_tpl/<tool>/$_p8n_tool}"
 _p8n_err="$( cd "$FGR" && "$SCAN" "$_p8n_tool" --version 2>&1 >/dev/null )"; rc=$?
 _p8n_bad=""
 [ -n "$_p8n_tpl" ] || _p8n_bad="$_p8n_bad [the audit skill no longer quotes the message, so there is nothing to derive from]"
+[ "$_p8n_cnt" -eq 1 ] || _p8n_bad="$_p8n_bad [the audit skill quotes the template $_p8n_cnt times, expected exactly 1]"
 [ "$rc" = 127 ] || _p8n_bad="$_p8n_bad [rc=$rc, expected 127]"
 [ "$_p8n_err" = "$_p8n_want" ] || _p8n_bad="$_p8n_bad [stderr='$_p8n_err', expected '$_p8n_want']"
 [ -z "$_p8n_bad" ] \
   && ok "forgeward-scan: a tool that is not installed exits 127 with exactly the stderr line /forgeward:audit tells the model to look for" \
   || nok "forgeward-scan P8n: the missing-tool contract the audit quotes has drifted" "$_p8n_bad"
+
+# P8o: /forgeward:audit's tracked-.env loop, run EXACTLY as the skill prints it: the fence
+# is extracted from SKILL.md and only `<forgeward-root>` is substituted, so a reworded
+# recipe is what runs here, never a copy. A stub gitleaks on PATH records each call's
+# argv, cwd and stdin and prints `[]`, so this needs jq but no scanner.
+#
+# The fixture's file names are repo-supplied input: a command substitution, a backtick, a
+# leading dash, and a newline followed by a forged label. The control leg proves they are
+# hostile, by re-parsing them through eval and requiring the substitution to run. Without
+# it, every "nothing ran" assertion below would pass on a fixture that cannot inject.
+#
+# What else must hold: every tracked `.env` reaches the scanner, a template is labelled as
+# one, the bundled config and ignore file are passed, the scanner runs inside the git dir
+# (so the reviewed repo's own `.gitleaksignore` in the work tree is not loaded), and a
+# skip-worktree file is scanned as the INDEX holds it, not as the work tree shows it.
+if command -v jq >/dev/null 2>&1; then
+  _p8o_fence="$(awk -v m='**`.env` files tracked by git.**' 'index($0,m)==1{f=1;next} f&&/^```bash$/{on=1;next} on&&/^```$/{exit} on{print}' "$PLUGIN/skills/audit/SKILL.md")"
+  printf '%s\n' "${_p8o_fence//<forgeward-root>/$PLUGIN}" > "$TMP/p8o-loop.sh"
+  EV="$TMP/envloop"; mkrepo "$EV"
+  EVSTUB="$TMP/envloop-stub"; EVLOG="$TMP/envloop-log"; mkdir -p "$EVSTUB" "$EVLOG"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "d=\"\$(mktemp -d \"$EVLOG/call.XXXXXX\")\" || exit 99" \
+    'printf "%s\n" "$@" > "$d/argv"; pwd -P > "$d/cwd"; cat > "$d/stdin"; printf "[]\n"' \
+    > "$EVSTUB/gitleaks"
+  chmod +x "$EVSTUB/gitleaks"
+  _p8o_nl=$'x\ntracked: forged.env'
+  ( cd "$EV"
+    mkdir -p sub deploy.example.com sw src
+    printf 'MARK=root\n'     > .env
+    printf 'MARK=dash\n'     > ./-d.env
+    printf 'MARK=sub\n'      > sub/.env.local
+    printf 'MARK=dotdir\n'   > deploy.example.com/.env.production
+    printf 'MARK=subst\n'    > '$(touch PWNED).env'
+    printf 'MARK=tick\n'     > '`touch PWNED2`.env'
+    printf 'MARK=nl\n'       > "$_p8o_nl"
+    printf 'MARK=template\n' > .env.example
+    printf 'MARK=notenv\n'   > src/config.env.ts
+    printf 'MARK=sw-index\n' > sw/.env.local
+    git add -A; git commit -qm base
+    printf 'MARK=sw-worktree\n' > sw/.env.local
+    git update-index --skip-worktree -- sw/.env.local ) >/dev/null 2>&1
+  _p8o_bad=""
+  # Control: re-parse the names the way an unquoted or eval'd loop would. The substitution
+  # must run, or the fixture is not hostile and the assertions below are vacuous.
+  ( cd "$EV" && git ls-files -- '*.env' | while IFS= read -r p; do eval "printf '%s\n' $p" >/dev/null 2>&1; done )
+  [ -e "$EV/PWNED" ] || _p8o_bad="$_p8o_bad [control: an eval re-parse did not run the fixture's substitution, so it no longer tests injection]"
+  rm -f "$EV/PWNED" "$EV/PWNED2"
+  _p8o_out="$( cd "$EV" && PATH="$EVSTUB:$PATH" bash "$TMP/p8o-loop.sh" 2>&1 )"
+  _p8o_gd="$(cd "$(git -C "$EV" rev-parse --absolute-git-dir)" && pwd -P)"
+  [ -z "$(find "$EV" -name 'PWNED*' 2>/dev/null)" ] || _p8o_bad="$_p8o_bad [a file name was executed: $(find "$EV" -name 'PWNED*')]"
+  for _l in 'tracked: -d.env' 'tracked: sub/.env.local' 'tracked: deploy.example.com/.env.production' 'template: .env.example'; do
+    printf '%s\n' "$_p8o_out" | grep -qxF -- "$_l" || _p8o_bad="$_p8o_bad [no '$_l' line]"
+  done
+  printf '%s\n' "$_p8o_out" | grep -qxF 'tracked: forged.env' && _p8o_bad="$_p8o_bad [a newline in a file name forged a label line]"
+  _p8o_calls=0; _p8o_in=""
+  for _d in "$EVLOG"/call.*; do
+    [ -d "$_d" ] || continue
+    _p8o_calls=$((_p8o_calls+1))
+    _p8o_in="$_p8o_in$(cat "$_d/stdin")"$'\n'
+    [ "$(head -1 "$_d/argv")" = stdin ] || _p8o_bad="$_p8o_bad [a call was not 'gitleaks stdin': $(head -1 "$_d/argv")]"
+    [ "$(grep -A1 -xF -- --config "$_d/argv" | tail -1)" = "$PLUGIN/rules/gitleaks-pre-push.toml" ] \
+      || _p8o_bad="$_p8o_bad [a call did not pass the bundled --config]"
+    [ "$(grep -A1 -xF -- --gitleaks-ignore-path "$_d/argv" | tail -1)" = "$PLUGIN/rules/gitleaks-pre-push.ignore" ] \
+      || _p8o_bad="$_p8o_bad [a call did not pass the bundled --gitleaks-ignore-path]"
+    [ "$(cat "$_d/cwd")" = "$_p8o_gd" ] || _p8o_bad="$_p8o_bad [a call ran in $(cat "$_d/cwd"), not the git dir]"
+  done
+  [ "$_p8o_calls" -eq 9 ] || _p8o_bad="$_p8o_bad [$_p8o_calls scanner calls, expected 9]"
+  for _m in root dash sub dotdir subst tick nl template sw-index; do
+    printf '%s' "$_p8o_in" | grep -qxF "MARK=$_m" || _p8o_bad="$_p8o_bad [$_m was not scanned]"
+  done
+  printf '%s' "$_p8o_in" | grep -qxF 'MARK=sw-worktree' && _p8o_bad="$_p8o_bad [the work-tree copy of a skip-worktree file was scanned instead of the index blob]"
+  printf '%s' "$_p8o_in" | grep -qxF 'MARK=notenv' && _p8o_bad="$_p8o_bad [a non-.env file was scanned]"
+  [ "$(printf '%s\n' "$_p8o_out" | grep -cxF '{"records":0}')" -eq 9 ] || _p8o_bad="$_p8o_bad [expected 9 records lines]"
+  [ -z "$_p8o_bad" ] \
+    && ok "audit: the tracked-.env loop scans every tracked .env from the index inside the git dir with the bundled config, labels templates, and executes no file name" \
+    || nok "audit P8o: the tracked-.env recipe" "$_p8o_bad"
+else
+  ok "audit tracked-.env recipe: SKIPPED (jq not installed)"
+fi
 
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
 ad="$( cd "$R" && "$ARTDIR" )"
@@ -3303,22 +3427,40 @@ _r6n="$_sp_n"; _r6bad="$_sp_bad"
 # table is the one other place that names the commit. Nothing read it, so a re-port could
 # leave the table pointing at the old commit indefinitely. The expected commit is DERIVED
 # from each agent's header, never copied here, and the floor keeps an empty extraction
-# from passing. The audit's provenance is a sentence in a paragraph rather than a table
-# row, and this does NOT cover it.
+# from passing. Every file that records a `source-path` is checked, and one with no
+# well-formed `source-commit` is a failure rather than a skip; the count must equal R6's,
+# so a ported rubric cannot drop out of this check by losing its commit line.
+#
+# The audit's provenance is a sentence in its own section rather than a table row, so it
+# is read separately: the skill's `source-commit` must appear in backticks between the
+# `/cso` heading and the next `## `, and an empty commit or an empty section fails.
 _r6b_n=0; _r6b_bad=""
 for _r6b_f in "$PLUGIN"/agents/*-reviewer.md; do
-  _r6b_c="$(sed -n 's/^ *source-commit: *\([0-9a-f]\{40\}\) *$/\1/p' "$_r6b_f" | head -1)"
-  [ -n "$_r6b_c" ] || continue
+  grep -q '^ *source-path:' "$_r6b_f" || continue
   _r6b_n=$((_r6b_n+1))
+  _r6b_c="$(sed -n 's/^ *source-commit: *\([0-9a-f]\{40\}\) *$/\1/p' "$_r6b_f" | head -1)"
+  if [ -z "$_r6b_c" ]; then
+    _r6b_bad="$_r6b_bad $(basename "$_r6b_f")(no 40-hex source-commit)"
+    continue
+  fi
   _r6b_row="$(grep -F "| \`agents/$(basename "$_r6b_f")\` |" "$PLUGIN/THIRD-PARTY-LICENSES.md")"
   case "$_r6b_row" in
     *"\`$_r6b_c\`"*) ;;
     *) _r6b_bad="$_r6b_bad $(basename "$_r6b_f")" ;;
   esac
 done
-[ "$_r6b_n" -ge 5 ] && [ -z "$_r6b_bad" ] \
-  && ok "drift: all $_r6b_n ported rubrics' source-commit appears in their THIRD-PARTY-LICENSES.md row (a re-port cannot leave the licence table on the old commit)" \
-  || nok "drift R6b: THIRD-PARTY-LICENSES.md disagrees with a rubric's source-commit" "checked: $_r6b_n (expected >= 5) | mismatched:${_r6b_bad:- none}"
+_r6b_ac="$(sed -n 's/^ *source-commit: *\([0-9a-f]\{40\}\) *$/\1/p' "$PLUGIN/skills/audit/SKILL.md" | head -1)"
+_r6b_sec="$(awk -v m='## gstack — `/cso` audit phases' 'index($0,m)==1{f=1;next} f&&/^## /{exit} f' "$PLUGIN/THIRD-PARTY-LICENSES.md")"
+if [ -z "$_r6b_ac" ]; then
+  _r6b_bad="$_r6b_bad audit(no 40-hex source-commit)"
+elif [ -z "$_r6b_sec" ]; then
+  _r6b_bad="$_r6b_bad audit(no /cso section in THIRD-PARTY-LICENSES.md)"
+else
+  case "$_r6b_sec" in *"\`$_r6b_ac\`"*) ;; *) _r6b_bad="$_r6b_bad audit" ;; esac
+fi
+[ "$_r6b_n" -ge 5 ] && [ "$_r6b_n" -eq "$_r6n" ] && [ -z "$_r6b_bad" ] \
+  && ok "drift: all $_r6b_n ported rubrics' and the audit's source-commit appear in THIRD-PARTY-LICENSES.md (a re-port cannot leave the licence file on the old commit)" \
+  || nok "drift R6b: THIRD-PARTY-LICENSES.md disagrees with a ported file's source-commit" "checked: $_r6b_n (expected >= 5 and = R6's $_r6n) | mismatched:${_r6b_bad:- none}"
 
 # R7: the two sha256 arms agree. CLAUDE.md's rule is one reader per shape and this
 # script has two — `sha256sum` and `shasum -a 256` — allowed only because a digest has a

@@ -43,7 +43,11 @@ A missing test is a gap, not a live vulnerability, so this axis blocks narrowly.
 - **High** — a change to authentication, authorization, payment, or destructive data
   operations that ships with **no test at all**; a test deleted with nothing replacing it;
   or a test that cannot fail: one that asserts nothing, asserts a constant
-  (`expect(true)`), or compares a value with itself or an identity copy of itself.
+  (`expect(true)`), or compares a value with itself or an identity copy of itself. An
+  identity copy is one made without passing through the code under test: `{...r}`,
+  `structuredClone(r)`, a literal duplicated by hand. A round trip such as
+  `expect(decode(encode(x))).toEqual(x)` is not one, because the code under test produced
+  the value it compares, and the test fails when that code breaks.
 - **Medium / Low** — thin happy-path coverage, missing edge cases, negative assertions,
   isolation and flakiness findings, and low-value or implementation-coupled tests. Report
   them and PASS.
@@ -105,7 +109,8 @@ does not have, this section wins:
   checklist lists assertion-free probes and self-comparisons among its informational
   patterns. A test cannot fail when it asserts nothing, asserts a constant
   (`expect(true)`), or compares a value with itself or with an identity copy of itself
-  (`expect(r).toEqual(r)`). Every other low-value pattern is Low.
+  (`expect(r).toEqual(r)`, `expect({...r}).toEqual(r)`), as the Severity section defines
+  one. Every other low-value pattern is Low.
 - **A path covered only by weak tests is Medium**, whatever the path. It is not "no test at
   all", so it never reaches High on that rule; say which weak test is the only cover. A
   test that cannot fail is no cover at all, and is its own High.
