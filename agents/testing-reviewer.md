@@ -97,14 +97,41 @@ does not have, this section wins:
   `stronger_proof`) go in **Issue**; there is no separate evidence field. The caller check
   is a read-only search and may be run as written.
 - **Do not end a Fix with "Repo-wide sweep: run /test-audit."** That names a skill this
-  gate neither ships nor depends on. If the referenced `docs/test-value-bar.md` is absent,
-  the text below is the whole rule.
-- **A test that asserts nothing stays High**, as the Severity section says, even though the
-  checklist lists assertion-free probes among its informational patterns. Every other
-  low-value pattern is Low.
+  gate neither ships nor depends on. **Do not read the referenced `docs/test-value-bar.md`
+  either**, whether or not it is installed on this machine. The text in this file is the
+  whole rule, so the verdict does not depend on what else is installed.
+- **A test that cannot fail stays High**, as the Severity section says, even though the
+  checklist lists assertion-free probes and self-comparisons among its informational
+  patterns. A test cannot fail when it asserts nothing, asserts a constant
+  (`expect(true)`), or compares a value with itself or with an identity copy of itself
+  (`expect(r).toEqual(r)`). Every other low-value pattern is Low.
 - **A path covered only by weak tests is Medium**, whatever the path. It is not "no test at
-  all", so it never reaches High on that rule; say which weak test is the only cover.
-- A test carrying `gstack:test-value keep reason="…"` is skipped as the checklist says.
+  all", so it never reaches High on that rule; say which weak test is the only cover. A
+  test that cannot fail is no cover at all, and is its own High.
+- **A weak test does not replace a deleted one.** When this diff deletes a test and adds,
+  for the same behaviour, only a test that cannot fail or a smoke or existence check, that
+  is still "a test deleted with nothing replacing it", which is High. A low-value test never
+  closes a gap. A test that only moved to another file was not deleted.
+- **The keep marker and the retention bar lower nothing but the low-value grading.** A
+  test carrying `gstack:test-value keep reason="…"`, or one the retention bar would keep, is
+  skipped for the patterns in the low-value section only. Neither ever suppresses a High
+  from the Severity section: a test that cannot fail, a deleted test with nothing replacing
+  it, or an authentication, authorization, payment or destructive change with no test.
+  Neither exempts a test from any other category. A test that cannot fail enforces no
+  contract, so the retention bar never applies to it. If this diff adds the marker to such
+  a test, it is still High, and the finding says the marker is new in this diff.
+- **An absence check that is itself a security contract is coverage, not a product
+  decision.** A test that a response never carries the password hash, that a log line never
+  contains the token, or that a denied caller cannot see the record is authorized by that
+  contract. So is a guard that something removed before this diff stays removed. Do not ask
+  for a spec line for either. A removal this diff makes is still graded as the checklist
+  says, and the rename-and-removal search applies to every negative assertion.
+- **Read executed proof; never produce it.** The checklist asks for executed proof and for
+  red-before-green records. Look for them in the diff, the commit messages and the PR text.
+  Never run the project's tests, build or install, and never change what is checked out
+  (`checkout`, `switch`, `stash`, `reset`). The gate snapshots the tree to prove it was not
+  modified, and a reviewer that moves HEAD reviews something else. If the record is
+  missing, say so in **Fix** and ask for it.
 
 ---
 

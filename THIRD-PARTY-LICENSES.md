@@ -72,8 +72,10 @@ SOFTWARE.
 reading.** Phases 2-11 of `skills/audit/SKILL.md` follow the upstream file's structure,
 investigation method, standards tables and search patterns closely enough to be a
 derivative of a substantial portion. Their per-phase severity and false-positive rules
-were ported from the older commit and are kept, recalibrated where the newer method
-contradicts them — upstream has since dropped per-phase rules in favour of its Phase 12,
+were ported from the older commit and recalibrated to the newer method, some tightened
+(no development-dependency or private-network ceiling) and some loosened (an unpinned
+action is HIGH only on a traced chain), except where the unported Phase 12 still depends
+on the old rule — upstream has since dropped per-phase rules in favour of its Phase 12,
 which this port has not re-taken. Phases 0, 1, 12, 13 and 14 draw the same way on
 `cso/SKILL.md`'s mode resolution, hard-exclusion list, precedents, findings table and
 report schema. The prose is rewritten throughout, several decisions are deliberately

@@ -16,6 +16,21 @@
   Security Top 10:2023, LLM/agentic/MCP guidance, OWASP Top 10:2025 with selected ASVS 5.0.0
   requirements, STRIDE per trust transition, and a new scanner-evidence section. Upstream
   changes that the unported Phase 12 still contradicts are held back and filed.
+- The re-ported audit's severity rules follow the newer method: development dependencies
+  and private networks no longer cap severity, an unpinned third-party action is HIGH only
+  on a traced chain to a credential or write capability, and the no-fix-available
+  exclusion is gone.
+- `testing-reviewer`: a test that cannot fail, including a self-comparison, stays High; a
+  weak test does not replace a deleted one; and the new `gstack:test-value keep` marker and
+  retention bar lower only the low-value grading, never a High.
+
+### Fixed
+
+- `/forgeward:audit` passes `--config /dev/null` to every trivy call, so the audited repo's
+  `trivy.yaml` cannot redirect the report to a path it chooses (measured on trivy 0.74.0).
+  It never opens a tracked `.env`, scanning it through redacted gitleaks instead, runs every
+  scanner offline, runs zizmor with no GitHub token, and never fetches the ASVS standard.
+  The gate's reviewers have the same trivy exposure; it is filed at P1 in `TODOS.md`.
 
 ### Tests
 
