@@ -1,17 +1,17 @@
 # Changelog
 
-## 0.30.0 — 2026-10-13
+## 0.30.0 — 2026-10-19
 
 ### Changed
 
-- Re-port `maintainability-reviewer` and `testing-reviewer` from gstack `dbf400ec`, the
+- Re-port `maintainability-reviewer` and `testing-reviewer` from gstack `47d639ab`, the
   first re-port since the 0.17.0 port: "DRY Violations" becomes "Duplicated Behavior with
   Defects", stale user-facing strings join the stale-comment checks, and the testing
   checklist gains negative assertions, low-value or implementation-coupled tests, weak-only
   coverage and regression tests with no red proof. Checklist bodies stay verbatim; a
   forgeward-owned "Reading the ported checklist" section maps gstack's pipeline vocabulary
   and keeps the blocking surface where it was.
-- Re-port `/forgeward:audit` Phases 2-11 from gstack `dbf400ec`: no package-manager audit
+- Re-port `/forgeward:audit` Phases 2-11 from gstack `47d639ab`: no package-manager audit
   or install on the host, chain-traced CI/CD and infrastructure judgement, OWASP API
   Security Top 10:2023, LLM/agentic/MCP guidance, OWASP Top 10:2025 with selected ASVS 5.0.0
   requirements, STRIDE per trust transition, and a new scanner-evidence section. Upstream

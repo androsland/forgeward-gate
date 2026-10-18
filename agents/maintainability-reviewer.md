@@ -20,7 +20,7 @@ it after; anything left behind is reported to the user against your name.
 <!-- PORTED RUBRIC — do not hand-edit the checklist below.
      source-repo:   https://github.com/garrytan/gstack  (MIT)
      source-path:   review/specialists/maintainability.md
-     source-commit: dbf400ec3f1ffb96a429f0d0b29ca932b3d6c6f0
+     source-commit: 47d639abffa882b8cbb641d7d1dedf08ecada9ec
      source-sha256: f8015d549e70297f782f0aabf6fe3a9fe31ec5ed61c311ab854e4a858282ed9b
      Drift against the installed gstack copy is reported by
      scripts/forgeward-rubric-drift.sh. When it fires, re-port from the source

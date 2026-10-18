@@ -24,9 +24,9 @@ not share a commit. Each file's own provenance comment carries the exact `source
 |---|---|---|
 | `agents/api-contract-reviewer.md` | `review/specialists/api-contract.md` | `9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6` |
 | `agents/data-migration-reviewer.md` | `review/specialists/data-migration.md` | `9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6` |
-| `agents/maintainability-reviewer.md` | `review/specialists/maintainability.md` | `dbf400ec3f1ffb96a429f0d0b29ca932b3d6c6f0` (0.30.0) |
+| `agents/maintainability-reviewer.md` | `review/specialists/maintainability.md` | `47d639abffa882b8cbb641d7d1dedf08ecada9ec` (0.30.0) |
 | `agents/performance-reviewer.md` | `review/specialists/performance.md` | `9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6` |
-| `agents/testing-reviewer.md` | `review/specialists/testing.md` | `dbf400ec3f1ffb96a429f0d0b29ca932b3d6c6f0` (0.30.0) |
+| `agents/testing-reviewer.md` | `review/specialists/testing.md` | `47d639abffa882b8cbb641d7d1dedf08ecada9ec` (0.30.0) |
 
 Everything else in those five files — the scoping instructions, the read-only contract, the
 forgeward severity floors, the verdict line, the "Reading the ported checklist" section that
@@ -61,7 +61,7 @@ SOFTWARE.
 
 **Upstream:** <https://github.com/garrytan/gstack>
 **Ported at commit:** Phases 2-11 and the scanner-evidence section at
-`dbf400ec3f1ffb96a429f0d0b29ca932b3d6c6f0` (0.30.0); Phases 0, 1, 12, 13 and 14 at
+`47d639abffa882b8cbb641d7d1dedf08ecada9ec` (0.30.0); Phases 0, 1, 12, 13 and 14 at
 `ad8400543cd9ce8d07641362db48d44a95417e33` (0.19.0)
 
 | File in this repo | Upstream path |

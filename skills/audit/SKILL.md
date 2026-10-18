@@ -64,7 +64,7 @@ diffs it afterwards, and `forgeward-scan.sh` bounds what a scanner may be told t
 <!-- PORTED AUDIT PHASES — do not hand-edit Phases 2-11 below.
      source-repo:   https://github.com/garrytan/gstack  (MIT)
      source-path:   cso/sections/audit-phases.md
-     source-commit: dbf400ec3f1ffb96a429f0d0b29ca932b3d6c6f0
+     source-commit: 47d639abffa882b8cbb641d7d1dedf08ecada9ec
      source-sha256: c27ade6296c71f0e8434c45759bc5c5ef007018048247007ed4adcd73e036ac9
      THIS BLOCK IS RE-HASHED as of 0.20.0 by scripts/forgeward-rubric-drift.sh, whose
      loop reaches skills/*/SKILL.md as well as agents/*-reviewer.md. When it fires,

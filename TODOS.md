@@ -1687,7 +1687,7 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   from `cso/SKILL.md` and are deliberately NOT hash-pinned"). Do it as one change, so that the exclusion list and
   the phases it governs move together. **Priority:** P2
 - **Upstream's scanner contract was ported only as far as the wrapper reaches.** (0.30.0
-  re-port, 2026-10-13) Phases 2-11 at `dbf400ec` refer to machinery forgeward does not
+  re-port, 2026-10-13) Phases 2-11 at `47d639ab` refer to machinery forgeward does not
   have. None of it was ported: Schemathesis, CodeQL and SARIF import, upstream's
   helper-mediated zizmor profile, the helper, sandbox and runtime catalog, and the
   Node/Bun/Python/Rails acquisition matrix. Each would need a `forgeward-scan.sh` arm, or a
@@ -2669,7 +2669,9 @@ shipped on its own branch instead.
 
 - **The three drifted rubrics are re-ported from gstack `dbf400ec`.** (0.30.0, branch
   `chore/report-gstack-rubrics`, 2026-10-13. **Not merged when this was written.** Check
-  with `git merge-base --is-ancestor` before reading it as landed.) The drift script flagged
+  with `git merge-base --is-ancestor` before reading it as landed.) Re-pinned on 2026-10-19
+  to `47d639ab`, where all three source files are byte-identical to `dbf400ec`, so only
+  `source-commit` moved. The drift script flagged
   `maintainability-reviewer`, `testing-reviewer` and `audit` on a gate run. After this
   branch, it prints nothing. The two reviewer checklists are verbatim upstream. Audit Phases
   2-11 are re-ported except for the five reversals that the unported Phase 12 contradicts.
