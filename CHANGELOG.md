@@ -1,5 +1,105 @@
 # Changelog
 
+## 0.30.0 — 2026-10-19
+
+### Changed
+
+- Re-port `maintainability-reviewer` and `testing-reviewer` from gstack `47d639ab`, the
+  first re-port since the 0.17.0 port: "DRY Violations" becomes "Duplicated Behavior with
+  Defects", stale user-facing strings join the stale-comment checks, and the testing
+  checklist gains negative assertions, low-value or implementation-coupled tests, weak-only
+  coverage and regression tests with no red proof. Checklist bodies stay verbatim; a
+  forgeward-owned "Reading the ported checklist" section maps gstack's pipeline vocabulary
+  and keeps the blocking surface where it was.
+- Re-port `/forgeward:audit` Phases 2-11 from gstack `47d639ab`: no package-manager audit
+  or install on the host, chain-traced CI/CD and infrastructure judgement, OWASP API
+  Security Top 10:2023, LLM/agentic/MCP guidance, OWASP Top 10:2025 with selected ASVS 5.0.0
+  requirements, STRIDE per trust transition, and a new scanner-evidence section. Upstream
+  changes that the unported Phase 12 still contradicts are held back and filed.
+- The re-ported audit's severity rules follow the newer method: development dependencies
+  and private networks no longer cap severity, an unpinned third-party action is HIGH only
+  on a traced chain to a credential or write capability, and the no-fix-available
+  exclusion is gone.
+- `testing-reviewer`: a test that cannot fail, including a self-comparison, stays High,
+  and does not replace a deleted test; a smoke check that replaces one is Medium. The new
+  `gstack:test-value keep` marker and retention bar lower only the low-value grading, never
+  a High, and the reviewer never repeats a marker's reason text. A copy compared with its
+  original counts as a self-comparison only when it was made without the code under test,
+  so a round trip through an encoder and decoder is not one.
+
+### Fixed
+
+- `/forgeward:audit` passes `--config /dev/null` to every trivy call, so the audited repo's
+  `trivy.yaml` cannot redirect the report to a path it chooses (measured on trivy 0.74.0).
+  It never opens a tracked `.env`, scanning it through redacted gitleaks instead. It gives
+  each trivy subcommand only the offline flags that subcommand accepts, runs osv-scanner
+  offline, runs zizmor with no GitHub token, and never fetches the ASVS standard. The
+  gate's reviewers have the same trivy exposure; it is filed at P1 in `TODOS.md`.
+- `/forgeward:audit` keeps commit messages out of the transcript. On gitleaks 8.30.1,
+  `--redact` blanks a history finding's secret but leaves the commit message, which can
+  quote the credential. Phase 2 now passes gitleaks JSON through a `jq` filter that keeps
+  only the rule id, file, line, commit and entropy. Its `git log` searches print the commit
+  hash instead of the subject.
+- `/forgeward:audit` lists and scans tracked `.env` files in one loop that reads each name
+  as data, so a committed filename holding `$(…)` cannot run there. The rule against
+  pasting a name the repository chose now covers every name Phase 2 prints. The loop also
+  finds `.env.*` files below the repository root, which the old pathspec missed, and
+  prints each name with `%q`, so a newline in a name cannot forge a label.
+- `/forgeward:audit` scans the blob the index holds, not the work-tree copy, so a file
+  marked `--skip-worktree` is judged by what was committed. It scans templates too: a
+  live token in `.env.example` is MEDIUM, and a template is matched by its basename.
+- `/forgeward:audit` filters trivy's output down to the check id, severity, title,
+  resource and line range. On trivy 0.74.0, a misconfiguration record quoted the lines it
+  flagged, and printed a Terraform resource's password. trivy's log goes through an `awk`
+  allow-list, because a module that failed to load logged a token from its source URL.
+- `/forgeward:audit` runs its misconfiguration scan in an empty network namespace
+  (`unshare -rn`). With every offline flag set, trivy still fetched the remote Terraform
+  modules the scanned tree named, from hosts that tree chose. Where `unshare -rn` fails,
+  the scan leaves Terraform out and says so. Every trivy call also carries
+  `--skip-version-check`.
+- `/forgeward:audit` locates credential-shaped matches with `git grep … | cut -d: -f1,2`,
+  so a search for an inline CI secret or a connection-string password prints where it is
+  and not what it is.
+- `/forgeward:audit` passes forgeward's own gitleaks config and ignore file, and scans
+  from the git directory, so the audited repo's `.gitleaks.toml` and `.gitleaksignore`
+  cannot suppress findings about it.
+- `/forgeward:audit` reads a gitleaks exit 1 as findings only when records came back,
+  since a configuration gitleaks could not load also exits 1. A `--diff` base that does
+  not resolve is reported as a gap, not read as a clean history. The range is two-dot, so
+  the base's own commits are not reported as the branch's. Each status line is printed by
+  the command it reports on, because zsh has no `PIPESTATUS`.
+- `/forgeward:audit` prints trivy's "Falling back to embedded checks" as a fixed line, not
+  as a withheld error, so a machine with no cached checks bundle does not fail Phase 5.
+- `/forgeward:audit` scans development dependencies with trivy's `--include-dev-deps`, now
+  that they no longer cap severity, and reports pnpm and other uncovered ecosystems as a
+  gap.
+- `/forgeward:audit` hands a secret candidate's Phase 12 verifier the filtered scanner
+  record, never the file, and that record satisfies the quote rule. The verifier grades a
+  tracked `.env` by Phase 2's rule. This is forgeward's own rule, not part of the upstream
+  port.
+- The gate's `security-reviewer` still prints the commit message from gitleaks, prints
+  trivy's misconfiguration excerpts, loads the reviewed repo's gitleaks config and lets
+  trivy fetch remote modules. That is filed at P1 in `TODOS.md`, not fixed here.
+
+### Tests
+
+- Bump the manifest version-agreement literal in `test/dual-client-test.sh` to 0.30.0.
+- R6b: every reviewer with a `source-path` must carry a `source-commit` that appears in
+  its row of `THIRD-PARTY-LICENSES.md`, and the audit's must appear in the `/cso` section.
+- P8n: a scanner the wrapper cannot find exits 127 with exactly the stderr line
+  `/forgeward:audit` tells the model to look for, quoted once in the skill.
+- P8o: runs the audit's `.env` loop against hostile file names and a stub gitleaks. No
+  name runs as a command, a newline cannot forge a label, every scan reads the index
+  blob with the bundled config from the git directory, and a name that merely contains
+  `.env` is not scanned.
+- P8k: the history recipe keeps a finding and drops a key quoted in the commit message,
+  with a control that shows the raw `--redact` JSON prints it.
+
+### Docs
+
+- Record per-file port commits in `THIRD-PARTY-LICENSES.md`, and update the gate scope table,
+  README and audit description to the new checklist names.
+
 ## 0.29.0 — 2026-09-12
 
 ### Added

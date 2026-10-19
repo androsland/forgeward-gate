@@ -157,8 +157,8 @@ it: quality is reviewed here, on every machine, whether gstack is installed or n
 
 **Plus one skill that is not a reviewer: `/forgeward:audit` (0.19.0).** The deep whole-repo
 security audit — secrets archaeology through git history, dependency supply chain, CI/CD pipeline
-security, infrastructure and IaC, webhook and integration tracing, LLM/AI security, skill supply
-chain, OWASP Top 10, STRIDE, data classification. It is a port of gstack's `/cso` audit phases
+security, infrastructure and IaC, webhook/API/integration tracing, LLM/agentic/MCP security, skill
+supply chain, OWASP Top 10:2025 with selected ASVS 5.0.0 checks, STRIDE, data classification. It is a port of gstack's `/cso` audit phases
 under MIT (see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)) and it closes the third and
 last axis forgeward deferred to a tool that need not be installed. It declares no `Edit` and no `Write`, so no code-editing tool is available to it, and its
 report is written outside the repository under audit. That narrows the write surface rather

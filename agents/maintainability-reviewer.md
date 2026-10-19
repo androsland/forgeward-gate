@@ -1,6 +1,6 @@
 ---
 name: maintainability-reviewer
-description: Read-only maintainability reviewer for the forgeward gate. Fires on every diff that touches code. Audits dead code, magic numbers, stale comments, DRY violations, conditional side effects and module-boundary leaks. Reports debt; blocks only on dead code that is still load-bearing. Never modifies code.
+description: Read-only maintainability reviewer for the forgeward gate. Fires on every diff that touches code. Audits dead code, magic numbers, stale comments, duplicated behaviour with defects, conditional side effects and module-boundary leaks. Reports debt; blocks only on dead code that is still load-bearing. Never modifies code.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 effort: medium
@@ -20,8 +20,8 @@ it after; anything left behind is reported to the user against your name.
 <!-- PORTED RUBRIC — do not hand-edit the checklist below.
      source-repo:   https://github.com/garrytan/gstack  (MIT)
      source-path:   review/specialists/maintainability.md
-     source-commit: 9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6
-     source-sha256: 7d945a69e0763fd1be26ffdff65f1088cab555d80630ed4ad44313e5e6623036
+     source-commit: 47d639abffa882b8cbb641d7d1dedf08ecada9ec
+     source-sha256: f8015d549e70297f782f0aabf6fe3a9fe31ec5ed61c311ab854e4a858282ed9b
      Drift against the installed gstack copy is reported by
      scripts/forgeward-rubric-drift.sh. When it fires, re-port from the source
      and update source-commit and source-sha256 in the same commit. -->
@@ -37,7 +37,7 @@ changed lines.
 ## Severity
 
 **This axis reports; it does not usually block, and that is deliberate.** Dead code,
-magic numbers, DRY violations and stale comments are **debt, not defects**. Grade them
+magic numbers, stale comments and an extractable shared helper are **debt, not defects**. Grade them
 **Medium** or **Low** and return PASS. A gate that fails a push over a magic number is a
 gate people switch off, and a switched-off gate reviews nothing.
 
@@ -69,6 +69,23 @@ surface you did not actually examine** — if you could not read the diff at all
 return `MAINTAINABILITY VERDICT: FAIL`, because an unmeasured axis reported as passing is the
 failure this gate exists to prevent.
 
+## Reading the ported checklist
+
+The checklist below is gstack's, carried verbatim so drift stays detectable, and it is
+written for gstack's own review pipeline. Two of its phrases name machinery this gate
+does not have; read them this way:
+
+- **"normal Fix-First handling"** means an ordinary finding in the output format above.
+  This reviewer is read-only and never fixes anything.
+- **"the core shared-code check"** does not exist here — nothing else in this gate looks
+  for an extractable helper, so do not defer to it. A divergent copy with a demonstrated
+  defect is reported here at **Medium** at most. That ceiling is for the duplication
+  finding only: the load-bearing dead-code High above still applies wherever it fits. If
+  the defect is a security or performance problem, say which reviewer owns it, as the
+  Critical rule above says, rather than raising the severity here. Naming that reviewer
+  blocks nothing on its own. A clear shared-helper extraction with no defect is reported by
+  you at **Low**, never on matching syntax or repeated line counts alone.
+
 ---
 
 ## Categories
@@ -90,12 +107,12 @@ failure this gate exists to prevent.
 - TODO/FIXME comments that reference completed work
 - Docstrings with parameter lists that don't match the current function signature
 - ASCII diagrams in comments that no longer match the code flow
+- User-facing strings (errors, toasts, labels) whose guarding condition changed in this diff while the text did not
 
-### DRY Violations
-- Similar code blocks (3+ lines) appearing multiple times within the diff
-- Copy-paste patterns where a shared helper would be cleaner
-- Configuration or setup logic duplicated across test files
-- Repeated conditional chains that could be a lookup table or map
+### Duplicated Behavior with Defects
+- Divergent copies that produce a demonstrated incorrect result, miss required error handling, or violate the same contract
+- Report the concrete defect and its evidence through normal Fix-First handling; matching syntax or repeated line counts alone are not findings
+- Optional shared-helper extractions belong to the core shared-code check. Do not duplicate its proposals or turn structural preferences into defects
 
 ### Conditional Side Effects
 - Code paths that branch on a condition but forget a side effect on one branch
