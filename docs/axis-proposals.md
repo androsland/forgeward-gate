@@ -212,7 +212,7 @@ discarded, so "jq failed" and "field absent" were the same observation and the h
 | Owner | Coverage of this class |
 | --- | --- |
 | forgeward `security-reviewer` | None. Its ten Step 3 categories are injection, broken authz/IDOR, SSRF, path traversal, unsafe deserialization, secrets, dangerous output/XSS, sensitive error exposure, redefinition posture drift, check-then-act-without-a-lock. No unchecked-return or swallowed-error item. |
-| gstack `maintainability` specialist | None. Dead code & unused imports, magic numbers, stale comments, DRY, conditional side effects, module boundaries. |
+| gstack `maintainability` specialist | None. Dead code & unused imports, magic numbers & string coupling, stale comments, duplicated behaviour with defects, conditional side effects, module boundaries. The duplication category (named "DRY" until gstack `06ed920a`) does list copies that "miss required error handling", but only as a difference between divergent copies, so a single swallowed error is outside it. |
 | gstack `testing` specialist | Tests *about* error paths, not error paths themselves. |
 | gstack `/review` checklist | Two adjacent lines only — "wrong column names silently return empty results or throw swallowed errors" (Pass 1, SQL safety) and "incomplete error paths" (Pass 2, Completeness Gaps, INFORMATIONAL). Adjacent, not owned as a category, and heavily Rails/Django-flavoured — nothing addresses shell. |
 | gstack itself | Recognises the class — it is the entire premise of the slop-scan section, `safeUnlink`, "a swallowed EPERM in cleanup means silent data loss" — but slop-scan is a contributor tool in gstack's own repo, not a specialist and not in any gate. |

@@ -2667,6 +2667,34 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
+  `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
+  was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)
+  It fixes the three non-blocking findings from the 0.30.0 gate:
+  - **Testing (Medium):** the suite ran three of the audit's changed recipes. P8p now runs
+    the history searches and the four `git grep` locators against fixtures. It asserts
+    the exact located output, which pins the exclusions too, and that no planted value
+    prints. P8q runs the `trivy config` recipe against real trivy. Every leg has a control
+    that drops the redaction and requires the value to appear. P8r is a census: each bash
+    fence in the skill must be extracted by the assertion that claims it, or listed with a
+    reason why it is not run. A new recipe fails the suite until someone decides which.
+  - **Maintainability (Low):** P8k, P8o and the new legs share one `audit_fence` helper,
+    and P8o derives its two counts from its marker list.
+  - **Maintainability (Low):** `docs/axis-proposals.md` names gstack's current
+    maintainability categories, and its "None" was re-checked against the renamed one.
+  `test/gate-test.sh` goes 248 → 255. Each new assertion was checked by mutation: 17 single
+  edits to the skill or the suite, each reddening the assertion it targets. The six that hit
+  code changed later were re-run. Four fences stay listed gaps, with reasons, in P8r. CI
+  installs no trivy, so P8q is a SKIP there.
+  - **Found on the way, fixed in the suite only.** P8q failed in 6 of the 17 mutation runs,
+    including runs that never touch trivy. trivy stages remote modules under
+    `$TMPDIR/.aqua/cache`, and when six scans ran at once one logged `No files found` for
+    the module at INFO and quoted nothing. P8q now gives trivy a private `TMPDIR`, and six
+    runs at the same concurrency stayed green. The same race can drop the skill's own
+    `module not loaded` line when two trivy scans share a machine; it was seen to drop in
+    the suite with the recipe unmodified. That loses a disclosure, not a value, and the
+    skill is not changed here.
+
 - **The three drifted rubrics are re-ported from gstack `dbf400ec`.** (0.30.0, branch
   `chore/report-gstack-rubrics`, 2026-10-13. **Not merged when this was written.** Check
   with `git merge-base --is-ancestor` before reading it as landed.) Re-pinned on 2026-10-19

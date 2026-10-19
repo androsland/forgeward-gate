@@ -1613,6 +1613,18 @@ done
   && ok "forgeward-scan: gitleaks dir target must be ONE tracked regular file; directory / multi-path / untracked refused, 'git' mode untouched" \
   || nok "forgeward-scan gitleaks target guard" "wrong verdict on:$tgt_bad"
 
+# audit_fence <marker> [line]: the first ```bash fence after the line of skills/audit/SKILL.md
+# that starts with <marker>, with `<forgeward-root>` substituted and nothing else changed, so
+# the recipe a reworded skill prints is what runs here, never a copy. With `line`, the
+# fence's opening line number instead, which is what P8r's census compares. Prints nothing
+# when the marker or its fence is gone, so a caller must fail on an empty result, not run it.
+AUDIT_SKILL="$PLUGIN/skills/audit/SKILL.md"
+audit_fence() {
+  local f
+  f="$(awk -v m="$1" -v at="${2:-}" 'index($0,m)==1{f=1;next} f&&/^```bash$/{if(at!=""){print NR;exit} on=1;next} on&&/^```$/{exit} on{print}' "$AUDIT_SKILL")"
+  [ -z "$f" ] || printf '%s\n' "${f//<forgeward-root>/$PLUGIN}"
+}
+
 # P8k: the exposure itself, end-to-end against the REAL binary. A repo with a gitignored
 # .env holding a fake AWS key and two clean tracked files as the changed paths — exactly
 # the shape observed on a real gate run. Four things must hold at once:
@@ -1696,8 +1708,8 @@ if command -v gitleaks >/dev/null 2>&1; then
       *"$FAKE_AWS"*) ;;
       *) msg_bad="$msg_bad [control: raw --redact JSON did not carry the key in Message, so this fixture no longer reproduces the leak]" ;;
     esac
-    _p8k_hist="$(awk -v m='**Run the gitleaks history scan on every pass' 'index($0,m)==1{f=1;next} f&&/^```bash$/{on=1;next} on&&/^```$/{exit} on{print}' "$PLUGIN/skills/audit/SKILL.md")"
-    printf '%s\n' "${_p8k_hist//<forgeward-root>/$PLUGIN}" > "$TMP/p8k-hist.sh"
+    _p8k_hist="$(audit_fence '**Run the gitleaks history scan on every pass')"
+    printf '%s\n' "$_p8k_hist" > "$TMP/p8k-hist.sh"
     case "$_p8k_hist" in
       *"gitleaks git"*"jq -c"*) ;;
       *) msg_bad="$msg_bad [could not extract the history recipe from SKILL.md]" ;;
@@ -1866,8 +1878,11 @@ _p8n_bad=""
 # (so the reviewed repo's own `.gitleaksignore` in the work tree is not loaded), and a
 # skip-worktree file is scanned as the INDEX holds it, not as the work tree shows it.
 if command -v jq >/dev/null 2>&1; then
-  _p8o_fence="$(awk -v m='**`.env` files tracked by git.**' 'index($0,m)==1{f=1;next} f&&/^```bash$/{on=1;next} on&&/^```$/{exit} on{print}' "$PLUGIN/skills/audit/SKILL.md")"
-  printf '%s\n' "${_p8o_fence//<forgeward-root>/$PLUGIN}" > "$TMP/p8o-loop.sh"
+  _p8o_fence="$(audit_fence '**`.env` files tracked by git.**')"
+  printf '%s\n' "$_p8o_fence" > "$TMP/p8o-loop.sh"
+  # The MARK of every file the loop must scan, one scanner call each. The call count and the
+  # records-line count below are derived from this list rather than typed beside it.
+  _p8o_marks=(root dash sub dotdir subst tick nl template sw-index)
   EV="$TMP/envloop"; mkrepo "$EV"
   EVSTUB="$TMP/envloop-stub"; EVLOG="$TMP/envloop-log"; mkdir -p "$EVSTUB" "$EVLOG"
   printf '%s\n' '#!/usr/bin/env bash' \
@@ -1916,19 +1931,231 @@ if command -v jq >/dev/null 2>&1; then
       || _p8o_bad="$_p8o_bad [a call did not pass the bundled --gitleaks-ignore-path]"
     [ "$(cat "$_d/cwd")" = "$_p8o_gd" ] || _p8o_bad="$_p8o_bad [a call ran in $(cat "$_d/cwd"), not the git dir]"
   done
-  [ "$_p8o_calls" -eq 9 ] || _p8o_bad="$_p8o_bad [$_p8o_calls scanner calls, expected 9]"
-  for _m in root dash sub dotdir subst tick nl template sw-index; do
+  [ "$_p8o_calls" -eq "${#_p8o_marks[@]}" ] || _p8o_bad="$_p8o_bad [$_p8o_calls scanner calls, expected ${#_p8o_marks[@]}]"
+  for _m in "${_p8o_marks[@]}"; do
     printf '%s' "$_p8o_in" | grep -qxF "MARK=$_m" || _p8o_bad="$_p8o_bad [$_m was not scanned]"
   done
   printf '%s' "$_p8o_in" | grep -qxF 'MARK=sw-worktree' && _p8o_bad="$_p8o_bad [the work-tree copy of a skip-worktree file was scanned instead of the index blob]"
   printf '%s' "$_p8o_in" | grep -qxF 'MARK=notenv' && _p8o_bad="$_p8o_bad [a non-.env file was scanned]"
-  [ "$(printf '%s\n' "$_p8o_out" | grep -cxF '{"records":0}')" -eq 9 ] || _p8o_bad="$_p8o_bad [expected 9 records lines]"
+  [ "$(printf '%s\n' "$_p8o_out" | grep -cxF '{"records":0}')" -eq "${#_p8o_marks[@]}" ] || _p8o_bad="$_p8o_bad [expected ${#_p8o_marks[@]} records lines]"
   [ -z "$_p8o_bad" ] \
     && ok "audit: the tracked-.env loop scans every tracked .env from the index inside the git dir with the bundled config, labels templates, and executes no file name" \
     || nok "audit P8o: the tracked-.env recipe" "$_p8o_bad"
 else
   ok "audit tracked-.env recipe: SKIPPED (jq not installed)"
 fi
+
+# P8p: the audit's other secret LOCATORS, each run exactly as the skill prints it. Their job
+# is to say WHERE a credential is without putting it in the transcript: the history searches
+# print a hash and a file name, never a subject or a patch, and the git-grep recipes cut each
+# hit to `file:line`. So each leg asserts the exact located output, which pins the matches
+# and the exclusions together (placeholders, localhost/127.0.0.1/example.com, `${{`,
+# `secrets.`, `var.`, `git@`), and that no planted value reaches either stream.
+#
+# Each leg has a control that runs the recipe without its redaction and requires a value to
+# appear: the history searches with the pre-0.30.0 `--oneline` (every fixture commit subject
+# quotes its credential), and the git-grep recipes without `| cut -d: -f1,2`. Without it,
+# the no-value assertions pass on a fixture whose values were never reachable. The values
+# are split literals, so no complete credential exists in this file for the push-time scan.
+_p8p_aws="AKIA""ZXCVBNMQWERTYUIO"; _p8p_sk="sk-""live0123456789abcdefABCDEF"
+_p8p_ghp="ghp_""aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"; _p8p_xox="xoxb-""1234567890-abcdefghijklmnop"
+_p8p_pem="-----BEGIN RSA PRIV""ATE KEY-----"; _p8p_pw="Hunter2""Zq9pw"
+_p8p_vals=("$_p8p_aws" "$_p8p_sk" "$_p8p_ghp" "$_p8p_xox" "$_p8p_pem" "$_p8p_pw")
+
+# History: one commit per search, in the fence's order, each adding one file whose content
+# and commit subject carry one value. The expected output is each commit's hash and file,
+# read after the last commit so the abbreviation is the one the recipe will see.
+P8H="$TMP/p8p-hist"; mkrepo "$P8H"
+( cd "$P8H" && printf 'base\n' > README && git add -A && git commit -qm base ) >/dev/null 2>&1
+_p8p_files=()
+_p8p_commit() {  # <file> <value> <content>
+  printf '%s\n' "$3" > "$P8H/$1"
+  ( cd "$P8H" && git add -A && git commit -qm "add $2" ) >/dev/null 2>&1
+  _p8p_files+=("$1")
+}
+_p8p_commit .env        "$_p8p_aws" "AWS_ACCESS_KEY_ID=$_p8p_aws"
+_p8p_commit config.json "$_p8p_sk"  "{\"k\":\"$_p8p_sk\"}"
+_p8p_commit ci.sh       "$_p8p_ghp" "export T=$_p8p_ghp"
+_p8p_commit slack.txt   "$_p8p_xox" "SLACK=$_p8p_xox"
+_p8p_commit id_rsa      "$_p8p_pem" "$_p8p_pem"$'\nMIIB'
+_p8p_commit app.yml     "$_p8p_pw"  $'db:\n  password: '"$_p8p_pw"
+_p8p_want=""
+for _f in "${_p8p_files[@]}"; do
+  _p8p_want="$_p8p_want${_p8p_want:+$'\n'}$(git -C "$P8H" log --format=%h --diff-filter=A -- "$_f")"$'\n'"$_f"
+done
+_p8p_bad=""
+audit_fence '**Never print raw `git log -p --all`' > "$TMP/p8p-hist.sh"
+grep -q -- '--format=%h --name-only' "$TMP/p8p-hist.sh" || _p8p_bad="$_p8p_bad [could not extract the history searches from SKILL.md]"
+_p8p_out="$( cd "$P8H" && bash "$TMP/p8p-hist.sh" 2>&1 )"
+[ "$(printf '%s\n' "$_p8p_out" | grep -v '^$')" = "$_p8p_want" ] \
+  || _p8p_bad="$_p8p_bad [located '$(printf '%s' "$_p8p_out" | tr '\n' ' ')', expected '$(printf '%s' "$_p8p_want" | tr '\n' ' ')']"
+for _v in "${_p8p_vals[@]}"; do
+  case "$_p8p_out" in *"$_v"*) _p8p_bad="$_p8p_bad [printed a planted value]" ;; esac
+done
+sed 's/--format=%h/--oneline/' "$TMP/p8p-hist.sh" > "$TMP/p8p-hist-oneline.sh"
+_p8p_ctl="$( cd "$P8H" && bash "$TMP/p8p-hist-oneline.sh" 2>&1 )"; _p8p_miss=0
+for _v in "${_p8p_vals[@]}"; do
+  case "$_p8p_ctl" in *"$_v"*) ;; *) _p8p_miss=$((_p8p_miss+1)) ;; esac
+done
+[ "$_p8p_miss" -eq 0 ] || _p8p_bad="$_p8p_bad [control: $_p8p_miss of ${#_p8p_vals[@]} planted subjects were missing from the --oneline output, so the fixture no longer proves --format=%h is what hides them]"
+[ -z "$_p8p_bad" ] \
+  && ok "audit: the history searches locate every planted credential by hash and file name and print none of them" \
+  || nok "audit P8p: the history-search recipe" "$_p8p_bad"
+
+# The four git-grep locators share one fixture, so each recipe's exact output also proves it
+# does not reach into the files the other three are about.
+P8G="$TMP/p8p-grep"; mkrepo "$P8G"
+( cd "$P8G" && mkdir -p .github/workflows .circleci config
+  printf '%s\n' 'name: x' "url: https://deploy:$_p8p_pw@git.example.invalid/x.git" > deploy.yml
+  printf '%s\n' 'a: https://deploy:${DB_PASS}@h.invalid/x' 'b: https://deploy:$PASS@h.invalid/x' \
+    'c: https://deploy:<password>@h.invalid/x' 'd: https://deploy:{{ pass }}@h.invalid/x' \
+    'e: https://deploy@h.invalid/x' > placeholders.yml
+  printf '%s\n' 'env:' "  password: $_p8p_pw" '  token: ${{ secrets.T }}' '  api_key: secrets.API' > .github/workflows/ci.yml
+  printf '%s\n' 'vars:' "  secret: $_p8p_pw" > .gitlab-ci.yml
+  printf '%s\n' 'jobs:' "  token: $_p8p_ghp" > .circleci/config.yml
+  printf '%s\n' "password: $_p8p_pw" > notci.yml
+  printf '%s\n' 'production:' "  url: postgres://app:$_p8p_pw@db.prod.internal:5432/app" \
+    'development:' "  url: postgres://app:$_p8p_pw@localhost:5432/app" \
+    '  url2: mysql://app:${DB_PASS}@db/x' "  cache: rediss://:$_p8p_pw@cache.prod.internal:6380" \
+    "  mongo: mongodb+srv://u:$_p8p_pw@cluster.example.com/db" \
+    "  test: postgres://app:$_p8p_pw@127.0.0.1/app" > config/database.yml
+  printf '%s\n' '{' "  \"Db\": \"Server=db;Database=x;Password=$_p8p_pw;\"," \
+    '  "Db2": "Server=db;Password=$DBPW;",' "  \"Api\": \"https://api.prod.internal/x?user=a&pwd=$_p8p_pw\"" '}' > appsettings.json
+  printf '%s\n' 'resource "aws_db_instance" "db" {' "  password = \"$_p8p_pw\"" '  master_password = var.db_password' \
+    '  api_key = "${var.k}"' '  private_key = <<EOF' 'MIIB' 'EOF' '}' 'module "net" {' \
+    "  source = \"git::https://$_p8p_ghp@git.example.invalid/o/net.git\"" '}' 'module "ok" {' \
+    '  source = "git::ssh://git@git.example.invalid/o/ok.git"' '}' > main.tf
+  printf '%s\n' "db_secret = \"$_p8p_pw\"" > prod.tfvars
+  git add -A && git commit -qm base ) >/dev/null 2>&1
+_p8p_leg() {  # <name> <fence> <expected stdout>
+  local bad="" out err raw n i want_err=""
+  printf '%s\n' "$2" > "$TMP/p8p-leg.sh"
+  case "$2" in *'git grep'*'| cut -d: -f1,2'*) ;; *) bad="$bad [could not extract the recipe, or it no longer cuts each hit to file:line]" ;; esac
+  err="$( cd "$P8G" && bash "$TMP/p8p-leg.sh" 2>&1 >"$TMP/p8p-leg.out" )"
+  out="$(cat "$TMP/p8p-leg.out")"
+  [ "$out" = "$3" ] || bad="$bad [located '$(printf '%s' "$out" | tr '\n' ' ')', expected '$(printf '%s' "$3" | tr '\n' ' ')']"
+  # One `git grep rc=0` per git grep in the fence: rc=1 is "no match" and anything higher is a
+  # failed run, which the skill tells the model to report as a gap rather than a clean result.
+  n="$(grep -c 'git grep' "$TMP/p8p-leg.sh")"
+  for ((i = 0; i < n; i++)); do want_err="$want_err${want_err:+$'\n'}git grep rc=0"; done
+  [ "$n" -ge 1 ] && [ "$err" = "$want_err" ] || bad="$bad [stderr '$(printf '%s' "$err" | tr '\n' ' ')', expected $n 'git grep rc=0' line(s)]"
+  for _v in "$_p8p_pw" "$_p8p_ghp"; do
+    case "$out$err" in *"$_v"*) bad="$bad [printed a planted value]" ;; esac
+  done
+  sed 's/ | cut -d: -f1,2$//' "$TMP/p8p-leg.sh" > "$TMP/p8p-leg-raw.sh"
+  raw="$( cd "$P8G" && bash "$TMP/p8p-leg-raw.sh" 2>/dev/null )"
+  case "$raw" in *"$_p8p_pw"*|*"$_p8p_ghp"*) ;; *) bad="$bad [control: without the cut the recipe printed no value, so the fixture no longer proves the cut is what hides them]" ;; esac
+  [ -z "$bad" ] \
+    && ok "audit: the $1 locator prints exactly the expected file:line set and no value" \
+    || nok "audit P8p: the $1 locator" "$bad"
+}
+_p8p_leg "URL-userinfo" "$(audit_fence '**Credentials in URL userinfo**')" \
+  "$(printf '%s\n' config/database.yml:2 config/database.yml:4 config/database.yml:6 config/database.yml:7 config/database.yml:8 deploy.yml:2)"
+_p8p_leg "CI-config" "$(audit_fence '**CI configs with inline secrets**')" \
+  "$(printf '%s\n' .circleci/config.yml:2 .github/workflows/ci.yml:2 .gitlab-ci.yml:2)"
+_p8p_leg "production-credential" "$(audit_fence '**Config files with production credentials:**')" \
+  "$(printf '%s\n' appsettings.json:2 appsettings.json:4 config/database.yml:2 config/database.yml:6)"
+_p8p_leg "IaC" "$(audit_fence '**IaC:**')" \
+  "$(printf '%s\n' main.tf:2 main.tf:5 prod.tfvars:1 main.tf:10)"
+
+# P8q: the trivy config recipe, end-to-end against the REAL binary. trivy's JSON quotes the
+# offending lines of a scanned file, and its log prints a module source URL with a token in
+# the username position in full (measured on 0.74.0), so the recipe's jq and awk filters are
+# the only thing between a misconfigured resource's password and the transcript. The control
+# runs the same scan unfiltered and requires the password on stdout and the token on stderr;
+# without it, every no-value assertion passes on a fixture trivy would not have quoted.
+# Skipped without trivy, jq or an unprivileged network namespace. The skill's fallback for a
+# box where `unshare -rn true` fails (no isolation, an explicit --misconfig-scanners list) is
+# prose and is not run here.
+# Both runs get a private TMPDIR, because trivy stages remote modules under `$TMPDIR/.aqua/cache`
+# and concurrent scans on one machine share it. Observed with six scans at once: one logged
+# `No files found` for the module at INFO, reported no error and quoted nothing, which here reads
+# as a lost `module not loaded` line or a control with no token. With a private TMPDIR, eight
+# concurrent scans all quoted it.
+if command -v trivy >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && unshare -rn true 2>/dev/null; then
+  TV="$TMP/p8q"; mkrepo "$TV"
+  printf '%s\n' 'resource "aws_db_instance" "db" {' '  engine              = "mysql"' \
+    "  password            = \"$_p8p_pw\"" '  publicly_accessible = true' '  storage_encrypted   = false' '}' \
+    'module "net" {' "  source = \"git::https://$_p8p_ghp@git.example.invalid/o/net.git\"" '}' > "$TV/main.tf"
+  ( cd "$TV" && git add -A && git commit -qm base ) >/dev/null 2>&1
+  _p8q_tmp="$TMP/p8q-tmp"; mkdir -p "$_p8q_tmp"
+  _p8q_bad=""
+  audit_fence 'Run the misconfiguration scan as `trivy config`' > "$TMP/p8q-trivy.sh"
+  grep -q 'trivy config' "$TMP/p8q-trivy.sh" && grep -q 'jq -c' "$TMP/p8q-trivy.sh" \
+    || _p8q_bad="$_p8q_bad [could not extract the trivy recipe from SKILL.md]"
+  # stderr through a command substitution, not a file: the awk filter runs in a process
+  # substitution the script does not wait for, and the pipe is what waits for its output.
+  _p8q_err="$( cd "$TV" && TMPDIR="$_p8q_tmp" bash "$TMP/p8q-trivy.sh" 2>&1 >"$TMP/p8q.out" )"
+  _p8q_out="$(cat "$TMP/p8q.out")"
+  for _v in "$_p8p_pw" "$_p8p_ghp"; do
+    case "$_p8q_out$_p8q_err" in *"$_v"*) _p8q_bad="$_p8q_bad [printed a planted value]" ;; esac
+  done
+  grep -qE '^\{"targets":[1-9][0-9]*\}$' <<< "$_p8q_out" || _p8q_bad="$_p8q_bad [no non-zero targets line]"
+  grep -qF '"ID":"AWS-' <<< "$_p8q_out" || _p8q_bad="$_p8q_bad [no misconfiguration record]"
+  [ "${_p8q_out##*$'\n'}" = 'jq rc=0' ] || _p8q_bad="$_p8q_bad [stdout did not end in 'jq rc=0']"
+  grep -qxF 'trivy rc=0' <<< "$_p8q_err" || _p8q_bad="$_p8q_bad [no 'trivy rc=0' line]"
+  grep -qxF 'module not loaded: main.tf:7-9' <<< "$_p8q_err" || _p8q_bad="$_p8q_bad [no 'module not loaded: main.tf:7-9' line]"
+  while IFS= read -r _l; do
+    case "$_l" in
+      'forgeward-scan: '*|'unshare: '*|'trivy: falling back to embedded checks'|'module not loaded: '*|*' other trivy error line(s) withheld'|'trivy rc='*) ;;
+      *) _p8q_bad="$_p8q_bad [a stderr line outside the filter's fixed shapes reached the caller]" ;;
+    esac
+  done <<< "$_p8q_err"
+  _p8q_ctl_err="$( cd "$TV" && TMPDIR="$_p8q_tmp" unshare -rn "$SCAN" trivy config --config /dev/null --disable-telemetry \
+    --skip-check-update --skip-version-check --format json . 2>&1 >"$TMP/p8q-ctl.out" )"
+  case "$(cat "$TMP/p8q-ctl.out")" in *"$_p8p_pw"*) ;; *) _p8q_bad="$_p8q_bad [control: the unfiltered JSON did not quote the password]" ;; esac
+  case "$_p8q_ctl_err" in *"$_p8p_ghp"*) ;; *) _p8q_bad="$_p8q_bad [control: the unfiltered log did not print the token]" ;; esac
+  [ -z "$_p8q_bad" ] \
+    && ok "audit: the trivy config recipe reports targets, records and the unloaded module and prints neither planted value" \
+    || nok "audit P8q: the trivy config recipe" "$_p8q_bad"
+else
+  ok "audit trivy config recipe: SKIPPED (needs trivy, jq and unshare -rn)"
+fi
+
+# P8r: every bash fence in the audit skill is either run by an assertion or listed here as
+# an accepted gap, with the reason. Each entry's marker must resolve to a distinct fence, and
+# the resolved set must equal every fence the skill holds, so a new recipe fails here until
+# someone decides which it is. An entry owned by an assertion must also be extracted by it
+# under that exact marker, so the census cannot claim a fence its owner does not run (an
+# owner may still SKIP on a box without its scanner, as P8k and P8q do). The census cannot be
+# empty and every entry must resolve, so a fence scan that found nothing fails too.
+# Non-goal: a recipe put in an untagged ``` fence is invisible to this, as are inline
+# one-line commands in the prose (the zizmor line in Phase 4 is one).
+_p8r_census=(
+  '**Never write inside the repository under audit.**|gap: one call to forgeward-artifact-dir.sh, whose output P9 pins'
+  'Any deterministic scanner goes through the wrapper|gap: the wrapper argv template, with <tool> a placeholder; P8-P8n pin the wrapper'
+  '## Phase 0|gap: stack probes that print file names, never contents'
+  '**Infrastructure surface:**|gap: a find/ls census that prints names and a count, never contents'
+  '**Never print raw `git log -p --all`|P8p'
+  '**Run the gitleaks history scan on every pass|P8k'
+  '**Credentials in URL userinfo**|P8p'
+  '**`.env` files tracked by git.**|P8o'
+  '**CI configs with inline secrets**|P8p'
+  'Run the misconfiguration scan as `trivy config`|P8q'
+  '**Config files with production credentials:**|P8p'
+  '**IaC:**|P8p'
+)
+# This file, by absolute path: the suite has already cd'd into $R, so BASH_SOURCE is stale.
+_p8r_self="$PLUGIN/test/${BASH_SOURCE[0]##*/}"
+_p8r_bad=""; _p8r_at=()
+[ -f "$_p8r_self" ] || _p8r_bad="$_p8r_bad [cannot find this suite at $_p8r_self to check owners against]"
+for _e in "${_p8r_census[@]}"; do
+  _m="${_e%%|*}"; _o="${_e#*|}"
+  _l="$(audit_fence "$_m" line)"
+  [ -n "$_l" ] || { _p8r_bad="$_p8r_bad [no bash fence follows '$_m']"; continue; }
+  _p8r_at+=("$_l")
+  case "$_o" in
+    'gap: '*) ;;
+    *) grep -qF -- "audit_fence '$_m'" "$_p8r_self" || _p8r_bad="$_p8r_bad [$_o is named as the owner of '$_m' but nothing here extracts that fence]" ;;
+  esac
+done
+_p8r_all="$(awk '/^```(bash|sh|shell|console)$/{print NR}' "$AUDIT_SKILL")"
+_p8r_got="$(printf '%s\n' "${_p8r_at[@]}" | sort -n)"
+[ "$_p8r_got" = "$_p8r_all" ] \
+  || _p8r_bad="$_p8r_bad [census resolves to lines '$(printf '%s' "$_p8r_got" | tr '\n' ' ')', the skill's fences open at '$(printf '%s' "$_p8r_all" | tr '\n' ' ')']"
+[ -z "$_p8r_bad" ] \
+  && ok "audit: each of the skill's $(printf '%s\n' "$_p8r_all" | wc -l) bash recipes is run by an assertion or listed as an accepted gap" \
+  || nok "audit P8r: the recipe census" "$_p8r_bad"
 
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
 ad="$( cd "$R" && "$ARTDIR" )"
