@@ -138,7 +138,16 @@ commit that was fixing it — a line number cannot survive its own fix.
   (refusing on any base-SHA change) is not taken. Both hooks accept a marker only while
   the run file for its `reviewed_head` still holds its `run_id`, and never for a pushed
   commit that has a run file of its own and is not its `reviewed_head`
-  (`run_is_current`, byte-identical in both hooks; F1 pins it).
+  (`run_is_current`, byte-identical in both hooks; F1 pins it). Each hook reads every
+  marker field from ONE private copy of the marker (`is_fresh` and `snapshot_is_fresh`,
+  byte-identical in both; F11 pins it): read from the path, a marker replaced mid-check
+  lent another PASS's current run to a stale PASS's matching hash (F12, P40). **No
+  script deletes a run file.** A delete by path cannot be made safe against revoke's
+  atomic replace without a lock, and a deleted fresh run file lets a same-diff PASS on
+  another commit authorize that commit (K39). **Non-goal:** run files are kept forever,
+  one small file per commit ever gated; deleting `forgeward-gate-runs` by hand makes every
+  marker read stale (one re-gate) and drops those commits' refusal of a same-diff PASS on
+  another commit.
 - **Every run that reaches review starts a new run on the FROZEN commit first, and
   revokes again on every outcome after that which ends without a marker**
   (`forgeward-write-marker.sh --revoke <HEAD_SHA>`, never live `HEAD`: a checkout change
@@ -146,10 +155,15 @@ commit that was fixing it — a line number cannot survive its own fix.
   commit BEFORE it deletes anything, and **the run file is the authority, not the
   deletions**: once it is recorded, every marker for that commit, under any name, names a
   stale run to both hooks. Revoke's name list was wrong twice — a same-named tag, then the
-  `heads/<name>` spelling a marker had already been written under — so it was demoted to
-  hygiene rather than patched a third time (DECISIONS.md). It still deletes every local
-  branch's marker at the commit under both spellings, a failed branch listing still exits
-  1, and a marker that cannot be removed still stops the gate. "Write no marker" was not
+  `heads/<name>` spelling a marker had already been written under — so the run file
+  replaced it as the authority rather than it being patched a third time (DECISIONS.md).
+  **The deletions are not hygiene, and dropping them is not a simplification:** a
+  branch's marker may certify an EARLIER commit with the same diff, whose run this revoke
+  does not touch, so without the deletion a later commit on that branch with no run file
+  of its own pushes on it (P41); they are also the only revocation a pre-push hook
+  installed before 0.31.0 sees. It still deletes every local branch's marker at the
+  commit under both spellings, a failed branch listing still exits 1, and a marker that
+  cannot be removed still stops the gate. "Write no marker" was not
   enough: a re-run that FAILs on an already-passed diff left the old PASS authorizing
   that same diff. Revoking at the start means an interrupted run needs no exit path to
   remember anything. The writer refuses unless the run file still holds its own id, read
@@ -158,8 +172,8 @@ commit that was fixing it — a line number cannot survive its own fix.
   the PASS with no gate run of its own (F6, P38), or a sibling branch at the reviewed
   commit (P39). **Cannot see, deliberately:** acceptance is per diff and revocation per
   commit, so a PASS on C1 and a FAIL on C2 with the same diff do not stop a push of a
-  third commit C3 with that diff that no gate run ever started on, or whose run file was
-  pruned (more than 30 days after the run started). A write stalled across a whole newer
+  third commit C3 with that diff that no gate run ever started on, through any marker the
+  deletions did not reach. A write stalled across a whole newer
   run can overwrite that run's marker and then remove it — fail-closed, one re-gate. A
   run that stops in
   Step 0 (nothing to gate, or an unresolvable ref) reviews nothing and revokes nothing, so

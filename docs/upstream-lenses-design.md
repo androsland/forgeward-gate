@@ -199,7 +199,12 @@ the old marker still authorizes pushing that same diff. "Write no marker" is not
   still holds its own id, before writing and again after (§4.2), so a superseded run never
   reports a PASS. No lock is taken: macOS has no portable `flock`, and a stale lock would
   wedge the gate.
-- **The run file is the authority; the deletions above are hygiene.** Both hooks accept a
+- **The run file is the authority; the deletions above narrow what it cannot reach.** A
+  branch's marker may certify an earlier commit with the same diff, whose run this revoke
+  does not touch; deleting it stops a later commit on that branch, with no run file of
+  its own, pushing on it. They are also the only revocation an enforcer installed before
+  0.31.0 sees. Run files are never deleted: a delete by path races revoke's atomic
+  replace. Both hooks accept a
   marker only while the run file for its `reviewed_head` still holds its `run_id`, and
   refuse it for a pushed commit that has a run file of its own and is not its
   `reviewed_head` (`run_is_current`, byte-identical in both hooks). A newer revoke
@@ -232,7 +237,7 @@ The rule: a marker certifies exactly the commits the reviewers were given.
     `<HEAD_SHA>` when the tree is dirty. This is pre-existing. Filed in `TODOS.md`.
   - **Acceptance is per diff, revocation per commit.** A PASS on C1 and a FAIL on C2 with
     the same diff do not stop a push of a third commit C3 with that diff that no gate run
-    ever started on, or whose run file was pruned (30 days after the run). The same
+    ever started on, through a marker the deletions did not reach. The same
     property is what lets `/ship`'s version-bump commit push on the PASS before it.
   - **The run id's residuals.** Every revoke supersedes, so a run's own later revoke or
     another run's FAIL can refuse a concurrent PASS, and a write stalled across a whole

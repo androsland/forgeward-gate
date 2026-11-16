@@ -5017,9 +5017,9 @@ else
 fi
 
 # =============================================================================
-# K1..K39 — a PASS certifies the commits the reviewers were given, and only the latest
+# K1..K40 — a PASS certifies the commits the reviewers were given, and only the latest
 # gate run on that commit may write it (0.31.0). K33b and K39 pin the run id's marker
-# field and the run-file prune; F1-F10 below pin what the hooks do with them.
+# field and that no write deletes a run file; F1-F12 below pin what the hooks do with them.
 #
 # The writer used to read HEAD and hash the live `<base>...HEAD` at write time, so a
 # commit landing while reviewers ran was pinned to a marker nobody reviewed, and a
@@ -5552,32 +5552,51 @@ khex "$K33BRUN" && khex "$K33BNEW" && [ "$K33BNEW" != "$K33BRUN" ] \
   || nok "K33b: superseded writer removed a newer run's marker or reported a PASS" \
          "st=$kst run=$K33BRUN newer=$K33BNEW on-disk-run=$(kfield run_id) out=$kout"
 
-# K39 (contract pin): run files are pruned at 30 days on the write path, and only those.
-# Three run files: one 40 days old (pruned), one 10 days old (kept -- the plausible wrong
-# fix `-mtime +0` would prune it), and the current run's (kept). Ages are set with
-# python3 rather than `touch -d`, which is GNU-only. Mutation-checked: deleting the prune
-# line or widening it to `-mtime +0` turns this red.
+# K39 (PRE-FIX control: red on e9ab0e0, which pruned run files older than 30 days on every
+# write): run files are never deleted. A prune selects a file and then deletes it BY PATH,
+# so a revoke that atomically replaced that file in between -- a new gate run on a commit
+# last gated long ago -- lost its fresh run file, and a same-diff PASS on another commit
+# then authorized that commit while its review was pending. A write with a 40-day-old run
+# file for another commit present must leave it byte-identical, and the count of run files
+# must not drop (floor: at least two before the write). The age is set with python3, not
+# `touch -d '40 days ago'`, which is GNU-only. Mutation-checked: re-adding the prune line
+# turns this red.
 K39OLD="$KCOMMON/forgeward-gate-runs/$(printf 'b%.0s' $(seq 40))"
-K39MID="$KCOMMON/forgeward-gate-runs/$(printf 'c%.0s' $(seq 40))"
-printf 'x\n' > "$K39OLD"; printf 'x\n' > "$K39MID"
+printf 'x\n' > "$K39OLD"
 python3 -I -c 'import os,sys,time
-for p,d in ((sys.argv[1],40),(sys.argv[2],10)):
-    t=time.time()-d*86400; os.utime(p,(t,t))' "$K39OLD" "$K39MID"
+t=time.time()-40*86400; os.utime(sys.argv[1],(t,t))' "$K39OLD"
+cp "$K39OLD" "$TMP/k39.copy"
+rm -f "$KMARK"; krun "$KH"
+k39_count() { find "$KCOMMON/forgeward-gate-runs" -type f | wc -l | tr -d ' '; }
+k39_before="$(k39_count)"
+kw main privacy "$KB" "$KH" "$KRUN"
+k39_after="$(k39_count)"
+[ "$k39_before" -ge 2 ] && [ "$kst" -eq 0 ] && [ -f "$KMARK" ] \
+  && [ -f "$K39OLD" ] && cmp -s "$K39OLD" "$TMP/k39.copy" && [ "$k39_after" -ge "$k39_before" ] \
+  && ok "K39: a marker write deletes no run file, however old: a 40-day-old one survives byte-identical and the count does not drop" \
+  || nok "K39: a marker write deleted a run file" "st=$kst before=$k39_before after=$k39_after old=$([ -e "$K39OLD" ] && echo kept || echo deleted) out=$kout"
+rm -f "$K39OLD"
+
+# K40 (contract pin; green on e9ab0e0): a marker write leaves the marker of a sibling
+# branch at ANOTHER commit byte-identical. Neither the write nor its GC may touch a live
+# branch's marker.
+git -C "$KR" branch -f kother "$KB" >/dev/null 2>&1
+printf '{"schema":5,"passed":true,"branch":"kother"}\n' > "$KMDIR/kother.json"
+cp "$KMDIR/kother.json" "$TMP/k40.copy"
 rm -f "$KMARK"; krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"
-[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ ! -e "$K39OLD" ] && [ -f "$K39MID" ] \
-  && [ "$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)" = "$KRUN" ] \
-  && ok "K39: a write prunes run files older than 30 days and keeps a 10-day-old one and the current run's" \
-  || nok "K39: run-file prune" "st=$kst old=$([ -e "$K39OLD" ] && echo kept || echo pruned) mid=$([ -e "$K39MID" ] && echo kept || echo pruned) out=$kout"
-rm -f "$K39MID"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ -f "$KMDIR/kother.json" ] && cmp -s "$KMDIR/kother.json" "$TMP/k40.copy" \
+  && ok "K40: a marker write leaves a sibling branch's marker at another commit byte-identical" \
+  || nok "K40: a marker write changed a sibling branch's marker" "st=$kst out=$kout"
+rm -f "$KMDIR/kother.json"
 
 # =============================================================================
 # F1..F10 -- both hooks accept a PASS only while the gate run that wrote it is still the
 # latest on the commit it reviewed, and never for a pushed commit that a gate run has
 # started on unless it is that commit (`run_is_current`, 0.31.0). These drive the fast
 # reminder, forgeward-gate-check.sh; P30-P39 in test/pre-push-test.sh drive the enforced
-# hook through the same cases. Revoke's deletions are hygiene now, so every refusal below
-# is built with the marker still ON DISK and its diff hash still matching: what refuses
-# it is the run file. F3-F5 and F7-F10 are PRE-FIX controls -- 6e11899's hooks allow
+# hook through the same cases. Every refusal below is built with the marker still ON
+# DISK and its diff hash still matching, so what refuses it is the run file, not revoke's
+# deletions (P41 in test/pre-push-test.sh pins what those still do). F3-F5 and F7-F10 are PRE-FIX controls -- 6e11899's hooks allow
 # each of those pushes. F2 and F6 are positive controls and the WRONG-FIX controls for
 # the plausible over-fix of refusing any pushed commit other than the reviewed one: F6 is
 # the /ship flow, a VERSION-only commit after the PASS with no gate run of its own.
@@ -5646,7 +5665,7 @@ fgate "$FC"; fset "$FMD/ffeat.json" run_id; fset "$FMD/ffeat.json" schema 4
   && ok "F4: a schema-4 marker (no run_id) is refused even while its run is current" \
   || nok "F4: a marker without run_id was accepted" "out=$fout"
 
-# F5 (PRE-FIX control, case f): the run file is gone, as after the 30-day prune.
+# F5 (PRE-FIX control, case f): the run file is gone, as after a by-hand delete.
 fgate "$FC"; rm -f "$FRUNS/$FC"
 [ -f "$FMD/ffeat.json" ] && fdenied ffeat \
   && ok "F5: a marker whose run file is missing is refused" \
@@ -5725,6 +5744,80 @@ git -C "$FR" tag -d fsp >/dev/null 2>&1; frevoke "$FSC"; git -C "$FR" tag fsp "$
 [ "$f10_written" = 1 ] && [ "$f10_before" = 0 ] && [ -f "$FMD/heads/fsp.json" ] && fdenied heads/fsp \
   && ok "F10: a PASS under the heads/<name> spelling is refused once a newer run starts on its commit" \
   || nok "F10: the stale heads/<name> PASS was accepted" "written=$f10_written before=$f10_before out=$fout"
+
+# F11: is_fresh and snapshot_is_fresh must stay byte-identical in both hooks, F1's
+# pattern with the definition line included, so the usage comment is pinned too. Each
+# extraction is required non-empty and to start with its own definition.
+_fn_text() { awk -v fn="$2" 'index($0, fn "() {")==1{f=1} f{print} f&&/^\}$/{exit}' "$1"; }
+f11_fail=""
+for _fn in is_fresh snapshot_is_fresh; do
+  _fa="$(_fn_text "$PLUGIN/scripts/forgeward-gate-check.sh" "$_fn")"
+  _fb="$(_fn_text "$PLUGIN/scripts/forgeward-pre-push.sh" "$_fn")"
+  case "$_fa" in "$_fn() {"*) ;; *) f11_fail="$f11_fail $_fn:extraction" ;; esac
+  [ -n "$_fa" ] && [ "$_fa" = "$_fb" ] || f11_fail="$f11_fail $_fn:drift"
+done
+[ -z "$f11_fail" ] \
+  && ok "F11: is_fresh and snapshot_is_fresh are byte-identical in gate-check.sh and pre-push.sh" \
+  || nok "F11: the marker-snapshot functions drifted between the hooks" "failed:$f11_fail"
+
+# F12: the reminder reads a marker ONCE. A scratch copy of scripts/ whose
+# forgeward-diff-hash.sh FIRST moves a prepared marker over a named one, THEN execs the
+# real helper, so the swap lands between the reads of .diff_hash and .run_id with no
+# sleep. Fixture: PASS on ship at C (M1); a VERSION-only C2 on top, same diff; a second
+# run on C makes M1's run stale; M2 is a current PASS for a DIFFERENT diff (D, on d).
+# Leg 1 (M1 alone) and leg 2 (M2 in place before the check) are controls; leg 3 (M1 in
+# place, M2 swapped in mid-check) is the PRE-FIX control -- e9ab0e0 takes M1's hash and
+# M2's run and allows the push; leg 4 is the positive control, a current PASS swapped
+# for an identical copy of itself. A `.fired` file proves each swap really ran.
+# Mutation-checked: handing run_is_current the marker PATH instead of the copy turns
+# leg 3 red.
+SW="$TMP/swap"; mkdir -p "$SW/scripts"
+cp -p "$PLUGIN"/scripts/*.sh "$SW/scripts/"
+mv "$SW/scripts/forgeward-diff-hash.sh" "$SW/scripts/real-diff-hash.sh"
+cat > "$SW/scripts/forgeward-diff-hash.sh" <<'SWEOF'
+#!/usr/bin/env bash
+if [ -n "${FORGEWARD_SWAP_FROM:-}" ] && [ -f "$FORGEWARD_SWAP_FROM" ]; then
+  mv -f "$FORGEWARD_SWAP_FROM" "$FORGEWARD_SWAP_TO" && : > "$FORGEWARD_SWAP_FROM.fired"
+fi
+exec "$(dirname "$0")/real-diff-hash.sh" "$@"
+SWEOF
+chmod +x "$SW/scripts/forgeward-diff-hash.sh"
+SR="$TMP/swaprepo"; mkrepo "$SR"
+( cd "$SR" && echo 0.1.0 > VERSION && echo base > a.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb ship && echo 'const s = 1;' > s.js && git add -A \
+   && git commit -qm feat ) >/dev/null 2>&1
+SB="$(git -C "$SR" rev-parse main)"; SC="$(git -C "$SR" rev-parse HEAD)"
+SMD="$(git -C "$SR" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+sgate() { # sgate <commit>: a passing gate run on <commit> from the current checkout
+  local run
+  run="$(cd "$SR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$SR" && "$WRITE" main privacy "$SB" "$1" "$run" ) >/dev/null 2>&1
+}
+sgate "$SC"
+( cd "$SR" && echo 0.2.0 > VERSION && git commit -qam 'chore: bump version' ) >/dev/null 2>&1
+cp "$SMD/ship.json" "$TMP/f12.m1"
+( cd "$SR" && "$WRITE" --revoke "$SC" ) >/dev/null 2>&1
+( cd "$SR" && git checkout -qb d main && echo 'const d = 1;' > d.js && git add -A && git commit -qm d ) >/dev/null 2>&1
+SD="$(git -C "$SR" rev-parse HEAD)"; sgate "$SD"; cp "$SMD/d.json" "$TMP/f12.m2"
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+spre() { # spre <swap-from> <swap-to>: the copied reminder on `git push`; stdout = decision
+  printf '{"cwd":"%s","tool_input":{"command":"git push origin HEAD"}}' "$SR" \
+    | FORGEWARD_SWAP_FROM="$1" FORGEWARD_SWAP_TO="$2" "$SW/scripts/forgeward-gate-check.sh" pretooluse
+}
+cp "$TMP/f12.m1" "$SMD/ship.json"; f12_1="$(spre "" "")"
+cp "$TMP/f12.m2" "$SMD/ship.json"; f12_2="$(spre "" "")"
+cp "$TMP/f12.m1" "$SMD/ship.json"; cp "$TMP/f12.m2" "$TMP/f12.swap"
+f12_3="$(spre "$TMP/f12.swap" "$SMD/ship.json")"; f12_3f=0; [ -e "$TMP/f12.swap.fired" ] && f12_3f=1
+git -C "$SR" checkout -q d >/dev/null 2>&1
+cp "$SMD/d.json" "$TMP/f12.same"
+f12_4="$(spre "$TMP/f12.same" "$SMD/d.json")"; f12_4f=0; [ -e "$TMP/f12.same.fired" ] && f12_4f=1
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+denies "$f12_1" && denies "$f12_2" && [ "$f12_3f" = 1 ] && denies "$f12_3" \
+  && case "$f12_3" in *"the current branch (ship @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac \
+  && [ "$f12_4f" = 1 ] && [ -z "$f12_4" ] \
+  && ok "F12: a marker swapped in while the reminder hashes cannot lend its run to the stale PASS it replaced" \
+  || nok "F12: the reminder combined two markers' fields" \
+         "m1-alone=$(denies "$f12_1" && echo denied || echo allowed) m2-alone=$(denies "$f12_2" && echo denied || echo allowed) swap=$f12_3f:$(denies "$f12_3" && echo denied || echo allowed) same=$f12_4f:${f12_4:-allowed}"
 
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"

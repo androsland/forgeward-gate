@@ -31,13 +31,18 @@
 # its `reviewed_head`. The run file is the authority: a newer revoke stales every marker
 # for that commit, under any name, already on disk or still to land.
 #
-# --revoke then deletes, as hygiene, the marker of every local branch at <reviewed-head>
-# (by the push hook's own `for-each-ref --points-at` expression), plus the current
-# branch's only when HEAD is at <reviewed-head> (the literal `HEAD` key on a detached
-# HEAD), each under both spellings of its name: `%(refname:short)`, which a same-named tag
-# turns into `heads/<name>`, and the canonical name with `refs/heads/` stripped. Branches
-# at other commits are left alone; their markers may certify the same diff, but they
-# belong to other runs. A directory at a marker path is skipped; a symlink is removed.
+# --revoke then deletes the marker of every local branch at <reviewed-head> (by the push
+# hook's own `for-each-ref --points-at` expression), plus the current branch's only when
+# HEAD is at <reviewed-head> (the literal `HEAD` key on a detached HEAD), each under both
+# spellings of its name: `%(refname:short)`, which a same-named tag turns into
+# `heads/<name>`, and the canonical name with `refs/heads/` stripped. The run file is
+# what the hooks consult; the deletions narrow the per-diff residual (first non-goal) for
+# the branch's own follow-up commits. A branch's marker may certify an EARLIER commit with
+# the same diff, whose run this revoke does not touch: without the deletion, a later
+# commit on that branch with no run file of its own would push on it. They are also the
+# only revocation a pre-push hook installed before 0.31.0 sees. Branches at other
+# commits are left alone; their markers may certify the same diff, but they belong to
+# other runs. A directory at a marker path is skipped; a symlink is removed.
 # Exit 1, every path still tried and no RUN_ID line, when the run cannot be recorded, the
 # branches at the commit cannot be listed, or a marker exists and could not be removed;
 # the gate stops on it. Why the run file and not the name list: DECISIONS.md, 2026-11-16.
@@ -45,16 +50,20 @@
 # NON-GOALS, so the limits are not read as coverage:
 #   - acceptance is per DIFF, revocation per COMMIT. A PASS on C1 and a FAIL on C2 with
 #     the same diff do not stop a push of a third commit C3 with that diff that no gate
-#     run ever started on (or whose run file was pruned). That is what lets a /ship
-#     version bump push on the PASS before it.
+#     run ever started on. That is what lets a /ship version bump push on the PASS
+#     before it.
 #   - a write stalled across a whole newer run can overwrite that run's marker and then
 #     remove it, costing the newer run its PASS. Fail-closed: one re-gate.
 #   - EVERY revoke supersedes, so a run's own later revoke (a Step 3 halt or a refused
 #     write) or another run's FAIL refuses a concurrent PASS. Fail-closed.
 #   - no lock is taken: macOS ships no portable `flock`, and a stale lock left by a killed
 #     run would wedge the gate, which is worse than a re-gate.
-#   - a marker reads stale once its run file is pruned: any later write prunes run files
-#     whose run started more than 30 days ago.
+#   - run files are kept forever, one small file per commit ever gated. Nothing here
+#     deletes one: a delete by path cannot be made safe against revoke's atomic replace
+#     without a lock, and deleting a fresh run file lets a same-diff PASS on another
+#     commit authorize that commit while its review is pending or after it FAILs.
+#     Deleting `forgeward-gate-runs` by hand makes every marker read stale (one re-gate)
+#     and drops those commits' refusal of a same-diff PASS on another commit.
 #   - markers and run files are local files; forging both by hand is outside the threat
 #     model, as the hooks' own bypasses are.
 set -euo pipefail
@@ -457,11 +466,5 @@ EOF
   find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 }
 gc_markers 2>/dev/null || true
-# Run files, one per commit ever gated, pruned at 30 days on this same write-only path
-# and with the same posture: GC never runs from a hook, and deleting one stales the
-# markers of that commit, costing one re-gate (no gate run spans a month). The other
-# effect, a pruned commit no longer refusing another commit's PASS, is the header's
-# first non-goal.
-find "$runs_dir" -type f -mtime +30 -exec rm -f {} + 2>/dev/null || true
 
 echo "forgeward gate: PASS marker written for '$branch' @ ${reviewed_head:0:8} (substantive-diff hash ${hash:0:12})"

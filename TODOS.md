@@ -425,9 +425,10 @@ preferring to delete a weightless detail rather than correct it.
   a marker only while `forgeward-gate-runs/<reviewed_head>` still holds its `run_id`, and
   refuse it for a pushed commit that has a run file of its own (`run_is_current`). A
   commit no gate run ever started on has no run file, so a PASS on C1 and a FAIL on C2
-  with the same diff do not stop a push of a third commit C3 with that diff; nor does a
-  FAIL on a commit keep refusing it once that commit's run file is pruned (more than 30
-  days after the run started, by a later marker write). The same property is what lets `/ship`'s
+  with the same diff do not stop a push of a third commit C3 with that diff, through any
+  marker revoke's deletions did not reach (they do reach the branch that was at C2, P41).
+  Run files are kept forever; deleting `forgeward-gate-runs` by hand reopens this for
+  every commit it held. The same property is what lets `/ship`'s
   version-bump commit push on the PASS before it, so binding the marker to one commit is
   not the fix. Also not covered: a write stalled across a whole newer run on the same
   commit can overwrite that run's marker and then remove it, which costs one re-gate.
@@ -443,6 +444,15 @@ preferring to delete a weightless detail rather than correct it.
   wants its own release note. **What would settle it:** hash a pair that changes one
   binary file twice, with different content of the same abbreviated blob prefix, and
   compare. (source: pre-landing review of PR 1, 2026-11-16) **Priority:** P3
+- **Nothing tells a user their installed pre-push hook runs an old enforcer.** The
+  installer writes the enforcer's absolute path into the hook, so after a plugin update
+  the enforced hook keeps running the copy it was installed from (and, from 0.31.0 on,
+  an older one does not check the gate run), or fails every push with a bare exit 127
+  once that path is gone. The 0.31.0 CHANGELOG tells users to re-run the installer; nothing
+  checks. **What would settle it:** the gate (or gate-check) warns when the installed
+  hook's enforcer path is not the current plugin root, and the installed hook prints a
+  message naming the installer instead of exit 127 when its enforcer no longer exists.
+  (source: pre-landing review of PR 1, 2026-11-16) **Priority:** P3
 
 - **The drive-letter arm in `remote_is_networked()` approximates git's third
   locality clause and diverges on DOS reserved device names.** git's real predicate is
@@ -2740,13 +2750,16 @@ shipped on its own branch instead.
   reproduced four ways an old or never-reviewed PASS still authorized a push, because the
   hooks checked only `.base` and `.diff_hash` and revoke's name list missed spellings. The
   marker now records its `run_id` (schema 5) and both hooks accept it only through
-  `run_is_current`, so the run file is the authority and the deletions are hygiene;
+  `run_is_current`, so the run file is the authority, not the deletions;
   `forgeward-diff-hash.sh` exits 1 when `git diff` fails. That closed three entries from
   `## Gate — base detection and freshness`: the destination-branch marker revoke could
   not withdraw, the detached-`HEAD` PASS outliving a newer run, and the helper hashing a
   failed diff as the empty diff. What the run id cannot see is filed there in their place.
   `test/gate-test.sh` gains F1–F10, V11–V13, K33b and K39; `test/pre-push-test.sh` gains
-  P30–P39.
+  P30–P39. A third pass made run files permanent (a delete-by-path prune raced revoke's
+  atomic replace) and each hook read the marker once (a marker swapped mid-check lent its
+  run to a stale PASS): K39 now pins that no write deletes a run file, plus K40, F11,
+  F12 and P40–P42.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

@@ -7,9 +7,11 @@
 - Every marker written before 0.31.0 reads as not passed: the hooks now require the
   marker's gate run (`run_id`, schema 5), which older markers do not carry. Run
   `/forgeward:gate` once per branch you mean to push.
-- A PASS now stops reading fresh once its run file is pruned. Any later marker write in
-  the repo prunes run files whose run started more than 30 days ago, so re-gate a branch
-  that has waited longer than that.
+- An installed pre-push hook runs the enforcer at the path it was installed from: the
+  installer writes that path into the hook. Where an earlier forgeward still sits at that
+  path, the enforced hook keeps running it and does not check the gate run; where the
+  path is gone, every push fails with exit 127. Re-run
+  `scripts/forgeward-install-pre-push.sh` in every repo where it is installed.
 
 ### Fixed
 
@@ -21,6 +23,9 @@
   the old marker by name, and that name list missed a marker under the historical
   `heads/<name>` spelling, the detached `HEAD` key, a push's destination branch, and a
   write that landed after the delete.
+- Each hook reads a marker once: every field comes from one private copy, so a marker
+  replaced while a push is checked can no longer lend its current run to a stale PASS
+  whose diff hash matches.
 - `forgeward-diff-hash.sh` exits 1 with a message when `git diff` fails (no merge base, a
   bad ref, a missing blob). It used to hash such a pair as the empty diff and exit 0, so a
   later commit on it could match that hash.
@@ -62,8 +67,14 @@
   short hex is refused. `<run-id>` is the id `--revoke` printed.
 - New `--revoke <reviewed-head>` mode. It takes the commit Step 0 froze, records a new
   gate run for it, withdraws every marker at it, and on success prints `RUN_ID=<id>` as
-  its last line. Recording the run is what stales earlier markers; the deletions are
-  hygiene.
+  its last line. Recording the run is what stales the earlier markers for that commit;
+  the deletions withdraw a branch's PASS for an earlier commit with the same diff, which
+  that run file does not reach, and are the only revocation an enforcer installed before
+  0.31.0 sees.
+- Run files (`forgeward-gate-runs/<commit>` under the common git dir) are kept, one small
+  file per commit ever gated; nothing deletes them. Deleting the directory by hand makes
+  every marker read stale and drops those commits' refusal of a same-diff PASS on another
+  commit.
 - The marker is schema 5 and carries `run_id`. The diff hash is unchanged, so a `/ship`
   version-bump commit still pushes on the PASS before it.
 

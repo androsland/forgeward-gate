@@ -304,18 +304,31 @@ run_is_current() {
   return 0
 }
 
-# fresh == a marker for <branch> exists, the substantive-diff hash of <tip-sha> vs the
-# marker's recorded base matches what was reviewed (version-bump-invariant), and the run
-# that wrote it is still current (run_is_current).
-is_fresh() { # is_fresh <branch> <tip-sha>
-  local branch="$1" tip="$2" marker base stored cur
-  marker="$(marker_path "$branch")" || return 1
+# fresh == a marker for <branch> exists, the substantive-diff hash of <tip> vs the
+# marker's recorded base still matches what was reviewed (version-bump-invariant), and the
+# run that wrote it is still current (run_is_current). Every field is read from ONE private
+# copy of the marker: read from the path, a marker replaced mid-check combined one PASS's
+# diff hash with another PASS's run. A failed copy returns 1, the re-gate direction.
+# is_fresh and snapshot_is_fresh are byte-identical in forgeward-gate-check.sh and
+# forgeward-pre-push.sh; F11 in test/gate-test.sh fails when the copies drift.
+is_fresh() { # is_fresh <branch> <tip>
+  local marker snap rc
+  marker="$(marker_path "$1")" || return 1
   [ -f "$marker" ] || return 1
-  base="$(marker_get "$marker" '.base')";        [ -n "$base" ]   || return 1
-  stored="$(marker_get "$marker" '.diff_hash')"; [ -n "$stored" ] || return 1
-  cur="$("$DIFF_HASH" "$base" "$tip" 2>/dev/null)" || return 1
+  snap="$(mktemp "${TMPDIR:-/tmp}/forgeward-marker.XXXXXX" 2>/dev/null)" || return 1
+  [ -n "$snap" ] || return 1
+  cat -- "$marker" > "$snap" 2>/dev/null && snapshot_is_fresh "$snap" "$2"
+  rc=$?
+  rm -f -- "$snap" 2>/dev/null
+  return "$rc"
+}
+snapshot_is_fresh() { # snapshot_is_fresh <marker-copy> <tip>
+  local base stored cur
+  base="$(marker_get "$1" '.base')";        [ -n "$base" ]   || return 1
+  stored="$(marker_get "$1" '.diff_hash')"; [ -n "$stored" ] || return 1
+  cur="$("$DIFF_HASH" "$base" "$2" 2>/dev/null)" || return 1
   [ -n "$cur" ] && [ "$cur" = "$stored" ] || return 1
-  run_is_current "$marker" "$tip"
+  run_is_current "$1" "$2"
 }
 
 blocked=()

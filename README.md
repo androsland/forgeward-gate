@@ -323,7 +323,9 @@ run's write is refused), so only the latest run's outcome counts. A PASS is neve
 a pushed commit that a gate run has started on unless it is the commit that run reviewed. It
 is accepted for a later commit with the same reviewed diff that no gate run has started on —
 that is what lets `/ship`'s version bump push — so acceptance is per diff and revocation per
-commit. Run files are pruned after 30 days, and a marker whose run file is gone reads stale.
+commit. Run files are kept, one small file per commit ever gated; deleting
+`forgeward-gate-runs` by hand makes every marker read stale (one re-gate) and drops those
+commits' refusal of a same-diff PASS on another commit.
 
 ## Turn on enforcement (one command per repo)
 

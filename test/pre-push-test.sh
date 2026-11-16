@@ -557,7 +557,7 @@ xgate "$XC"; xset "$XMD/x.json" run_id; xset "$XMD/x.json" schema 4; xpush x "$X
   && ok "P35: a schema-4 marker (no run_id) -> BLOCKED" \
   || nok "P35: a marker without run_id authorized the push" "rc=$RC out=$OUT"
 
-# P36 (PRE-FIX control, case f): the run file is gone, as after the 30-day prune.
+# P36 (PRE-FIX control, case f): the run file is gone, as after a by-hand delete.
 xgate "$XC"; rm -f "$XRUNS/$XC"; xpush x "$XC"
 [ -f "$XMD/x.json" ] && xblocked x "$XC" \
   && ok "P36: a marker whose run file is missing -> BLOCKED" \
@@ -650,6 +650,107 @@ xgate "$XSC"; git -C "$RX" branch s2 "$XSC" >/dev/null 2>&1; xpush s2 "$XSC"
 [ "$RC" = 0 ] && [ ! -e "$XMD/s2.json" ] \
   && ok "P39: a sibling branch at the same commit as a current PASS -> ALLOWED" \
   || nok "P39: a sibling of a current PASS was refused" "rc=$RC out=$OUT"
+git -C "$RX" checkout -q main >/dev/null 2>&1
+
+# P40: the enforced hook reads a marker ONCE (F12 in test/gate-test.sh drives the
+# reminder through the same fixture). A scratch copy of scripts/ whose
+# forgeward-diff-hash.sh FIRST moves a prepared marker over a named one, THEN execs the
+# real helper, so the swap lands between the reads of .diff_hash and .run_id with no
+# sleep. PASS on ship at C (M1); a VERSION-only C2 on top, same diff; a second run on C
+# makes M1's run stale; M2 is a current PASS for a DIFFERENT diff (D, on d). Leg 1 (M1
+# alone) and leg 2 (M2 in place before the push) are controls; leg 3 (M1 in place, M2
+# swapped in mid-check) is the PRE-FIX control -- e9ab0e0's hook takes M1's hash and M2's
+# run and ALLOWS the push; leg 4 is the positive control, a current PASS swapped for an
+# identical copy of itself. A `.fired` file proves each swap really ran. Mutation-checked:
+# handing run_is_current the marker PATH instead of the copy turns leg 3 red.
+SW="$TMP/swap"; mkdir -p "$SW/scripts"
+cp -p "$PLUGIN"/scripts/*.sh "$SW/scripts/"
+mv "$SW/scripts/forgeward-diff-hash.sh" "$SW/scripts/real-diff-hash.sh"
+cat > "$SW/scripts/forgeward-diff-hash.sh" <<'SWEOF'
+#!/usr/bin/env bash
+if [ -n "${FORGEWARD_SWAP_FROM:-}" ] && [ -f "$FORGEWARD_SWAP_FROM" ]; then
+  mv -f "$FORGEWARD_SWAP_FROM" "$FORGEWARD_SWAP_TO" && : > "$FORGEWARD_SWAP_FROM.fired"
+fi
+exec "$(dirname "$0")/real-diff-hash.sh" "$@"
+SWEOF
+chmod +x "$SW/scripts/forgeward-diff-hash.sh"
+SR="$TMP/swaprepo"; git init -q "$SR"
+( cd "$SR"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  git config forgeward.gate enabled
+  echo 0.1.0 > VERSION; echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb ship; echo 'const s = 1;' > s.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
+SB="$(git -C "$SR" rev-parse main)"; SC="$(git -C "$SR" rev-parse HEAD)"
+SMD="$(git -C "$SR" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+sgate() { # sgate <commit>: a passing gate run on <commit> from the current checkout
+  local run
+  run="$(cd "$SR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$SR" && "$WRITE" main privacy "$SB" "$1" "$run" ) >/dev/null 2>&1
+}
+sgate "$SC"
+( cd "$SR" && echo 0.2.0 > VERSION && git commit -qam 'chore: bump version' ) >/dev/null 2>&1
+SC2="$(git -C "$SR" rev-parse HEAD)"
+cp "$SMD/ship.json" "$TMP/p40.m1"
+( cd "$SR" && "$WRITE" --revoke "$SC" ) >/dev/null 2>&1
+( cd "$SR" && git checkout -qb d main && echo 'const d = 1;' > d.js && git add -A && git commit -qm d ) >/dev/null 2>&1
+SD="$(git -C "$SR" rev-parse HEAD)"; sgate "$SD"; cp "$SMD/d.json" "$TMP/p40.m2"
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+spush() { # spush <branch> <sha> <swap-from> <swap-to>: the copied enforcer; sets RC and OUT
+  OUT="$(cd "$SR" && printf 'refs/heads/%s %s refs/heads/%s %s\n' "$1" "$2" "$1" "$RSHA" \
+    | FORGEWARD_SECRET_SCAN=skip FORGEWARD_SWAP_FROM="$3" FORGEWARD_SWAP_TO="$4" \
+      "$SW/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1)"; RC=$?
+}
+cp "$TMP/p40.m1" "$SMD/ship.json"; spush ship "$SC2" "" ""; p40_1=$RC; p40_1o=$OUT
+cp "$TMP/p40.m2" "$SMD/ship.json"; spush ship "$SC2" "" ""; p40_2=$RC
+cp "$TMP/p40.m1" "$SMD/ship.json"; cp "$TMP/p40.m2" "$TMP/p40.swap"
+spush ship "$SC2" "$TMP/p40.swap" "$SMD/ship.json"; p40_3=$RC; p40_3o=$OUT
+p40_3f=0; [ -e "$TMP/p40.swap.fired" ] && p40_3f=1
+cp "$SMD/d.json" "$TMP/p40.same"
+spush d "$SD" "$TMP/p40.same" "$SMD/d.json"; p40_4=$RC
+p40_4f=0; [ -e "$TMP/p40.same.fired" ] && p40_4f=1
+[ "$p40_1" = 1 ] && case "$p40_1o" in *"  - ship @ ${SC2:0:12}"*) true ;; *) false ;; esac \
+  && [ "$p40_2" = 1 ] && [ "$p40_3f" = 1 ] && [ "$p40_3" = 1 ] \
+  && case "$p40_3o" in *"have not passed /forgeward:gate"*"  - ship @ ${SC2:0:12}"*) true ;; *) false ;; esac \
+  && [ "$p40_4f" = 1 ] && [ "$p40_4" = 0 ] \
+  && ok "P40: a marker swapped in while the enforcer hashes cannot lend its run to the stale PASS it replaced -> BLOCKED" \
+  || nok "P40: the enforcer combined two markers' fields" \
+         "m1-alone=$p40_1 m2-alone=$p40_2 swap=$p40_3f:$p40_3 same=$p40_4f:$p40_4 out=$p40_3o"
+
+# P41 (WRONG-FIX control for dropping revoke's deletion loop; green on e9ab0e0 by
+# construction): the deletions narrow the per-diff residual for the branch's own
+# follow-up commits. PASS on C1 on branch b; C2 on b changes only VERSION (same diff);
+# a gate run starts on C2 and FAILs -- its revoke deletes b's marker, because b is at C2,
+# while C1's run stays current; then C3 on b changes only CHANGELOG.md, with no run file.
+# Had the deletion been skipped, C3 would push on C1's PASS. The first leg is the control
+# that the PASS covered C2's diff before the revoke. Mutation-checked: skipping the
+# deletions turns this red.
+( cd "$RX" && git checkout -qb rb main && echo 'const rb = 1;' > rb.js && git add -A \
+   && git commit -qm rb ) >/dev/null 2>&1
+XR1="$(git -C "$RX" rev-parse HEAD)"; xgate "$XR1"
+( cd "$RX" && echo 2.0.0 > VERSION && git add VERSION && git commit -qm 'chore: bump version' ) >/dev/null 2>&1
+XR2="$(git -C "$RX" rev-parse HEAD)"; xpush rb "$XR2"; p41_before=$RC
+xrevoke "$XR2"
+( cd "$RX" && echo '# log' > CHANGELOG.md && git add CHANGELOG.md && git commit -qm 'docs: changelog' ) >/dev/null 2>&1
+XR3="$(git -C "$RX" rev-parse HEAD)"; xpush rb "$XR3"
+[ "$p41_before" = 0 ] && [ ! -e "$XMD/rb.json" ] && [ ! -e "$XRUNS/$XR3" ] && xblocked rb "$XR3" \
+  && ok "P41: after a FAIL on a same-diff follow-up commit, a later commit on that branch with no run file -> BLOCKED" \
+  || nok "P41: a follow-up commit pushed on the PASS a failed run withdrew" "before=$p41_before rc=$RC out=$OUT"
+
+# P42 (contract pin of run_is_current's -L arm; green on e9ab0e0): a DANGLING SYMLINK at
+# the pushed commit's run-file path counts as a run file of its own (`[ -e ]` alone is
+# false for it). The positive control is the same push with that path absent. A VERSION-
+# only commit after a PASS is the shape that is otherwise accepted (P38). Mutation-
+# checked: dropping `|| [ -L ... ]` turns this red.
+( cd "$RX" && git checkout -qb sl main && echo 'const sl = 1;' > sl.js && git add -A \
+   && git commit -qm sl ) >/dev/null 2>&1
+XSL="$(git -C "$RX" rev-parse HEAD)"; xgate "$XSL"
+( cd "$RX" && echo 3.0.0 > VERSION && git add VERSION && git commit -qm 'chore: bump version' ) >/dev/null 2>&1
+XSLV="$(git -C "$RX" rev-parse HEAD)"; xpush sl "$XSLV"; p42_absent=$RC
+ln -s "$XRUNS/no-such-target" "$XRUNS/$XSLV"
+xpush sl "$XSLV"; p42_link=$RC
+rm -f "$XRUNS/$XSLV"
+[ "$p42_absent" = 0 ] && [ "$p42_link" = 1 ] && xblocked sl "$XSLV" \
+  && ok "P42: a dangling symlink at the pushed commit's run-file path -> BLOCKED; with the path absent -> ALLOWED" \
+  || nok "P42: a dangling run-file symlink was not counted" "absent=$p42_absent link=$p42_link out=$OUT"
 git -C "$RX" checkout -q main >/dev/null 2>&1
 
 [ "$CAPTURE_LEAK" = 0 ] \

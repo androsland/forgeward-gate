@@ -5,6 +5,45 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — run files are kept, and each acceptance check reads one marker snapshot
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** Two races, each reproduced against the run-file design below. The
+writer pruned run files older than 30 days with `find … -mtime +30 -exec rm -f {} +`,
+which selects a file and then deletes it by path: a `--revoke` that atomically replaced
+that file in between (a new gate run on a commit last gated long ago) lost its fresh run
+file, and a same-diff PASS on another commit then authorized that commit while its
+review was pending or after it FAILed. And each hook read the marker path several times
+in one check, `.base` and `.diff_hash` before hashing and `.run_id` and `.reviewed_head`
+after it, so a marker replaced in between combined a stale PASS's matching hash with a
+different PASS's current run and allowed a commit neither PASS covered.
+
+**Decision.** Nothing deletes a run file; `--revoke` still replaces one by atomic rename.
+Run files are kept, one small file per commit ever gated. Each hook copies the marker once
+into a private temp file and reads every field from that copy (`is_fresh` and
+`snapshot_is_fresh`, byte-identical in both hooks); a failed copy reads as not passed.
+Revoke's deletions are not hygiene: a branch's marker may certify an earlier commit with
+the same diff whose run that revoke does not touch, so the deletion is what stops a later
+commit on the branch, with no run file of its own, pushing on it. They are also the only
+revocation an enforcer installed before 0.31.0 sees. The advice to drop the loop as a
+simplification is rejected for that reason.
+
+**Rejected:** re-checking a run file's age before deleting it, which still races, and a
+lock, which this design does not take (a stale lock left by a killed run would wedge the
+gate). Delete-by-path GC cannot be made safe against an atomic replace without one.
+
+**Not covered.** Deleting `forgeward-gate-runs` by hand makes every marker read stale
+(one re-gate) and drops those commits' refusal of a same-diff PASS on another commit. A
+temp copy is left behind if a hook is killed between the copy and its removal.
+
+**Coverage.** `test/gate-test.sh` K39 (a 40-day-old run file survives a write
+byte-identical), K40 (a sibling branch's marker survives a write), F11 (both snapshot
+functions byte-identical), F12 (the reminder, a marker swapped mid-hash);
+`test/pre-push-test.sh` P40 (the enforcer, the same swap), P41 (a follow-up commit after
+a failed run on its branch is refused), P42 (a dangling symlink at the pushed commit's
+run-file path counts as a run file).
+
 ## DECISION — the run file, not revoke's name list, decides whether a PASS still stands
 
 **Date:** 2026-11-16 · **Version:** 0.31.0
@@ -28,8 +67,8 @@ both hooks accept a marker only through `run_is_current`, byte-identical in both
 used in a path; `forgeward-gate-runs/<reviewed_head>` must be a regular file whose first
 line is that `run_id`; and a pushed commit that has a run file of its own and is not the
 marker's `reviewed_head` is refused. Any failure reads as not passed. Revoke's deletions
-stay, as hygiene; the run file is the authority, so a third enumeration of marker names
-is not needed and was not attempted. `forgeward-diff-hash.sh` exits 1 with a message when
+stay (the entry above says what they still do); the run file is the authority, so a third
+enumeration of marker names is not needed and was not attempted. `forgeward-diff-hash.sh` exits 1 with a message when
 its `git diff` fails.
 
 **Rejected:** patching the name list a third time (add `heads/<b>`). Every spelling the
@@ -40,8 +79,7 @@ PASS, and that commit must still push on it (F6, P38 pin this).
 
 **Not covered.** Acceptance is per diff and revocation per commit: a PASS on C1 and a FAIL
 on C2 with the same diff do not stop a push of a third commit C3 with that diff that no
-run ever started on, or whose run file was pruned (more than 30 days after its run
-started, by a later marker write). A write stalled across a whole newer run can overwrite
+run ever started on. A write stalled across a whole newer run can overwrite
 that run's marker and then remove it (one re-gate). Markers and run files are local
 files; forging both is outside the threat model. Every marker written before this change
 lacks `run_id` and reads as not passed until the branch is gated once more.
@@ -52,13 +90,13 @@ file, malformed fields, same diff on another commit, detached `HEAD`, stale `hea
 spelling; allowed: a plain PASS and a `/ship` bump). `test/pre-push-test.sh` P30–P39
 drive the enforced hook with `forgeward.gate` enabled, adding the sibling-branch control.
 V11–V13 pin the diff-hash refusal (missing blob end to end, no merge base, a positive
-control), K33b a newer marker surviving a superseded write, and K39 the 30-day prune.
+control) and K33b a newer marker surviving a superseded write.
 
 ## DECISION — a PASS certifies the commits Step 0 froze, and every run withdraws the last one
 
 **Date:** 2026-11-16 · **Version:** 0.31.0 · **PARTLY SUPERSEDED** by the run-file entry
 above, which closes the destination-branch, detached-`HEAD`, older-release and empty-diff
-items under "Not covered" and makes revoke's deletions hygiene rather than the authority.
+items under "Not covered" and makes the run file, not revoke's deletions, the authority.
 
 **What was wrong.** Three gaps, all present in 0.30.0, found by two hole reviews of the
 upstream-lenses design (`docs/upstream-lenses-design.md` §1, §4). The marker writer read

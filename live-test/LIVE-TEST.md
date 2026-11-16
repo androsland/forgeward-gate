@@ -809,6 +809,10 @@ The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push
 | Everything allowed regardless of marker | `jq` **and** `python3` both missing → fail-open | `command -v jq python3`; install one. |
 | `/forgeward:gate` not found | Skill not loaded | `claude plugin list`; ensure `forgeward` enabled; `/reload-plugins`. |
 | Marker written but push still denied | git-dir mismatch (worktree) or hash recompute differs | Run the manual check; compare the `diff_hash` in `"$(git rev-parse --git-common-dir)"/forgeward-gate-markers/<branch>.json` with `scripts/forgeward-diff-hash.sh <base>`. |
+| Marker written but push still denied | A later gate run on the reviewed commit superseded the marker's run | Compare the first line of `"$(git rev-parse --git-common-dir)"/forgeward-gate-runs/<reviewed_head>` with the marker's `run_id`; if they differ, re-run `/forgeward:gate`. |
+| Marker written but push still denied | The pushed commit has a run file of its own (a gate run started on it) and is not the marker's `reviewed_head` | Look for `"$(git rev-parse --git-common-dir)"/forgeward-gate-runs/<pushed commit>`; if it exists, gate that commit. |
+| Marker written but push still denied | The run file was deleted by hand | `forgeward-gate-runs/<reviewed_head>` is missing; every marker for that commit reads stale until it is gated again. |
+| Marker written but push still denied | The installed pre-push hook's enforcer path no longer exists (the hook exits 127) | Read the enforcer path in `"$(git rev-parse --git-path hooks/pre-push)"` (or `pre-push.local` beside it under gstack); if it is not the current plugin's `scripts/forgeward-pre-push.sh`, re-run `scripts/forgeward-install-pre-push.sh`. |
 
 **The key isolation test — separates "plugin didn't dispatch" from "script logic broke":**
 ```bash
