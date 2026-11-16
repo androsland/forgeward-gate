@@ -1036,6 +1036,14 @@ themselves so that none of them requires the commit to be actionable.
   with its own blast radius, and it should not ride along in a rubric re-port. **What would
   settle it:** delete the `npm audit` sentence, leave osv-scanner and trivy as the only CVE
   sources, and keep "states the gap" for a machine with neither. **Priority:** P2
+- **Reviewers read surrounding context from the working tree, which can differ from the
+  reviewed commit.** (upstream-lenses spec §4.4, 2026-11-16) Since 0.31.0 every reviewer
+  reviews the frozen `<BASE_SHA>...<HEAD_SHA>` diff, but a rubric that says "read the
+  surrounding file" reads the checked-out file, which carries any uncommitted edits. On a
+  dirty tree, the context a finding rests on can be code that is not in the reviewed
+  commit. **What would settle it:** tell reviewers to read context with
+  `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
+  read files from disk). **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -1115,7 +1123,13 @@ did *not* close.
   and they cannot protect a future reader from an old marker. If a marker format change ever
   *does* need to be enforced, the version field has to start being read first — and the
   fail-safe direction is already available for free (an unrecognised schema should read as
-  stale, which costs one re-gate). (0.8.0, restated 0.9.0 2026-08-06) **Priority:** P3
+  stale, which costs one re-gate). **Upgrade compatibility is the concrete case**
+  (upstream-lenses spec §4.4, 2026-11-16): a marker earned under an older release stays
+  valid for its exact diff after an upgrade until the gate runs again, because the hooks
+  read only `.base` and `.diff_hash`. Any new commit re-gates, so the exposure is pushing
+  an already-passed diff unchanged. 0.31.0's `--revoke` closes it the moment the gate
+  runs; nothing closes it without a run. (0.8.0, restated 0.9.0 2026-08-06; amended
+  0.31.0, 2026-11-16) **Priority:** P3
 - **The probe and the marker writer are now coupled, and the coupling is a standing
   maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
   its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
@@ -2667,6 +2681,18 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **A PASS certifies the commits the reviewers were given, and every run withdraws the
+  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. **Not
+  merged when this was written.** Check with `git merge-base --is-ancestor` before
+  reading it as landed.) PR 1 of the seven-PR upstream-lenses stack
+  (`docs/upstream-lenses-design.md`). Step 0 freezes both commits; the writer takes them,
+  refuses on a moved `HEAD` or merge base, and hashes the frozen pair; `--revoke` runs
+  before Step 2 and on every later outcome that ends without a marker. `test/gate-test.sh`
+  gains K1–K13 (255 → 268 assertions). K7, K8, K10 and K12 were observed failing
+  against the 0.30.0 writer, and three mutations (HEAD check, base comparison, revoke's
+  existence check) each reddened their assertion. `test/dual-client-test.sh` gains five
+  assertions, and its revoke-ordering assertion reddened when the revoke was moved below
+  the snapshot. `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

@@ -124,6 +124,22 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **The marker is written on all-PASS, before the conditional `/ship` handoff.** A
   missing gstack costs two commands, never a re-review, and an unconditional Skill call
   on a machine without gstack produces a false success report.
+- **A marker certifies the commits Step 0 froze, never a live ref.** The gate resolves
+  `<BASE_SHA>` and `<HEAD_SHA>` once in Step 0 and every later step reviews that range;
+  `forgeward-write-marker.sh` takes both, refuses when `HEAD` moved or the merge base
+  moved, and hashes the frozen pair. Until 0.31.0 it read `HEAD` and hashed the live
+  range at write time, so a commit landing while reviewers ran was certified by a marker
+  nobody reviewed. **A fetch that only advances the base is not refused** — the merge base
+  and the hash are unchanged, and K9 pins that the obvious wrong fix (refusing on any
+  base-SHA change) is not taken.
+- **Every run that reaches review withdraws the branch's earlier PASS first, and again on
+  every outcome after that which ends without a marker** (`forgeward-write-marker.sh
+  --revoke`). "Write no marker" was not enough: a re-run that FAILs on an already-passed
+  diff left the old PASS authorizing that same diff. Revoking at the start means an
+  interrupted run needs no exit path to remember anything. A marker that cannot be removed
+  stops the gate. **Not covered, deliberately:** a run that stops in Step 0 (nothing to
+  gate, or an unresolvable ref) reviews nothing and withdraws nothing, so an earlier
+  marker survives it, still bound to its own diff hash.
 - **`gc_markers` runs on the marker-write path only.** It is not a scheduled sweep and
   must not become one.
 - **Version-field neutralization in `normalize_manifest` is per-manifest-path, never
@@ -290,8 +306,9 @@ commit that was fixing it — a line number cannot survive its own fix.
   independent verifiers use the same runtime selections. A new reviewer must join both
   enumerations in `test/dual-client-test.sh`, and a new subagent launch in any Forgeward
   skill must make the same runtime choice explicitly. Gate launch prompts carry only the
-  complete rubric, absolute repository/plugin roots, exact base and resolved HEAD context,
-  read-only instruction and verdict format. Do not pass the parent conversation or a
+  complete rubric, absolute repository/plugin roots, the exact base ref with the base and
+  head commits Step 0 froze, the site posture when privacy fires on a `private-shareable`
+  group, read-only instruction and verdict format. Do not pass the parent conversation or a
   suspected finding: inheritance raises both cost and anchoring risk. An unknown runtime
   keeps the existing fail-closed Gate fallback; Audit keeps its labeled self-verification
   fallback.

@@ -5,6 +5,36 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — a PASS certifies the commits Step 0 froze, and every run withdraws the last one
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** Three gaps, all present in 0.30.0, found by two hole reviews of the
+upstream-lenses design (`docs/upstream-lenses-design.md` §1, §4). The marker writer read
+`HEAD` and hashed the live `<base>...HEAD` at write time. Step 1 chose reviewers against
+symbolic `HEAD` while Step 2 resolved `HEAD_SHA` minutes later. And a failed re-run of an
+already-passed diff left the old marker authorizing that diff, because "write no marker"
+does not remove one.
+
+**Decision.** Step 0 freezes `<BASE_SHA>` and `<HEAD_SHA>`; everything after reviews
+`<BASE_SHA>...<HEAD_SHA>`. The writer takes both, refuses on a moved `HEAD`, refuses when
+the base moved in a way that changes the diff (comparing the frozen-pair hash with the
+hash the push hook will recompute from the ref), and stores the frozen-pair hash. The
+gate runs `--revoke` before Step 2 snapshots anything and again on every outcome after
+that which ends without a marker.
+
+**Rejected:** refusing whenever the base ref's SHA changed. A `git fetch` during the run
+would then fail every gate on a busy base, though the merge base, the diff and the hash
+are all unchanged. K9 pins this.
+
+**Not covered (filed in `TODOS.md`):** a marker earned under an older release stays valid
+for its exact diff after an upgrade, until the gate runs again; reviewers read surrounding
+context from the working tree, which differs from `<HEAD_SHA>` when the tree is dirty.
+
+**Coverage.** `test/gate-test.sh` K1–K13. `test/dual-client-test.sh` pins the Step 0
+freeze, the frozen range (one symbolic occurrence allowed, with a floor of five frozen),
+revoke before snapshot, the four writer arguments, and at least three revokes in Step 3.
+
 ## DECISION — pre-push scans every published commit for credentials with Gitleaks
 
 **Date:** 2026-09-12 · **Version:** 0.29.0

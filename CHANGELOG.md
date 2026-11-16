@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.0 — 2026-11-16
+
+### Fixed
+
+- The PASS marker now certifies the commits the reviewers were given. Step 0 freezes the
+  base and head commits and every later step reviews that range; the marker writer
+  refuses when `HEAD` moved or the base moved in a way that changes the diff, and hashes
+  the frozen pair. Before, a commit landing while reviewers ran was certified by a marker
+  nobody reviewed.
+- A gate run that reaches review withdraws the branch's earlier PASS first, and again on
+  every later outcome that ends without a marker, so a failed re-run no longer leaves the
+  old PASS authorizing the same diff.
+
+### Changed
+
+- `forgeward-write-marker.sh` takes `<base-ref> <fired-csv> <reviewed-base>
+  <reviewed-head>`; all four are required (fired may be empty), and every usage error
+  exits 64. New `--revoke` mode.
+
 ## 0.30.0 — 2026-10-19
 
 ### Changed
