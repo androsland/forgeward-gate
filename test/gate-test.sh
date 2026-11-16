@@ -2469,7 +2469,10 @@ v_src="$(cd "$RV" && "$HASH" main)"
 # byte-alignment rewrote the canonical bytes INSIDE the package.json section, so every
 # repo re-gates once at that version. The independent rebuild below therefore tracks
 # the CURRENT canonicalization (`jq -S -c -a`) — if you change it there, you change it
-# here, and the one-time re-gate is the accepted cost stated in the script header.
+# here, and the one-time re-gate is the accepted cost stated in the script header. The
+# diff part is rebuilt with the CURRENT pinned invocation too (root-relative pathspecs,
+# config-independent options): the suite runs under the invoker's own git config, so a
+# bare `git diff` here would track that config while the helper does not.
 RL="$TMP/repo-legacy"
 mkrepo "$RL"
 ( cd "$RL"
@@ -2477,8 +2480,13 @@ mkrepo "$RL"
   echo ok > src.js; git add -A; git commit -qm base; git branch -M main
   git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
 legacy="$( cd "$RL"
-  dp="$(git diff "main...HEAD" -- . ':(exclude)VERSION' ':(exclude)CHANGELOG.md' \
-        ':(exclude)CHANGELOG' ':(exclude)TODOS.md' ':(exclude)package.json' 2>/dev/null)"
+  dp="$(GIT_DIFF_OPTS= git -c diff.relative=false -c diff.noprefix=false -c diff.mnemonicPrefix=false \
+        -c diff.suppressBlankEmpty=false -c diff.interHunkContext=0 -c diff.indentHeuristic=false \
+        -c core.quotePath=true diff --no-ext-diff --no-textconv --full-index --no-color --no-renames \
+        -U3 --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/ --ignore-submodules=none \
+        --submodule=short "main...HEAD" -- ':(top)' ':(top,exclude)VERSION' \
+        ':(top,exclude)CHANGELOG.md' ':(top,exclude)CHANGELOG' ':(top,exclude)TODOS.md' \
+        ':(top,exclude)package.json' 2>/dev/null)"
   raw="$(git show "HEAD:package.json" 2>/dev/null)"
   if command -v jq >/dev/null 2>&1; then pp="$(printf '%s' "$raw" | jq -S -c -a '.version = "<<forgeward-gated>>"')"
   else pp="$(printf '%s' "$raw" | python3 -c 'import json,sys
@@ -2651,6 +2659,202 @@ v12_err="$(cat "$TMP/v12.err")"
   && case "$v12_err" in *"forgeward-diff-hash: git diff main...$VNO $VDMSG"*) true ;; *) false ;; esac \
   && ok "V12: a tip with no merge base with the base prints no hash and says why" \
   || nok "V12: no-merge-base diff still hashed" "rc=$v12_rc out=$v12_out err=$v12_err"
+
+# V14-V19: the diff part is ROOT-RELATIVE and does not follow diff config. V14, V15,
+# V18, V19 and every V17 "leaves the hash unchanged" case are PRE-FIX controls:
+# e9ab0e0's helper (`-- .` and a bare `git diff`) fails each, measured by running this
+# file against it. V16 is the floor that keeps V17 from asserting a property of nothing;
+# the V17 orderFile assertion pins a stated non-goal and is green on e9ab0e0 too.
+# V14: a hash taken in a subdirectory equals the hash taken at the root. Mutation-checked:
+# `-- .` in place of `':(top)'` turns V14 and V15 red.
+VS="$TMP/vsub"; mkrepo "$VS"
+( cd "$VS" && mkdir sub && echo a > sub/in.txt && echo b > out.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb vs && echo a2 >> sub/in.txt && echo b2 >> out.txt \
+   && git commit -qam feat ) >/dev/null 2>&1
+VSB="$(git -C "$VS" rev-parse main)"; VSH="$(git -C "$VS" rev-parse HEAD)"
+v14_root="$(cd "$VS" && "$HASH" main 2>/dev/null)"
+v14_sub="$(cd "$VS/sub" && "$HASH" main 2>/dev/null)"
+[ "${#v14_root}" -eq 64 ] && [ "$v14_sub" = "$v14_root" ] \
+  && ok "V14: the diff hash taken in a subdirectory equals the one taken at the root" \
+  || nok "V14: the diff hash depends on the cwd" "root=$v14_root sub=$v14_sub"
+# V15: the reminder run from a subdirectory. The gate passes from sub/ (its writer runs
+# there), then a commit changes a file OUTSIDE sub/. e9ab0e0 compared two hashes of sub/
+# alone and allowed the push; leg 1 (the reviewed commit itself) is the positive control.
+v15_run="$(cd "$VS/sub" && "$WRITE" --revoke "$VSH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VS/sub" && "$WRITE" main privacy "$VSB" "$VSH" "$v15_run" ) >/dev/null 2>&1
+v15_1="$(pretool "$VS/sub" "git push origin HEAD")"
+( cd "$VS" && echo outside >> out.txt && git commit -qam 'change outside sub' ) >/dev/null 2>&1
+v15_2="$(pretool "$VS/sub" "git push origin HEAD")"
+[ -z "$v15_1" ] && denies "$v15_2" \
+  && case "$v15_2" in *"the current branch (vs @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac \
+  && ok "V15: from a subdirectory, a change outside it after the PASS reads not fresh" \
+  || nok "V15: a subdirectory reminder missed a change outside its subtree" \
+         "reviewed=${v15_1:-allowed} after=$(denies "$v15_2" && echo denied || echo allowed)"
+
+# V16/V17: one assertion per diff setting, each against the default-config hash of the
+# SAME range in the same repo. The fixture carries a shape for each setting to act on:
+# a two-hunk file (context, hunk merging), blank lines (suppressBlankEmpty), a patience
+# example (algorithm), an indent-heuristic example, a rename and a copy, a textconv
+# driver, a subdirectory, a binary, a non-ASCII name (quotePath) and a gitlink with a
+# .gitmodules entry. Every setting is repo-local and unset again after its case.
+VX="$TMP/vcfg"; mkrepo "$VX"
+VEXT="$TMP/vext.sh"; printf '#!/bin/sh\necho constant\n' > "$VEXT"; chmod +x "$VEXT"
+( cd "$VX"
+  seq 1 30 > a.txt
+  printf 'one\n\ntwo\n\nthree\n\nfour\n' > blank.txt
+  seq 101 140 > r.txt
+  seq 201 240 > c.txt
+  printf 'lower case text\n' > t.tc
+  mkdir sub; echo s1 > sub/x.txt
+  printf '\000\001\002bin' > bin.dat
+  printf 'q\n' > "$(printf 'caf\303\251.txt')"
+  printf '#include <stdio.h>\n\n// Frobs foo heartily\nint frobnitz(int foo)\n{\n    int i;\n    for(i = 0; i < 10; i++)\n    {\n        printf("Your answer is: ");\n        printf("%%d\\n", foo);\n    }\n}\n\nint fact(int n)\n{\n    if(n > 1)\n    {\n        return fact(n-1) * n;\n    }\n    return 1;\n}\n\nint main(int argc, char **argv)\n{\n    frobnitz(fact(10));\n}\n' > pat.c
+  printf '1\n2\na\n\nb\n3\n4\n' > ind.c
+  mkdir sm; printf '[submodule "sm"]\n\tpath = sm\n\turl = ./nowhere\n' > .gitmodules
+  git add -A; git update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,sm
+  git commit -qm base; git branch -M main; git checkout -qb vx
+  sed -i -e '5s/.*/five/' -e '15s/.*/fifteen/' a.txt
+  printf 'one\n\ntwo\n\nTHREE\n\nfour\n' > blank.txt
+  git mv r.txt r2.txt
+  cp c.txt c2.txt; sed -i '1s/.*/changed/' c.txt
+  printf 'still lower case\n' > t.tc; printf '*.tc diff=upper\n' > .gitattributes
+  echo s2 > sub/x.txt
+  printf '\000\001\003bin' > bin.dat
+  printf 'q2\n' > "$(printf 'caf\303\251.txt')"
+  printf '#include <stdio.h>\n\nint fib(int n)\n{\n    if(n > 2)\n    {\n        return fib(n-1) + fib(n-2);\n    }\n    return 1;\n}\n\n// Frobs foo heartily\nint frobnitz(int foo)\n{\n    int i;\n    for(i = 0; i < 10; i++)\n    {\n        printf("%%d\\n", foo);\n    }\n}\n\nint main(int argc, char **argv)\n{\n    frobnitz(fib(10));\n}\n' > pat.c
+  printf '1\n2\na\n\nb\na\n\nb\n3\n4\n' > ind.c
+  git add -A; git update-index --cacheinfo 160000,2222222222222222222222222222222222222222,sm
+  git commit -qm feat ) >/dev/null 2>&1
+v17_def="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+v17_n=0
+v17_same() { # v17_same <label> <hash>
+  v17_n=$((v17_n+1))
+  [ -n "$2" ] && [ "$2" = "$v17_def" ] \
+    && ok "V17: $1 leaves the diff hash unchanged" \
+    || nok "V17: $1 changes the diff hash" "default=$v17_def got=${2:-<none>}"
+}
+v17_cfg() { # v17_cfg <label> <key> <value>
+  local got
+  git -C "$VX" config "$2" "$3"
+  got="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+  git -C "$VX" config --unset "$2"
+  v17_same "$1" "$got"
+}
+v17_env() { # v17_env <VAR> <value>
+  local got
+  got="$(cd "$VX" && env "$1=$2" "$HASH" main 2>/dev/null)"
+  v17_same "$1 in the environment" "$got"
+}
+v17_cfg "diff.external" diff.external "$VEXT"
+v17_env GIT_EXTERNAL_DIFF "$VEXT"
+v17_cfg "a diff driver's command (diff.<driver>.command)" diff.upper.command "$VEXT"
+v17_cfg "a textconv driver" diff.upper.textconv 'tr a-z A-Z'
+v17_cfg "diff.noprefix" diff.noprefix true
+v17_cfg "diff.algorithm=patience" diff.algorithm patience
+v17_cfg "diff.context=10" diff.context 10
+v17_env GIT_DIFF_OPTS --unified=10
+v17_cfg "diff.renames=copies" diff.renames copies
+v17_cfg "diff.renames=false" diff.renames false
+v17_cfg "color.diff=always" color.diff always
+v17_cfg "core.abbrev=12" core.abbrev 12
+v17_cfg "diff.interHunkContext=5" diff.interHunkContext 5
+v17_cfg "diff.suppressBlankEmpty" diff.suppressBlankEmpty true
+v17_cfg "diff.indentHeuristic=false" diff.indentHeuristic false
+v17_cfg "core.quotePath=false" core.quotePath false
+v17_cfg "diff.ignoreSubmodules=all" diff.ignoreSubmodules all
+v17_cfg "submodule.<name>.ignore=all" submodule.sm.ignore all
+v17_cfg "diff.submodule=log" diff.submodule log
+# diff.relative=true, hashed from a subdirectory (B1's third case: top magic alone does
+# not override it; the -c override does).
+git -C "$VX" config diff.relative true
+v17_rel="$(cd "$VX/sub" && "$HASH" main 2>/dev/null)"
+git -C "$VX" config --unset diff.relative
+v17_same "diff.relative=true, hashed from a subdirectory," "$v17_rel"
+# V16: the floor. A default hash that is empty would make every case above vacuous.
+[ "${#v17_def}" -eq 64 ] && [ "$v17_n" -ge 10 ] \
+  && ok "V16: the diff-config battery ran $v17_n cases against a real default hash" \
+  || nok "V16: the diff-config battery asserted nothing" "default=${v17_def:-<none>} cases=$v17_n"
+# V17 (documented non-goal, pinned so it is corrected the day it closes): diff.orderFile
+# still reorders the file sections, so a marker reads stale -- never a false PASS.
+printf 'sub/*\n*\n' > "$TMP/vorder"
+git -C "$VX" config diff.orderFile "$TMP/vorder"
+v17_ord="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+git -C "$VX" config --unset diff.orderFile
+[ "${#v17_ord}" -eq 64 ] && [ "$v17_ord" != "$v17_def" ] \
+  && ok "V17: diff.orderFile still changes the hash (the header's stated non-goal; fails closed)" \
+  || nok "V17: diff.orderFile no longer changes the hash -- correct the helper's non-goal" \
+         "default=$v17_def got=${v17_ord:-<none>}"
+
+# V18: end to end, the shape the pinning exists for. With an external differ that prints
+# the same text for two contents, a binary replaced AFTER the PASS hashed the same and
+# e9ab0e0 allowed the push. Leg 1 (the reviewed commit itself) is the positive control.
+# Mutation-checked: dropping --no-ext-diff from the helper turns V18 red.
+VE="$TMP/vextrepo"; mkrepo "$VE"
+( cd "$VE" && git config forgeward.gate enabled && git config diff.external "$VEXT" \
+   && printf '\000\001\002bin' > bin.dat && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb ve && printf '\000\001\003bin' > bin.dat && git commit -qam feat ) >/dev/null 2>&1
+VEB="$(git -C "$VE" rev-parse main)"; VEH="$(git -C "$VE" rev-parse HEAD)"
+v18_run="$(cd "$VE" && "$WRITE" --revoke "$VEH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VE" && "$WRITE" main privacy "$VEB" "$VEH" "$v18_run" ) >/dev/null 2>&1
+v18_push() { # v18_push <sha>: the real enforcer on a push of ve at <sha>
+  ( cd "$VE" && printf 'refs/heads/ve %s refs/heads/ve %s\n' "$1" 0000000000000000000000000000000000000000 \
+    | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1 )
+}
+v18_1="$(v18_push "$VEH")"; v18_1rc=$?
+( cd "$VE" && printf '\000\001\004bin' > bin.dat && git commit -qam 'replace the binary' ) >/dev/null 2>&1
+VEZ="$(git -C "$VE" rev-parse HEAD)"
+v18_2="$(v18_push "$VEZ")"; v18_2rc=$?
+[ "$v18_1rc" -eq 0 ] && [ "$v18_2rc" -eq 1 ] \
+  && case "$v18_2" in *"have not passed /forgeward:gate"*"ve @ ${VEZ:0:12}"*) true ;; *) false ;; esac \
+  && ok "V18: with diff.external set, a binary replaced after the PASS is refused at push" \
+  || nok "V18: an external differ hid a binary change after the PASS" \
+         "reviewed=$v18_1rc:$v18_1 replaced=$v18_2rc:$v18_2"
+
+# V19: a binary file is `Binary files ... differ` plus its `index` line, and without
+# --full-index that line carries ABBREVIATED blob ids. Two blobs sharing a 7-hex prefix
+# take ~13k tries to find, deterministically (fixed search order). The gate passes on X1;
+# the commit is amended to X2 and X1 is pruned, so git no longer lengthens the prefix to
+# tell them apart -- e9ab0e0 hashed both the same and allowed the push (PRE-FIX control,
+# also red with only --full-index removed). Leg 1 (the reviewed commit) is the positive
+# control; the prefix check proves the fixture really collides.
+VB="$TMP/vbinrepo"; mkrepo "$VB"
+python3 -I - "$TMP/vbin" <<'PY'
+import hashlib, sys
+seen = {}
+i = 0
+while True:
+    c = b"\x00forgeward-bin-" + str(i).encode()
+    k = hashlib.sha1(b"blob %d\x00" % len(c) + c).hexdigest()[:7]
+    if k in seen:
+        open(sys.argv[1] + ".x1", "wb").write(seen[k])
+        open(sys.argv[1] + ".x2", "wb").write(c)
+        break
+    seen[k] = c
+    i += 1
+PY
+( cd "$VB" && git config forgeward.gate enabled && printf '\000base' > bin.dat && git add -A \
+   && git commit -qm base && git branch -M main && git checkout -qb vb && cp "$TMP/vbin.x1" bin.dat \
+   && git commit -qam x1 ) >/dev/null 2>&1
+VBB="$(git -C "$VB" rev-parse main)"; VBH="$(git -C "$VB" rev-parse HEAD)"
+v19_run="$(cd "$VB" && "$WRITE" --revoke "$VBH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VB" && "$WRITE" main privacy "$VBB" "$VBH" "$v19_run" ) >/dev/null 2>&1
+v19_push() { # v19_push <sha>: the real enforcer on a push of vb at <sha>
+  ( cd "$VB" && printf 'refs/heads/vb %s refs/heads/vb %s\n' "$1" 0000000000000000000000000000000000000000 \
+    | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1 )
+}
+v19_1="$(v19_push "$VBH")"; v19_1rc=$?
+v19_x1="$(git -C "$VB" rev-parse "$VBH:bin.dat")"
+( cd "$VB" && cp "$TMP/vbin.x2" bin.dat && git commit -q --amend -am x2 && git reflog expire --expire=now --all \
+   && git gc -q --prune=now ) >/dev/null 2>&1
+VBZ="$(git -C "$VB" rev-parse HEAD)"; v19_x2="$(git -C "$VB" rev-parse "$VBZ:bin.dat")"
+v19_gone=1; git -C "$VB" cat-file -e "$v19_x1" 2>/dev/null && v19_gone=0
+v19_2="$(v19_push "$VBZ")"; v19_2rc=$?
+[ "${v19_x1:0:7}" = "${v19_x2:0:7}" ] && [ "$v19_x1" != "$v19_x2" ] && [ "$v19_gone" = 1 ] \
+  && [ "$v19_1rc" -eq 0 ] && [ "$v19_2rc" -eq 1 ] \
+  && case "$v19_2" in *"have not passed /forgeward:gate"*"vb @ ${VBZ:0:12}"*) true ;; *) false ;; esac \
+  && ok "V19: a binary replaced after the PASS by one with the same abbreviated blob id is refused at push" \
+  || nok "V19: an abbreviated index line hid a binary change after the PASS" \
+         "x1=$v19_x1 x2=$v19_x2 x1-pruned=$v19_gone reviewed=$v19_1rc:$v19_1 replaced=$v19_2rc:$v19_2"
 
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
 # Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —

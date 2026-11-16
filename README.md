@@ -314,6 +314,11 @@ only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) an
 version-field-only bumps in the four version-bearing package/client manifests. Any other
 manifest change, and any change to source **or dependencies** after the gate flips the hash and
 forces a re-gate — a dependency added between gate and push does **not** sail through. The
+hash covers the whole repository wherever the gate or a hook runs, binary files by full blob
+id, and it does not follow diff config: an external differ, a textconv driver, submodule
+ignores, context, renames and the other settings `test/gate-test.sh` V17 checks leave it
+unchanged. `diff.orderFile` still moves it,
+which reads a marker stale and never passes one. The
 push-time credential scan is separate from that hash and still reads commits touching every one
 of those excluded paths. The marker also names the gate run that wrote it, and both hooks
 accept it only while that run is still the latest on the commit it reviewed: a re-run records

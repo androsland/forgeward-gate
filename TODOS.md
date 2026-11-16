@@ -435,15 +435,6 @@ preferring to delete a weightless detail rather than correct it.
   **What would settle it:** decide whether a FAIL should record its diff hash so that any
   later commit with that diff is refused, and what that does to a legitimate re-gate.
   (source: pre-landing review fix of PR 1, 2026-11-16) **Priority:** P3
-- **UNVERIFIED: the diff hash may not cover a binary file's content.**
-  `scripts/forgeward-diff-hash.sh` hashes `git diff` without `--binary` or `--full-index`,
-  so a binary or `-diff`-attributed file may be represented only by `Binary files …
-  differ` plus an abbreviated `index` line. If so, replacement content would need only a
-  short-prefix blob collision to keep a marker fresh. **Not reproduced.** **Not fixed
-  here:** adding `--full-index` would change every hash and stale every marker, so it
-  wants its own release note. **What would settle it:** hash a pair that changes one
-  binary file twice, with different content of the same abbreviated blob prefix, and
-  compare. (source: pre-landing review of PR 1, 2026-11-16) **Priority:** P3
 - **Nothing tells a user their installed pre-push hook runs an old enforcer.** The
   installer writes the enforcer's absolute path into the hook, so after a plugin update
   the enforced hook keeps running the copy it was installed from (and, from 0.31.0 on,
@@ -2759,7 +2750,11 @@ shipped on its own branch instead.
   P30–P39. A third pass made run files permanent (a delete-by-path prune raced revoke's
   atomic replace) and each hook read the marker once (a marker swapped mid-check lent its
   run to a stale PASS): K39 now pins that no write deletes a run file, plus K40, F11,
-  F12 and P40–P42.
+  F12 and P40–P42. It also made the diff hash root-relative and pinned its invocation
+  against diff config (V14–V19), which closed `## Gate — base detection and freshness`'s
+  "UNVERIFIED: the diff hash may not cover a binary file's content": it was reproduced
+  (V19, a binary amended to one sharing its 7-hex blob id, the first pruned, hashed the
+  same against `e9ab0e0`'s helper) and fixed with `--full-index`.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

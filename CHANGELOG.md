@@ -29,6 +29,15 @@
 - `forgeward-diff-hash.sh` exits 1 with a message when `git diff` fails (no merge base, a
   bad ref, a missing blob). It used to hash such a pair as the empty diff and exit 0, so a
   later commit on it could match that hash.
+- The diff hash is taken from the repository root wherever it runs, and no longer
+  follows diff config. A gate run from a subdirectory hashed only that subdirectory, so
+  the reminder, run from the same subdirectory, missed a change outside it. An external
+  differ (`diff.external`, `GIT_EXTERNAL_DIFF`, a diff driver's `command`) could hide a
+  binary replaced after the PASS, and so could two blobs sharing an abbreviated id once
+  the first was pruned; the hash now uses full blob ids. `diff.ignoreSubmodules` or
+  `submodule.<name>.ignore` could hide a gitlink change. Other diff settings (context,
+  algorithm, renames, prefixes, colour, quoting) made a marker read stale for no reason.
+  `diff.orderFile` still reorders the output and reads a marker stale; it cannot pass one.
 
 - The PASS marker now certifies the commits the reviewers were given. Step 0 freezes the
   base and head commits and every later step reviews that range; the marker writer
@@ -75,8 +84,10 @@
   file per commit ever gated; nothing deletes them. Deleting the directory by hand makes
   every marker read stale and drops those commits' refusal of a same-diff PASS on another
   commit.
-- The marker is schema 5 and carries `run_id`. The diff hash is unchanged, so a `/ship`
-  version-bump commit still pushes on the PASS before it.
+- The marker is schema 5 and carries `run_id`. A `/ship` version-bump commit still
+  pushes on the PASS before it. Every diff hash changes once, because the diff is now
+  hashed with a pinned invocation; that costs nothing beyond the re-gate under
+  Upgrading, since a marker from before 0.31.0 already reads as not passed.
 
 ## 0.30.0 — 2026-10-19
 

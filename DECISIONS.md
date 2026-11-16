@@ -5,6 +5,48 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — the diff hash is root-relative and its `git diff` invocation is pinned
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** `forgeward-diff-hash.sh` ran a porcelain `git diff … -- .` in the
+caller's cwd. `.` is the cwd, so a gate run from a subdirectory stored a hash of that
+subtree, and the reminder (which `cd`s to the payload's cwd) recomputed the same subtree
+hash: a change outside it after the PASS read fresh (V15). Git runs the enforced hook at
+the top of the worktree (githooks(5)), so there the subtree hash only read stale. And
+porcelain diff follows config and
+the environment. An external differ replaces git's output, `index` line included, so with
+one that prints the same text for two contents a binary replaced after the PASS hashed the
+same (V18). Without `--full-index` a binary is `Binary files … differ` plus abbreviated
+blob ids, and two blobs sharing a 7-hex prefix hashed the same once the first was pruned,
+because git lengthens a prefix only while both objects exist (V19; the pair takes ~13k
+tries to find). `diff.ignoreSubmodules` and `submodule.<name>.ignore` drop a gitlink
+change. Twenty settings and environment variables in all moved the hash (V17).
+
+**Decision.** Every pathspec carries `top` magic, and the invocation is pinned: options
+for everything that has one (`--no-ext-diff --no-textconv --full-index --no-color
+--no-renames -U3 --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/
+--ignore-submodules=none --submodule=short`), `-c` overrides for the keys that have none
+(`diff.relative`, `diff.noprefix`, `diff.mnemonicPrefix`, `diff.suppressBlankEmpty`,
+`diff.interHunkContext`, `diff.indentHeuristic`, `core.quotePath`), and `GIT_DIFF_OPTS`
+cleared for that one command, because git applies it after the command line (measured:
+`GIT_DIFF_OPTS=--unified=10` beats `-U3`). Every hash changes once; 0.31.0 already reads
+every earlier marker as not passed, so that costs nothing more.
+
+**Rejected:** `-O/dev/null` for `diff.orderFile`: how `/dev/null` reaches git.exe
+through Git Bash's path conversion is unverified, and an order file can only reorder, so
+it fails closed.
+
+**Not covered** (each fails closed, a marker reads stale): `diff.orderFile`; the function
+text in hunk headers from a user-config `diff.<driver>.xfuncname`; output that differs
+between git versions. `diff.mnemonicPrefix` is overridden but has no assertion: it did
+not change `e9ab0e0`'s output on the V17 fixture, so a case for it could not fail.
+
+**Coverage.** `test/gate-test.sh` V14 (subdirectory hash equals root hash), V15 (the
+reminder from a subdirectory), V16 (battery floor), V17 (one assertion per setting, and
+the orderFile non-goal pinned), V18 (`diff.external`, end to end), V19 (abbreviated blob
+id, end to end); V4 rebuilds the payload with the pinned invocation.
+
 ## DECISION — run files are kept, and each acceptance check reads one marker snapshot
 
 **Date:** 2026-11-16 · **Version:** 0.31.0
