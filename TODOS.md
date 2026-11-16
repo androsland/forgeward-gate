@@ -2060,6 +2060,17 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   contract and every `SKIPPED` call site, which is a bigger diff than the three assertions
   that prompted it. (gate testing-reviewer, 2026-08-27) **Priority:** P2
 
+- **`test/gate-test.sh`'s header says it needs `jq-or-python3`, and it needs `python3`.**
+  S6's version bump, S7's dependency mutation and the `UserPromptExpansion` matcher read
+  each call `python3 -c` with no `command -v` guard. All three were already on `master`
+  before 0.31.0, and V19's blob-collision search adds a fourth. On a machine with `jq` and
+  no `python3` those assertions go red rather than skip. That is the safe direction, but
+  the header is the suite's statement of its own footprint, and it is wrong. Those four are
+  the sites checked, not a census. Either correct the header to name `python3` as
+  required (smallest, and true today), or give each site the loud `SKIPPED` arm the A20/A21
+  block already uses. The second interacts with the `ok()`-counts-skips entry above.
+  (gate testing-reviewer, 2026-11-17) **Priority:** P3
+
 - **The layer-3 containment assertion is copy-pasted between P8l and P8m leg C.** Both
   spend three lines on the same shape — precondition (the file really was written), `rc = 3`,
   and the written path named in the report — differing only in variable names
