@@ -138,15 +138,20 @@ commit before it.
 ### 4.2 The marker writer takes the reviewed commits
 
 ```
-forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>
-forgeward-write-marker.sh --revoke
+forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head> <run-id>
+forgeward-write-marker.sh --revoke <reviewed-head>
 ```
 
-`<fired-csv>` may be empty but must be present. The writer:
+`<fired-csv>` may be empty but must be present. `<run-id>` is the id the run's own
+`--revoke` printed as `RUN_ID=<id>` (§4.3). The writer:
 
-1. Normalises both reviewed arguments with `git rev-parse --verify --quiet "<arg>^{commit}"` and
-   compares **full object names**. That accepts an abbreviated name and either object format,
-   SHA-1 or SHA-256. Anything that does not resolve to a commit is a usage error.
+1. Requires both reviewed arguments to be the **full commit id Step 0 printed** (40 or 64
+   lowercase hex, either object format) that **resolves to itself**: it resolves each with
+   `git rev-parse --verify --quiet "<arg>^{commit}"` and refuses, exit 64, unless the
+   result equals the argument byte-for-byte. An abbreviated name, `HEAD`, a branch name, a
+   branch NAMED with 64 hex characters in a SHA-1 repo and an annotated tag's id are all
+   refused, each because it resolves to something other than the id given. Anything that
+   does not resolve to a commit is also exit 64.
 2. Refuses if `HEAD` is no longer `<reviewed-head>`:
    `forgeward: HEAD moved during the gate run (<old> -> <new>); nothing reviewed <new>. Re-run /forgeward:gate.`
 3. Hashes the **reviewed** state with `forgeward-diff-hash.sh <reviewed-base> <reviewed-head>`,
@@ -161,30 +166,46 @@ forgeward-write-marker.sh --revoke
    A `<base-ref>` that no longer resolves to a commit is refused (exit 1) before anything
    is hashed: `forgeward-diff-hash.sh` hashes an empty diff for a bad base and exits 0, so
    the comparison would otherwise refuse with a misleading "base moved" message.
-4. Writes the marker with `reviewed_head` set to `<reviewed-head>`. The marker schema and the
-   hooks' `marker_get` are unchanged: `.base` stays the ref name, and the push hook keeps
-   recomputing against it.
+4. Refuses, exit 1, unless the run file for `<reviewed-head>` still holds `<run-id>`
+   (§4.3), checked after every check above and before the environment probe runs.
+5. Writes the marker with `reviewed_head` set to `<reviewed-head>`, then reads the run file
+   again; if it no longer holds `<run-id>`, it removes the marker when its bytes are still
+   the bytes it wrote, and refuses. The marker schema and the hooks' `marker_get` are
+   unchanged: `.base` stays the ref name, and the push hook keeps recomputing against it.
 
 **One exit code for every usage error, 64.** The existing `${1:?}` path exits 1 today; it moves
 to 64, and any test pinning 1 moves with it. Step 3 of SKILL.md is amended to pass the literal
-SHAs printed in Step 0.
+SHAs printed in Step 0 and the `RUN_ID` printed in Step 2.
 
 ### 4.3 Withdrawing an earlier PASS
 
 A marker is keyed by branch and binds a diff hash. If a run of an already-passed diff now fails,
 the old marker still authorizes pushing that same diff. "Write no marker" is not enough.
 
-- **The first action of Step 2** is `forgeward-write-marker.sh --revoke`. It deletes the
-  marker of every local branch whose tip is HEAD's commit (the push hook accepts any of
-  them for that commit, enumerated by the hook's own `for-each-ref --points-at`), plus the
-  current branch's, and prints one line per marker it removed. Branches at other commits
-  keep theirs. From the moment the gate commits to reviewing, no earlier run's PASS on a
+- **The first action of Step 2** is `forgeward-write-marker.sh --revoke <HEAD_SHA>`, the
+  commit Step 0 froze, never live `HEAD` (a checkout change after Step 0 would aim it at
+  another commit). It first records a new **run id** for that commit in
+  `<common-dir>/forgeward-gate-runs/<HEAD_SHA>`, replacing the previous one atomically, then
+  deletes the marker of every local branch whose tip is `<HEAD_SHA>` (the push hook accepts
+  any of them for that commit, enumerated by the hook's own `for-each-ref --points-at`),
+  plus the current branch's only when `HEAD` is at that commit, and prints one line per
+  marker it removed. Each branch is withdrawn under both its short name and its canonical
+  name, because a tag of the same name splits the two and the hook reads both. Branches at
+  other commits keep theirs. On exit 0 its last line is `RUN_ID=<id>`, which Step 3 passes
+  to the writer. From the moment the gate commits to reviewing, no earlier run's PASS on a
   branch at this commit can authorize a push. A run that is interrupted, crashes or stops
   therefore leaves no usable PASS there, with no exit path having to remember anything.
+- **A later run supersedes an in-flight write.** The writer refuses unless the run file
+  still holds its own id, before writing and again after (§4.2). Because a revoke records
+  before it deletes, an older run's write either sees the newer id or is deleted by the
+  newer revoke. No lock is taken: macOS has no portable `flock`, and a stale lock would
+  wedge the gate.
 - **Every non-PASS outcome revokes again**, after the final guard check. That closes a marker a
   reviewer wrote during the run (§5.1 detects it; this removes it).
 - `--revoke` shares the writer's marker-path code, the one-reader rule. It exits 0 when the
-  marker is absent or removed, and 1 when one exists and cannot be removed. On 1 the gate stops:
+  markers are absent or removed, and 1 when one exists and cannot be removed, when the
+  branches at the commit cannot be listed, or when the run cannot be recorded; on 1 it
+  prints no `RUN_ID`. On 1 the gate stops:
   `could not withdraw the earlier PASS; it may still authorize a push.`
 
 ### 4.4 Rule analysis
@@ -213,6 +234,12 @@ The rule: a marker certifies exactly the commits the reviewers were given.
     `x` is still authorized by a stale `x` marker whose diff hash matches. Closing it would
     need the writer to parse marker JSON, a dependency it deliberately does not take. Found
     by the final review of PR 1. Filed in `TODOS.md`.
+  - **The run id's residuals.** The writer's compare-then-remove is not atomic, so a third
+    run writing byte-identical content in that instant loses its marker; every revoke
+    supersedes, so a run's own later revoke or another run's FAIL can refuse a concurrent
+    PASS. Both cost one re-gate. A write from a detached `HEAD` keys the literal `HEAD`,
+    which a revoke from a branch checkout does not visit, so that one marker can outlive a
+    newer run; the push hook reads it only for a push to a branch literally named `HEAD`.
 
 ### 4.5 Tests
 
@@ -223,27 +250,36 @@ The rule: a marker certifies exactly the commits the reviewers were given.
   - `HEAD`, a branch name, a short hex and an uppercase id are each refused with exit 64
     and a message naming the argument (the final review of PR 1 reversed the earlier plan
     to accept an abbreviated SHA: a symbolic or short name lets the checks compare a live
-    ref with itself);
+    ref with itself), and so are a 64-hex branch name and an annotated tag's id, which
+    resolve to a commit other than themselves (the pre-landing review);
+  - a write without the run id, or with a malformed one, is exit 64; a write whose run was
+    superseded is refused before the write (K32) and undone after it (K33), and a revoke
+    of another commit supersedes nothing (K34);
   - a non-commit object, an empty third argument and a missing fourth argument are each exit
     64, with the message asserted;
   - a reviewed pair, or a base ref and reviewed head, with no merge base refuses;
   - the marker's `reviewed_head` is the full id it was given. "The argument, not live
     `HEAD`" is not separately observable: the HEAD check refuses unless the two are equal,
     so on every path that writes, they are.
-- **Revoke:**
-  - an existing marker is removed;
-  - an absent one is exit 0, silent;
-  - an unremovable one (read-only directory) is exit 1 with its message;
+- **Revoke** (each takes `<reviewed-head>`; `--revoke` alone is exit 64):
+  - an existing marker is removed, and the last line is `RUN_ID=<id>`;
+  - an absent one is exit 0, printing only the `RUN_ID=<id>` line;
+  - an unremovable one (read-only directory) is exit 1 with its message and no `RUN_ID`;
   - a sibling branch's marker at the same commit is removed, and a branch's at another
-    commit is kept;
-  - a directory at a marker path is skipped, and a detached or unborn HEAD exits 0.
+    commit is kept, the checked-out branch's included when the checkout moved after Step 0;
+  - a directory at a marker path is skipped; a detached HEAD at the commit also withdraws
+    the `HEAD` key, and an unborn HEAD withdraws only the branches at the commit;
+  - with tags named like the branches, each bare `<branch>.json` is still withdrawn;
+  - an unlistable branch set (a ref at a missing object) and an unrecordable run are
+    each exit 1, with a message, every other path still tried, and no `RUN_ID`.
 - **Mutation controls:** delete the writer's HEAD-moved refusal and the moved-HEAD
   assertion reddens; make the base comparison always pass and the moved-base assertion
   reddens; drop revoke's after-`rm` existence check and the unremovable-marker
   assertion reddens. "Revert to hashing live `HEAD`" is not a usable mutation: the
   HEAD check runs first, so on any path that reaches hashing, live `HEAD` already
   equals the reviewed head, and the two hashes cannot differ in a deterministic test.
-- Every existing caller in the suite moves to four arguments.
+- Every existing caller in the suite moves to five arguments, minting its run id with
+  `--revoke` of the commit it gates.
 
 ---
 
@@ -512,7 +548,8 @@ them, and a duplicate is a confirmation, not noise.
 
 ### 8.1 Step 2, re-sequenced
 
-1. `--revoke`, then make the run directory and take the snapshot (§4.3, §5.2).
+1. `--revoke <HEAD_SHA>` (recording `RUN_ID`), then make the run directory and take the
+   snapshot (§4.3, §5.2).
 2. **Stage 1:** the parallel batch, now including `targeted`, `state-machines` and
    `simplification` when fired.
 3. **Account for every stage-1 reviewer** (§5.3): each one returned a verdict line, or was

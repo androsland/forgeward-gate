@@ -5,10 +5,15 @@ set -uo pipefail
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$PLUGIN/scripts/forgeward-gate-check.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
-# The writer takes the reviewed commits explicitly since 0.31.0. Every caller here gates
-# the commit it just made, so both are resolved in the caller's cwd at call time.
+# The writer takes the reviewed commits and the gate run's id since 0.31.0. Every caller
+# here gates the commit it just made, so both are resolved in the caller's cwd at call
+# time, and the run is minted the way Step 2 mints it: a `--revoke` of that commit, whose
+# `RUN_ID=` line is taken and whose other output is kept off this helper's stdout.
 write_marker() { # write_marker <base-ref> <fired-csv>
-  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$(git rev-parse HEAD)"
+  local head run
+  head="$(git rev-parse HEAD)"
+  run="$("$WRITE" --revoke "$head" | sed -n 's/^RUN_ID=//p')"
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$head" "$run"
 }
 HASH="$PLUGIN/scripts/forgeward-diff-hash.sh"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
@@ -134,10 +139,20 @@ snapshot_at="$(awk '/forgeward-workspace-guard\.sh" snapshot/{print NR; exit}' <
   && ok "Step 2 withdraws any earlier PASS before it snapshots or spawns anything" \
   || nok "Step 2 revoke ordering" "revoke=$revoke_at snapshot=$snapshot_at"
 case "$gate_step3" in
-  *'forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>"'*)
-    ok "Step 3 hands the marker writer the commits Step 0 froze" ;;
+  *'forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>" "<RUN_ID>"'*)
+    ok "Step 3 hands the marker writer the commits Step 0 froze and this run's id" ;;
   *) nok "Step 3 writer arguments" ;;
 esac
+# Every --revoke in the skill must name the commit Step 0 froze: a bare one is a usage
+# error since the pre-landing review of 0.31.0, and before that it followed live HEAD.
+# Pin the VIOLATING form (bare occurrences == 0) with a floor on the right one (>= 5:
+# Step 2's revoke and its launch fallback, and Step 3's halt, refused write and FAIL).
+# `grep -o | wc -l` counts occurrences, not lines.
+revoke_all="$(grep -o 'forgeward-write-marker\.sh" --revoke' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+revoke_frozen="$(grep -o 'forgeward-write-marker\.sh" --revoke "<HEAD_SHA>"' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+[ "$((revoke_all - revoke_frozen))" -eq 0 ] && [ "$revoke_frozen" -ge 5 ] \
+  && ok "every --revoke in the gate skill names the frozen <HEAD_SHA>" \
+  || nok "bare --revoke in the gate skill" "all=$revoke_all frozen=$revoke_frozen"
 # Each of Step 3's three no-marker outcomes must carry its OWN revoke. A count over the
 # whole step (it was `>= 3`) stays green when one outcome loses its revoke and another
 # gains a second, so each outcome's text is cut out between its own two anchors and

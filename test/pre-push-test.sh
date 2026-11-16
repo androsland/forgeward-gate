@@ -10,10 +10,16 @@ PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
 INSTALL="$PLUGIN/scripts/forgeward-install-pre-push.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
-# The writer takes the reviewed commits explicitly since 0.31.0. Every caller here gates
-# the commit it just made, so both are resolved in the caller's cwd at call time.
+# The writer takes the reviewed commits and the gate run's id since 0.31.0. Every caller
+# here gates the commit it just made, so both are resolved in the caller's cwd at call
+# time, and the run is minted the way Step 2 mints it: a `--revoke` of that commit, whose
+# `RUN_ID=` line is taken and whose other output is kept off this helper's stdout. That
+# revoke withdraws the marker of every branch at the commit (see P29).
 write_marker() { # write_marker <base-ref> <fired-csv>
-  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$(git rev-parse HEAD)"
+  local head run
+  head="$(git rev-parse HEAD)"
+  run="$("$WRITE" --revoke "$head" | sed -n 's/^RUN_ID=//p')"
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$head" "$run"
 }
 ZERO='0000000000000000000000000000000000000000'
 RSHA='1111111111111111111111111111111111111111'   # arbitrary "remote" sha (hook ignores it)
@@ -172,12 +178,15 @@ pp "$R" "HEAD $SHA_BAD refs/heads/main $RSHA"$'\n'
 # the pushed commit, so the writer's --revoke must withdraw a sibling branch's marker
 # too. Against `git show 283c205:scripts/forgeward-write-marker.sh` the sibling's PASS
 # survived the revoke and its push was still ALLOWED. The first leg is the control that
-# the sibling's marker really authorized the push before the revoke.
+# the sibling's marker really authorized the push before the revoke. Since the run id,
+# write_marker's own revoke on rv2 already withdraws rv1's marker (rv1 is at the same
+# commit); that is the behaviour under test, and nothing below reads rv1's marker. The
+# revoke is run from rv1 and names the frozen commit, as Step 2 does.
 git checkout -qb rv1 main; echo rv > rv.js; git add -A; git commit -qm rv; write_marker main "privacy" >/dev/null
 git checkout -qb rv2; write_marker main "privacy" >/dev/null
 SHA_RV="$(git rev-parse refs/heads/rv2)"
 pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'; P29_BEFORE="$RC"
-git checkout -q rv1; "$WRITE" --revoke >/dev/null
+git checkout -q rv1; "$WRITE" --revoke "$SHA_RV" >/dev/null
 pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'
 git checkout -q main
 { [ "$P29_BEFORE" = 0 ] && [ "$RC" = 1 ] && case "$OUT" in *"rv2"*) true ;; *) false ;; esac; } \

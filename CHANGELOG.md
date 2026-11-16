@@ -16,13 +16,32 @@
 - The marker writer refuses a reviewed pair, or a base ref and reviewed head, that share
   no merge base (an orphan branch, a shallow clone). The diff hash of such a pair was the
   empty-diff hash, which the hooks recompute identically for any later code on it.
+- A reviewed commit id must resolve to itself. In a SHA-1 repo a branch named with 64 hex
+  characters passed the full-id check and resolved to that branch's live tip, and an
+  annotated tag's id peeled to a commit, so the moved-HEAD check passed vacuously.
+- `--revoke` withdraws each branch's marker under both its short and its canonical name.
+  A tag created after the write and named like the branch hid the marker from revoke,
+  while the push hook still accepted it.
+- `--revoke` fails loudly (exit 1) when the branches at the commit cannot be listed, for
+  example because a branch ref points at a missing object, and still withdraws every
+  other marker it can. It used to withdraw only the current branch's and exit 0.
+- `--revoke` withdraws the markers at the commit Step 0 froze, not at live `HEAD`, so a
+  checkout change during the run no longer leaves the reviewed commit's earlier PASS
+  standing through a failed re-review.
+- Two gate runs on the same commit no longer race: a run whose write comes after a later
+  run on that commit started (and perhaps failed) is refused, and a marker it already
+  wrote is removed.
 
 ### Changed
 
 - `forgeward-write-marker.sh` takes `<base-ref> <fired-csv> <reviewed-base>
-  <reviewed-head>`; all four are required (fired may be empty), and every usage error
-  exits 64. The two reviewed arguments must be the full commit ids Step 0 printed (40 or
-  64 lowercase hex); `HEAD`, a branch name or a short hex is refused. New `--revoke` mode.
+  <reviewed-head> <run-id>`; all five are required (fired may be empty), and every usage
+  error exits 64. The two reviewed arguments must be the full commit ids Step 0 printed
+  (40 or 64 lowercase hex) and must resolve to themselves; `HEAD`, a branch name or a
+  short hex is refused. `<run-id>` is the id `--revoke` printed.
+- New `--revoke <reviewed-head>` mode. It takes the commit Step 0 froze, records a new
+  gate run for it, withdraws every marker at it, and on success prints `RUN_ID=<id>` as
+  its last line.
 
 ## 0.30.0 — 2026-10-19
 

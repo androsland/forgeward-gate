@@ -316,7 +316,8 @@ manifest change, and any change to source **or dependencies** after the gate fli
 forces a re-gate — a dependency added between gate and push does **not** sail through. The
 push-time credential scan is separate from that hash and still reads commits touching every one
 of those excluded paths. A re-run withdraws the earlier PASS for every local branch at that
-commit before it reviews anything, so only the latest run's outcome counts.
+commit before it reviews anything, and a later run on the same commit supersedes an earlier
+one still in flight (that run's write is refused), so only the latest run's outcome counts.
 
 ## Turn on enforcement (one command per repo)
 

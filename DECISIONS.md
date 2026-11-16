@@ -26,12 +26,39 @@ ref and reviewed head, with no merge base, because `forgeward-diff-hash.sh` then
 an empty diff with exit 0 and the hooks would recompute that same hash for any later
 code; refuses when the base moved in a way that changes the diff (comparing the
 frozen-pair hash with the hash the push hook will recompute from the ref); and stores
-the frozen-pair hash. The gate runs `--revoke` before Step 2 snapshots anything and again
-on every outcome after that which ends without a marker. `--revoke` withdraws the marker
-of every local branch whose tip is HEAD's commit, enumerated with the push hook's own
-`for-each-ref --points-at` expression because the hook accepts any of them, plus the
-current branch's, and leaves branches at other commits alone. The full-id rule, the
-sibling markers and the no-merge-base refusal came from the whole-branch review of PR 1.
+the frozen-pair hash. The gate runs `--revoke <HEAD_SHA>` before Step 2 snapshots anything
+and again on every outcome after that which ends without a marker. `--revoke` withdraws
+the marker of every local branch whose tip is the FROZEN commit, enumerated with the push
+hook's own `for-each-ref --points-at` expression because the hook accepts any of them,
+plus the current branch's only when HEAD is at that commit, and leaves branches at other
+commits alone. The full-id rule, the sibling markers and the no-merge-base refusal came
+from the whole-branch review of PR 1.
+
+The pre-landing review (gstack `/review` with Codex) then found five ways a failed or
+superseded re-review could still leave a push authorized, and all five are closed here.
+(1) The full-id check was shape-only: in a SHA-1 repo a branch NAMED with 64 hex
+characters passed it and resolved to its live tip, and an annotated tag's id peeled to a
+commit; so every reviewed id must now resolve to ITSELF, byte-for-byte, or exit 64.
+(2) A tag created after the write and named like the branch made revoke look for
+`heads/<b>.json` while the hook still accepted `<b>.json`; revoke now withdraws each
+branch under both its short and its canonical name. (3) Revoke swallowed a failed branch
+listing (a ref pointing at a missing object) and exited 0; it now says so, still tries
+every other path, and exits 1. (4) Revoke followed live HEAD, so a checkout change after
+Step 0 aimed it at the wrong commit; it now takes the frozen commit. (5) Concurrent runs
+raced: run A passed and paused, run B on the same commit started, failed and revoked,
+and A then wrote a PASS for the commit B rejected. Every revoke now FIRST records a new
+run id in `<common-dir>/forgeward-gate-runs/<commit>` and prints `RUN_ID=<id>`; the writer
+takes that id, refuses before the environment probe if the run file holds another, and
+reads it again after writing, removing its own marker (compared byte-for-byte, never by
+a field) if it changed. A later revoke records before it deletes, so whichever side of
+the writer's second read its record lands on, the older PASS does not survive it.
+
+**Rejected for the run id:** a lock. macOS ships no portable `flock`, and a lock left by a
+killed run would wedge every later gate on that repo, which is worse than a re-gate. A
+single global run file: a revoke of an unrelated commit would then supersede every run
+(K34 pins this). A run-id field in the marker JSON, to recognise the writer's own marker:
+reading it back means parsing JSON in the writer or text-matching a field, and comparing
+the whole content needs neither.
 
 **Rejected:** refusing whenever the base ref's SHA changed. A `git fetch` during the run
 would then fail every gate on a busy base, though the merge base, the diff and the hash
@@ -45,17 +72,30 @@ which `--revoke` cannot know, so pushing local branch `y` to remote branch `x` i
 authorized by a stale `x` marker whose diff hash matches (closing it would need the
 writer to parse marker JSON, a dependency it deliberately does not take); and
 `forgeward-diff-hash.sh` itself still hashes an empty diff with exit 0 for a pair with no
-merge base. The writer refuses to certify such a pair; the helper does not fail.
+merge base. The writer refuses to certify such a pair; the helper does not fail. Not
+covered by the run id, all fail-closed except the last: the compare-then-remove is not
+atomic, so a third run writing byte-identical content in that instant loses its marker
+(one re-gate); every revoke supersedes, so a run whose own later revoke fires or another
+run's FAIL can refuse a concurrent PASS (one re-gate); and a write from a detached HEAD
+keys the literal `HEAD`, which a revoke run from a branch checkout does not visit, so
+that one marker can outlive a newer run (the enforced push hook reads it only for a push
+to a branch literally named `HEAD`; the fast reminder reads it on any detached checkout).
 
-**Coverage.** `test/gate-test.sh` K1–K27: K14–K17 the full-id refusals, K18 a dash-led
+**Coverage.** `test/gate-test.sh` K1–K38: K14–K17 the full-id refusals, K18 a dash-led
 base ref, K19 an unresolvable base ref, K20–K21 the no-merge-base refusals, K22–K27
 revoke (sibling withdrawn, another commit's marker kept, a directory skipped, a symlink
-removed, detached and unborn HEAD). `test/pre-push-test.sh` drives one sibling end to
-end: its push is allowed before the revoke and blocked after it.
-`test/dual-client-test.sh` pins the Step 0 freeze, the frozen range (one symbolic
-occurrence allowed, with a floor of five frozen), revoke before snapshot, the four
-writer arguments, and a revoke inside each of Step 3's three no-marker outcomes, each
-section checked on its own.
+removed, detached and unborn HEAD), and from the pre-landing review K28 a hex-shaped
+branch name and a tag id refused, K29 both spellings withdrawn under same-named tags,
+K30 a failed branch listing reported, K31 revoke aimed at the frozen commit after a
+checkout change, K32–K33 a superseded run refused before and after its write, K34 a
+revoke elsewhere superseding nothing, K35–K36 the run id required and well-formed, K37
+revoke's commit resolving to itself, and K38 a run that cannot be recorded.
+`test/pre-push-test.sh` drives one sibling end to end: its push is allowed before the
+revoke and blocked after it. `test/dual-client-test.sh` pins the Step 0 freeze, the
+frozen range (one symbolic occurrence allowed, with a floor of five frozen), revoke
+before snapshot, the five writer arguments, a revoke inside each of Step 3's three
+no-marker outcomes, each section checked on its own, and that every `--revoke` in the
+skill names `"<HEAD_SHA>"` (zero bare, at least five).
 
 ## DECISION — pre-push scans every published commit for credentials with Gitleaks
 

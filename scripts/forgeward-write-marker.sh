@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>
-# forgeward-write-marker.sh --revoke
+# forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head> <run-id>
+# forgeward-write-marker.sh --revoke <reviewed-head>
 #
 # Called by the /forgeward:gate skill ONLY after every fired reviewer returned
 # "<AXIS> VERDICT: PASS". Writes the PASS marker so it is repo-scoped
@@ -18,11 +18,16 @@
 # A MARKER CERTIFIES THE COMMITS THE REVIEWERS WERE GIVEN, NOT WHATEVER IS CHECKED OUT
 # WHEN THIS RUNS. The gate freezes <reviewed-base> and <reviewed-head> in Step 0 and
 # passes them here, and each must be the FULL commit id Step 0 printed (40 or 64
-# lowercase hex). A symbolic name is refused: `HEAD` as <reviewed-head> would make the
-# moved-HEAD check compare HEAD with itself, and a branch as <reviewed-base> would make
-# the base comparison read one live ref twice -- both checks would pass vacuously. A
-# short hex is refused too, because git resolves one that collides with a branch name to
-# the branch. This refuses if HEAD is no longer <reviewed-head> (a commit landed while
+# lowercase hex) AND must resolve to itself. A symbolic name is refused: `HEAD` as
+# <reviewed-head> would make the moved-HEAD check compare HEAD with itself, and a branch
+# as <reviewed-base> would make the base comparison read one live ref twice -- both
+# checks would pass vacuously. A short hex is refused too, because git resolves one that
+# collides with a branch name to the branch. The shape alone is not enough: in a SHA-1
+# repo a BRANCH may be named with 64 hex characters (in a SHA-256 repo, with 40), git
+# resolves that name to the branch's live tip, and the moved-HEAD check passes vacuously
+# again; an annotated tag's object id peels to a commit that is not the id given. So the
+# resolved commit must EQUAL the argument byte-for-byte, or it is refused with exit 64.
+# This refuses if HEAD is no longer <reviewed-head> (a commit landed while
 # reviewers ran); refuses if either the reviewed pair or <base-ref> and <reviewed-head>
 # share no merge base (orphan history, shallow clone), because forgeward-diff-hash.sh
 # then hashes an EMPTY diff with exit 0 and the hooks would recompute that same empty
@@ -32,16 +37,59 @@
 # both hashes equal and is not refused. Until 0.31.0 this read HEAD and hashed the live
 # range at write time, which pinned a marker to code no reviewer saw.
 #
-# --revoke deletes the marker of EVERY local branch whose tip is HEAD's commit --
-# enumerated with the push hook's own `for-each-ref --points-at` expression, because the
-# hook accepts any of them for that commit -- plus the current branch's own marker. The
-# gate runs it when it commits to reviewing and again on every outcome that ends without
-# a marker, so a failed or interrupted re-run never leaves an earlier PASS on a branch at
-# that commit. Markers of branches at OTHER commits are left alone: they certify other
-# diffs. A directory at a marker path is not a marker (the hooks cannot read one) and is
-# skipped; a symlink is removed. Every path is tried before the exit status is decided:
-# exit 1, naming each, when any marker exists and could not be removed -- that PASS may
-# still authorize a push, and the gate stops on it.
+# --revoke <reviewed-head> takes the commit Step 0 FROZE, under the same full-id and
+# resolves-to-itself rules, never live HEAD: if the checkout changed after Step 0, a
+# revoke that followed HEAD would withdraw the new commit's markers and leave the
+# reviewed commit's earlier PASS standing through a failed re-review. It deletes the
+# marker of EVERY local branch whose tip is <reviewed-head> -- enumerated with the push
+# hook's own `for-each-ref --points-at` expression, because the hook accepts any of them
+# for that commit -- plus the current branch's own marker ONLY when HEAD's commit is
+# <reviewed-head> (on a detached HEAD there, that is the literal `HEAD` key this writer
+# uses). Markers of branches at OTHER commits are left alone, the current branch's
+# included: they certify other diffs. Each branch is withdrawn under BOTH spellings of
+# its name: the short one (`%(refname:short)`, what the hook enumerates and what this
+# writer keys on, which becomes `heads/<name>` once a tag of the same name exists) and
+# the canonical one (`refs/heads/` stripped, what the hook's destination-name lookup
+# uses). Looking under one spelling only let a same-named tag created after the write
+# hide the marker from revoke while the hook still accepted it. If the branches at the
+# commit cannot be listed at all (a branch ref pointing at a missing object makes the
+# enumeration exit non-zero), that is reported, every remaining path is still tried, and
+# the exit is 1: an earlier PASS on an unlisted branch may still authorize a push. The
+# gate runs --revoke when it commits to reviewing and again on every outcome that ends
+# without a marker, so a failed or interrupted re-run never leaves an earlier PASS on a
+# branch at that commit. A directory at a marker path is not a marker (the hooks cannot
+# read one) and is skipped; a symlink is removed. Every path is tried before the exit
+# status is decided: exit 1, naming each, when any marker exists and could not be
+# removed -- that PASS may still authorize a push, and the gate stops on it.
+#
+# ONLY THE LATEST RUN ON A COMMIT MAY CERTIFY IT. Without this, run A passes and pauses
+# before writing, run B on the same commit starts (revoke), fails and revokes again, and
+# A resumes and writes a PASS for the commit B just rejected. So each run has an id:
+# `--revoke <reviewed-head>` FIRST mints one and records it in
+# `<common-dir>/forgeward-gate-runs/<reviewed-head>` (one file per commit, replaced
+# atomically), THEN withdraws markers, and on exit 0 prints `RUN_ID=<id>` as its last
+# line. The write takes that id as <run-id>; it is refused, before the environment probe
+# runs, when the run file is missing or holds another id, and the run file is read AGAIN
+# after the marker is written -- if it changed, the marker is removed when its bytes are
+# still the bytes this process wrote, and the write is refused. Why that closes the race:
+# a later revoke records its run id BEFORE it deletes anything. If its record lands
+# before this writer's second read, the writer sees it and removes its own marker; if
+# after, the revoke's delete comes after the write and removes it. Either way an older
+# run's PASS cannot outlive a newer run's start or failure on that commit, with the one
+# exception of a detached-HEAD write, the last residual below.
+#
+# Residuals of the run id, NON-GOALS rather than coverage:
+#   - the compare-then-remove is not atomic, so a third run writing byte-identical
+#     content in that instant loses its marker. Fail-closed: one re-gate.
+#   - EVERY revoke supersedes, so a run whose own later revoke fires (a Step 3 halt or a
+#     refused write) or another run's FAIL can refuse a concurrent PASS. Fail-closed.
+#   - no lock is taken, deliberately: macOS ships no portable `flock`, and a stale lock
+#     left by a killed run would wedge the gate, which is worse than a re-gate.
+#   - a write from a DETACHED HEAD keys the literal `HEAD`, which a revoke run from a
+#     branch checkout does not visit, so that one marker can outlive a newer run. The
+#     enforced push hook reads `HEAD.json` only for a push whose destination branch is
+#     literally named `HEAD`; the fast reminder reads it on any detached checkout. Not
+#     fail-closed; filed in TODOS.md.
 #
 # NOT COVERED by --revoke, deliberately: the push hook also accepts the marker named
 # after the push's DESTINATION branch. Revoke cannot know destination names, so pushing
@@ -56,35 +104,46 @@ set -euo pipefail
 # last one was a complete bypass of an ambiguity guard before it was pinned.
 export LC_ALL=C
 usage() {
-  printf 'usage: forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>\n' >&2
-  printf '       forgeward-write-marker.sh --revoke\n' >&2
+  printf 'usage: forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head> <run-id>\n' >&2
+  printf '       forgeward-write-marker.sh --revoke <reviewed-head>\n' >&2
+  exit 64
+}
+# The reviewed commits must be the full ids Step 0 printed; <base-ref> is a ref name and
+# stays symbolic. Matched by length and charset first, not by asking git, because git is
+# exactly what turns `HEAD`, `main` or a branch-colliding short hex into a live ref; the
+# resolves-to-itself check after `commit_of` below is what closes a hex-shaped NAME.
+hex_id() { # hex_id <value>: 40 or 64 lowercase hex
+  case "${#1}:$1" in
+    40:*[!0-9a-f]*|64:*[!0-9a-f]*) return 1 ;;
+    40:*|64:*) return 0 ;;
+  esac
+  return 1
+}
+full_id() { # full_id <label> <value>
+  hex_id "$2" && return 0
+  printf "forgeward: %s '%s' must be the full commit id Step 0 printed (40 or 64 lowercase hex characters).\n" "$1" "$2" >&2
   exit 64
 }
 mode=write
 if [ "${1:-}" = "--revoke" ]; then
-  [ "$#" -eq 1 ] || usage
+  [ "$#" -eq 2 ] || usage
   mode=revoke
+  reviewed_head_arg="$2"
+  case "$reviewed_head_arg" in ''|-*) usage ;; esac
+  full_id "reviewed head" "$reviewed_head_arg"
 else
-  [ "$#" -eq 4 ] || usage
-  base="$1"; fired="$2"; reviewed_base_arg="$3"; reviewed_head_arg="$4"
+  [ "$#" -eq 5 ] || usage
+  base="$1"; fired="$2"; reviewed_base_arg="$3"; reviewed_head_arg="$4"; run_id="$5"
   # Dash-led values are refused before git sees them: `git rev-parse` would read one as
-  # an option. <fired-csv> may be empty; the other three may not.
-  for _a in "$base" "$reviewed_base_arg" "$reviewed_head_arg"; do
+  # an option. <fired-csv> may be empty; the other four may not.
+  for _a in "$base" "$reviewed_base_arg" "$reviewed_head_arg" "$run_id"; do
     case "$_a" in ''|-*) usage ;; esac
   done
-  # The reviewed commits must be the full ids Step 0 printed; <base-ref> is a ref name
-  # and stays symbolic. Matched by length and charset, not by asking git, because git
-  # is exactly what turns `HEAD`, `main` or a branch-colliding short hex into a live ref.
-  full_id() { # full_id <label> <value>
-    case "${#2}:$2" in
-      40:*[!0-9a-f]*|64:*[!0-9a-f]*) ;;
-      40:*|64:*) return 0 ;;
-    esac
-    printf "forgeward: %s '%s' must be the full commit id Step 0 printed (40 or 64 lowercase hex characters).\n" "$1" "$2" >&2
-    exit 64
-  }
   full_id "reviewed base" "$reviewed_base_arg"
   full_id "reviewed head" "$reviewed_head_arg"
+  hex_id "$run_id" || {
+    printf "forgeward: run id '%s' must be the id from the RUN_ID=<id> line Step 2's --revoke printed (40 or 64 lowercase hex characters).\n" "$run_id" >&2
+    exit 64; }
 fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,19 +170,80 @@ marker="$(marker_of "$branch")"
 
 commit_of() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || true; }
 
+# A reviewed commit must resolve to ITSELF (header: the shape alone is not enough). Called
+# directly, never inside a substitution, so its exit stops the script (CLAUDE.md).
+must_be_itself() { # must_be_itself <label> <arg> <resolved>
+  [ -n "$3" ] || { printf 'forgeward: %s %s is not a commit\n' "$1" "$2" >&2; exit 64; }
+  [ "$3" = "$2" ] || {
+    printf "forgeward: %s '%s' resolves to %s rather than to itself; pass the full commit id Step 0 printed.\n" \
+      "$1" "$2" "$3" >&2
+    exit 64; }
+}
+if [ "$mode" = write ]; then
+  reviewed_base="$(commit_of "$reviewed_base_arg")"
+  must_be_itself "reviewed base" "$reviewed_base_arg" "$reviewed_base"
+fi
+reviewed_head="$(commit_of "$reviewed_head_arg")"
+must_be_itself "reviewed head" "$reviewed_head_arg" "$reviewed_head"
+
+# The CURRENT run id for <reviewed-head> (header: only the latest run on a commit may
+# certify it). One file per commit, so a revoke for another commit supersedes nothing.
+runs_dir="$common_dir/forgeward-gate-runs"
+run_file="$runs_dir/$reviewed_head"
+current_run() { cat "$run_file" 2>/dev/null || true; }
+
 if [ "$mode" = revoke ]; then
-  # Every local branch at HEAD's commit, by the push hook's own expression, then the
-  # current branch unless already listed (it is not, on a detached or unborn HEAD).
-  head_commit="$(commit_of HEAD)"
-  names=""
-  if [ -n "$head_commit" ]; then
-    names="$(git for-each-ref --format='%(refname:short)' --points-at "$head_commit" refs/heads/ 2>/dev/null || true)"
-  fi
-  case $'\n'"$names"$'\n' in
-    *$'\n'"$branch"$'\n'*) ;;
-    *) names="$names"$'\n'"$branch" ;;
-  esac
   failed=0
+  # MINT AND RECORD THE RUN ID FIRST, THEN WITHDRAW. The order is load-bearing: it is
+  # what makes an older run's in-flight write lose either way (its second read sees this
+  # id, or this run's delete lands after its write). Recording after the deletes would
+  # open a window in which that write lands after the delete and still reads its own id.
+  # Minted with git, not `od`: an unrelated `od` can sit earlier on PATH.
+  run_id="$(printf '%s\n' "$$" "$(date -u +%Y%m%dT%H%M%S)" "$RANDOM$RANDOM$RANDOM$RANDOM" "$reviewed_head" \
+    | git hash-object --stdin 2>/dev/null)" || run_id=""
+  record_run() { # temp file in the same directory, then an atomic rename over the old one
+    local tmp
+    hex_id "$run_id" || return 1
+    [ ! -d "$run_file" ] || return 1               # mv would move the new file INTO it
+    mkdir -p "$runs_dir" 2>/dev/null || return 1
+    tmp="$(mktemp "$runs_dir/.run.XXXXXX" 2>/dev/null)" || return 1
+    if { printf '%s\n' "$run_id" > "$tmp"; } 2>/dev/null && mv -f "$tmp" "$run_file" 2>/dev/null; then
+      return 0
+    fi
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  }
+  if ! record_run; then
+    printf "forgeward: could not record this gate run for %s in %s, so an older run's write on that commit could still land.\n" \
+      "${reviewed_head:0:12}" "$run_file" >&2
+    failed=1
+  fi
+  # Every local branch at <reviewed-head>, by the push hook's own expression, under both
+  # spellings: the short name (what the hook enumerates and this writer keys on) and the
+  # canonical name minus refs/heads/ (what the hook's destination-name lookup uses). One
+  # call emits both as consecutive lines; ref names cannot hold a newline, so the pairs
+  # cannot drift.
+  names=""
+  if listing="$(git for-each-ref --format='%(refname:short)%0a%(refname)' --points-at "$reviewed_head" refs/heads/ 2>/dev/null)"; then
+    while IFS= read -r short && IFS= read -r full; do
+      names="$names$short"$'\n'"${full#refs/heads/}"$'\n'
+    done <<EOF
+$listing
+EOF
+  else
+    printf "forgeward: could not list the local branches at %s, so an earlier PASS for one of them may still authorize a push. One cause is a branch ref that points at a missing object; \`git for-each-ref refs/heads/\` names it.\n" \
+      "${reviewed_head:0:12}" >&2
+    failed=1
+  fi
+  # The current branch, under both spellings, ONLY when HEAD is at <reviewed-head>: a
+  # branch at another commit certifies another diff. On a detached HEAD there `$branch`
+  # is the literal `HEAD` key the writer uses; on an unborn HEAD there is no commit.
+  if [ "$(commit_of HEAD)" = "$reviewed_head" ]; then
+    names="$names$branch"$'\n'
+    canonical="$(git symbolic-ref -q HEAD 2>/dev/null || true)"
+    case "$canonical" in refs/heads/?*) names="$names${canonical#refs/heads/}"$'\n' ;; esac
+  fi
+  names="$(printf '%s' "$names" | sort -u)"
   while IFS= read -r b; do
     [ -n "$b" ] || continue
     m="$(marker_of "$b")"
@@ -143,12 +263,12 @@ if [ "$mode" = revoke ]; then
   done <<EOF
 $names
 EOF
-  exit "$failed"
+  # On any failure no RUN_ID line: a run that could not withdraw or record must not be
+  # able to certify anything.
+  [ "$failed" = 0 ] || exit 1
+  printf 'RUN_ID=%s\n' "$run_id"
+  exit 0
 fi
-reviewed_base="$(commit_of "$reviewed_base_arg")"
-reviewed_head="$(commit_of "$reviewed_head_arg")"
-[ -n "$reviewed_base" ] || { printf 'forgeward: reviewed base %s is not a commit\n' "$reviewed_base_arg" >&2; exit 64; }
-[ -n "$reviewed_head" ] || { printf 'forgeward: reviewed head %s is not a commit\n' "$reviewed_head_arg" >&2; exit 64; }
 # A base ref that no longer resolves is refused before hashing: forgeward-diff-hash.sh
 # hashes an EMPTY diff for a bad base and exits 0, so the comparison below would refuse
 # with a misleading "base moved" message instead of this one.
@@ -185,6 +305,16 @@ if [ -z "$hash" ] || [ "$hash" != "$live" ]; then
   printf "forgeward: the base '%s' moved during the gate run in a way that changes the reviewed diff; nothing reviewed the new diff. Re-run /forgeward:gate.\n" "$base" >&2
   exit 1
 fi
+
+# This run must still be the CURRENT one for <reviewed-head>: a later run's revoke
+# replaced the run file, or none was ever recorded. Checked here, after every other
+# check and before the environment probe runs, and again after the write below.
+superseded() { # superseded [<what happened>]
+  printf 'forgeward: a later gate run on %s superseded this one (or no run is recorded for that commit); %s. Re-run /forgeward:gate.\n' \
+    "${reviewed_head:0:12}" "${1:-nothing was written}" >&2
+  exit 1
+}
+[ "$(current_run)" = "$run_id" ] || superseded
 
 # --- environment provenance ---------------------------------------------------
 # WHY THE MARKER CARRIES THIS. forgeward is scoped as a delta against gstack, so what
@@ -267,7 +397,7 @@ printf '%s' "$env_json" | grep -Eq "$_env_ok" || env_json=""
 
 mkdir -p "$(dirname "$marker")"
 
-cat > "$marker" <<EOF
+content="$(cat <<EOF
 {
   "schema": 4,
   "passed": true,
@@ -279,6 +409,26 @@ cat > "$marker" <<EOF
   "environment": $env_json
 }
 EOF
+)"
+printf '%s\n' "$content" > "$marker"
+
+# The SECOND read of the run file (header: why this closes the race). A revoke that
+# recorded a newer run between the first read and the write has either already deleted
+# this marker or will; one that recorded it before this read but deleted before the
+# write is caught only here. The marker is removed only while its bytes are still the
+# bytes this process wrote -- the WHOLE content, never a field pulled out of the JSON
+# (CLAUDE.md: never text-match a field out of a structured document) -- so a newer run's
+# marker at the same path is left alone.
+if [ "$(current_run)" != "$run_id" ]; then
+  on_disk="$(cat "$marker" 2>/dev/null || true; printf x)"; on_disk="${on_disk%x}"
+  if [ "$on_disk" = "$content"$'\n' ]; then
+    rm -f -- "$marker" 2>/dev/null || true
+    if [ -e "$marker" ] || [ -L "$marker" ]; then
+      superseded "its marker at $marker could not be removed and may still authorize a push"
+    fi
+  fi
+  superseded
+fi
 
 # --- GC: drop markers whose branch no longer exists ---------------------------
 # Markers accumulate forever otherwise: one per branch ever gated, left behind by
@@ -356,5 +506,9 @@ EOF
   find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 }
 gc_markers 2>/dev/null || true
+# Run files, one per commit ever gated, pruned at 30 days on this same write-only path
+# and with the same posture: GC never runs from a hook, and deleting one costs at most a
+# refused write and one re-gate (no gate run spans a month), never a false PASS.
+find "$runs_dir" -type f -mtime +30 -exec rm -f {} + 2>/dev/null || true
 
 echo "forgeward gate: PASS marker written for '$branch' @ ${reviewed_head:0:8} (substantive-diff hash ${hash:0:12})"

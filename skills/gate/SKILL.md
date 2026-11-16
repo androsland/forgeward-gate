@@ -389,11 +389,17 @@ push. A re-run that fails must not leave the previous PASS usable for the same d
 and neither may a run that is interrupted:
 
 ```bash
-"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
 ```
 
-Non-zero means a marker exists and could not be removed; the writer names each one.
-Print its message verbatim and stop with
+On exit 0 its last line is `RUN_ID=<id>`. Record that id exactly; wherever this skill
+says `<RUN_ID>`, write it, and Step 3 passes it to the writer. A later gate run on the
+same commit supersedes this one: its revoke records a new run id, and this run's write
+is then refused, so only the latest run's outcome can stand.
+
+Non-zero means a marker exists and could not be removed, the branches at this commit
+could not be listed, or this run could not be recorded; the writer says which, and prints
+no `RUN_ID`. Print its message verbatim and stop with
 `forgeward gate: could not withdraw an earlier PASS for a branch at this commit; it may still authorize a push. Nothing was reviewed.`
 
 **Before spawning anything**, snapshot the working tree so the read-only contract can
@@ -450,7 +456,9 @@ and that wherever its rubric names the range `<base>...HEAD` it means that froze
 pass `<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
 reviewers with the explicit runtime policy above, stop without writing a marker; an
 unmeasured axis cannot return PASS. A reviewer that did start may have written one, so
-once it has finished, withdraw it with `--revoke` exactly as Step 3's FAIL path does.
+once it has finished, withdraw it with
+`"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"` exactly as
+Step 3's FAIL path does.
 This is also the fallback for any other runtime, preserving the existing fail-closed
 reviewer-launch behavior.
 
@@ -484,7 +492,7 @@ than the one it cleans up. Print the paths and let the user run
   Bash can write one):
 
   ```bash
-  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
   ```
 
   If that exits non-zero, print its message verbatim and say that the earlier PASS it
@@ -498,15 +506,17 @@ than the one it cleans up. Print the paths and let the user run
 - **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
   ```bash
-  "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>"
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>" "<RUN_ID>"
   ```
 
-  Pass the two full names Step 0 printed, literally. If the writer exits non-zero, nothing
-  was certified: run `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke`, print
+  Pass the two full names Step 0 printed and the id Step 2's revoke printed, literally.
+  If the writer exits non-zero, nothing was certified: run
+  `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"`, print
   the writer's message, and stop with no handoff. If that `--revoke` also exits non-zero,
   print its message verbatim too and say that the earlier PASS it names may still
   authorize a push. The usual cause of the refusal is that `HEAD` or the base moved while
-  reviewers ran, so the PASS was for code that is no longer what would be pushed.
+  reviewers ran, so the PASS was for code that is no longer what would be pushed, or
+  that a later gate run on the same commit superseded this one.
 
   Then hand off — **but only if there is something to hand off to.** Use
   `gstack_ship` from the Step 1c probe (re-run it if you skipped Step 1c):
@@ -544,7 +554,7 @@ than the one it cleans up. Print the paths and let the user run
   a reviewer may have written during the run:
 
   ```bash
-  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
   ```
 
   If that exits non-zero, print its message verbatim and say that the earlier PASS it
@@ -567,8 +577,10 @@ than the one it cleans up. Print the paths and let the user run
 - **The marker is only written on all-PASS, and only for the commits Step 0 froze.** Every
   run that reaches Step 2 withdraws the earlier PASS of every local branch at the
   reviewed commit before it reviews anything, and every later outcome that ends without a
-  written marker withdraws again. A run that stops before Step 2 reviews nothing and
-  leaves an earlier marker in place, still bound to its own diff hash. A `--revoke` that
-  exits non-zero is reported verbatim and stops the gate, because that PASS may still
-  authorize a push. No marker ⇒ the push hook blocks /ship. That is the gate.
+  written marker withdraws again. A write is refused once a later run on that commit has
+  started or failed, so only the latest run's outcome can stand. A run that stops before
+  Step 2 reviews nothing and leaves an earlier marker in place, still bound to its own
+  diff hash. A `--revoke` that exits non-zero is reported verbatim and stops the gate,
+  because that PASS may still authorize a push. No marker ⇒ the push hook blocks /ship.
+  That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.

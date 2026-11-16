@@ -126,23 +126,34 @@ commit that was fixing it — a line number cannot survive its own fix.
   on a machine without gstack produces a false success report.
 - **A marker certifies the commits Step 0 froze, never a live ref.** The gate resolves
   `<BASE_SHA>` and `<HEAD_SHA>` once in Step 0 and every later step reviews that range;
-  `forgeward-write-marker.sh` takes both as FULL commit ids (a symbolic name or short
-  hex lets its checks compare a live ref with itself), refuses when `HEAD` moved, refuses
-  a pair with no merge base (its diff hash is the empty-diff hash), refuses when the
-  frozen pair's hash differs from the hash the push hook will recompute from the base
-  ref, and stores the frozen pair's hash. Until 0.31.0 it read `HEAD` and hashed the live
-  range at write time, so a commit landing while reviewers ran was certified by a marker
-  nobody reviewed. **A fetch that only advances the base is not refused** — both hashes
-  stay equal, and K9 pins that the obvious wrong fix (refusing on any base-SHA change) is
-  not taken.
+  `forgeward-write-marker.sh` takes both as FULL commit ids that must RESOLVE TO
+  THEMSELVES (a symbolic name, a short hex, a branch named with 64 hex characters in a
+  SHA-1 repo, or a tag's id all let its checks compare a live ref with itself), refuses
+  when `HEAD` moved, refuses a pair with no merge base (its diff hash is the empty-diff
+  hash), refuses when the frozen pair's hash differs from the hash the push hook will
+  recompute from the base ref, and stores the frozen pair's hash. Until 0.31.0 it read
+  `HEAD` and hashed the live range at write time, so a commit landing while reviewers
+  ran was certified by a marker nobody reviewed. **A fetch that only advances the base is
+  not refused** — both hashes stay equal, and K9 pins that the obvious wrong fix
+  (refusing on any base-SHA change) is not taken.
 - **Every run that reaches review withdraws the earlier PASS of every local branch at the
-  reviewed commit first, and again on every outcome after that which ends without a
-  marker** (`forgeward-write-marker.sh --revoke`). The push hook accepts any local
-  branch's marker for the pushed commit, so withdrawing only the current branch's left a
-  sibling's PASS standing. "Write no marker" was not enough: a re-run that FAILs on an
+  FROZEN commit first, and again on every outcome after that which ends without a
+  marker** (`forgeward-write-marker.sh --revoke <HEAD_SHA>`, never live `HEAD`: a
+  checkout change after Step 0 would aim it at the wrong commit). The push hook accepts
+  any local branch's marker for the pushed commit, so withdrawing only the current
+  branch's left a sibling's PASS standing. Each branch is withdrawn under BOTH spellings,
+  the short name and the canonical one, because a same-named tag splits them and the hook
+  reads both. A failed branch listing exits 1 after trying every other path; it never
+  passes as a clean revoke. "Write no marker" was not enough: a re-run that FAILs on an
   already-passed diff left the old PASS authorizing that same diff. Revoking at the start
   means an interrupted run needs no exit path to remember anything. A marker that cannot
-  be removed stops the gate. **Not covered, deliberately:** a run that stops in Step 0
+  be removed stops the gate. **A later run supersedes an in-flight write:** each revoke
+  records a run id for the commit BEFORE it deletes anything, and the writer refuses
+  unless the run file still holds its own id, read once before the write and once after
+  (removing the marker it wrote, compared byte-for-byte). No lock, deliberately. The
+  residuals, listed in the writer's header, are fail-closed re-gates except one: a
+  detached-HEAD write's `HEAD` key, which a revoke from a branch checkout does not visit,
+  can outlive a newer run. **Not covered, deliberately:** a run that stops in Step 0
   (nothing to gate, or an unresolvable ref) reviews nothing and withdraws nothing, so an
   earlier marker survives it, still bound to its own diff hash. **Not covered either:**
   the push hook also accepts the marker named after the push's DESTINATION branch, which

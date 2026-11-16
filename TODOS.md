@@ -424,15 +424,27 @@ preferring to delete a weightless detail rather than correct it.
 - **`--revoke` cannot withdraw a marker named after a push's DESTINATION branch.**
   `scripts/forgeward-pre-push.sh` authorizes a pushed commit with the marker of any local
   branch at that commit, plus the marker named after the destination branch. Since 0.31.0
-  `forgeward-write-marker.sh --revoke` removes every local branch's marker at HEAD's
-  commit, but destination names are not knowable at revoke time, so pushing local branch
-  `y` to remote branch `x` is still authorized by a stale `x` marker whose diff hash
-  matches. **Not fixed here:** closing it would need the writer to parse marker JSON
-  (read each marker's `.base` and `.diff_hash` and withdraw any that match this commit),
+  `forgeward-write-marker.sh --revoke <reviewed-head>` removes every local branch's marker
+  at the frozen commit, but destination names are not knowable at revoke time, so pushing
+  local branch `y` to remote branch `x` is still authorized by a stale `x` marker whose
+  diff hash matches. **Not fixed here:** closing it would need the writer to parse marker
+  JSON (read each marker's `.base` and `.diff_hash` and withdraw any that match this commit),
   a dependency the writer deliberately does not take. **What would settle it:** decide
   whether a JSON reader on the revoke path is acceptable, or whether the hook should stop
   accepting the destination-name marker when no local branch at the commit has one.
   (source: final review of PR 1, 2026-11-16) **Priority:** P3
+- **A detached-HEAD PASS can outlive a newer gate run on the same commit.** On a detached
+  `HEAD` the writer keys the marker as the literal `HEAD`. `--revoke <reviewed-head>`
+  withdraws that key only when its own checkout is detached at the commit, so a newer run
+  started from a branch checkout (another worktree) leaves `HEAD.json` standing, whether
+  the older write finished long ago or lands mid-run; the run id refuses only a write that
+  has not yet passed its second read. The enforced push hook reads `HEAD.json` only for a
+  push to a branch literally named `HEAD`; the fast reminder reads it on any detached
+  checkout. **Not fixed here:** always
+  withdrawing the `HEAD` key would also withdraw an unrelated detached checkout's PASS at
+  another commit, since one key serves every worktree. **What would settle it:** decide
+  whether a detached-HEAD write should be refused outright, or keyed by commit. (source:
+  pre-landing review fix of PR 1, 2026-11-16) **Priority:** P3
 - **`forgeward-diff-hash.sh` hashes an EMPTY diff and exits 0 when the pair has no merge
   base.** Its `diff_part` assignment from `git diff "${base}...${tip}"` is unguarded, so
   on an orphan branch or a shallow clone git fails, the diff part is empty, and the hash
@@ -2712,16 +2724,28 @@ shipped on its own branch instead.
   `--revoke` runs before Step 2 and on every later outcome that ends without a marker.
   The final review then required full commit ids, widened `--revoke` to every local
   branch's marker at the reviewed commit, and made the writer refuse a pair with no merge
-  base. `test/gate-test.sh` gains K1–K27 (255 → 282 assertions). K7, K8, K10 and K12
+  base. The pre-landing review (gstack `/review` with Codex) then closed five more ways a
+  failed or superseded re-review could leave a push authorized: reviewed ids must resolve
+  to themselves (a 64-hex branch name passed the shape check), revoke withdraws both
+  spellings of each branch (a same-named tag hid one), fails loudly on an unlistable
+  branch set, takes the frozen commit instead of live `HEAD`, and records a run id that
+  makes a superseded run's write refuse, K28–K38. K27–K33 were each observed reproducing
+  their bug against `72e9c2e`'s writer run under its own contract (four arguments, bare
+  `--revoke`); of sixteen writer mutations, fifteen reddened their named assertion, and
+  the sixteenth (arity alone) stayed green because the empty-argument check refuses the
+  same call, so K35 is pinned by the two together.
+  `test/gate-test.sh` gains K1–K38 (255 → 293 assertions). K7, K8, K10 and K12
   were observed failing against the 0.30.0 writer, and three mutations (HEAD check, base
   comparison, revoke's existence check) each reddened their assertion; the final
   review's K14–K27 name their own control kind, each pre-fix control was observed
   failing against the writer at `283c205`, and seven more mutations reddened exactly
   their assertions. `test/pre-push-test.sh` gains one end-to-end sibling assertion
-  (observed failing against `283c205`). `test/dual-client-test.sh` gains seven
+  (observed failing against `283c205`). `test/dual-client-test.sh` gains eight
   assertions: five, plus two from checking a revoke inside each of Step 3's three
-  outcomes separately; its revoke-ordering assertion reddened when the revoke was moved
-  below the snapshot, and the FAIL-outcome one when the FAIL block's revoke was deleted.
+  outcomes separately, plus one pinning that every `--revoke` in the skill names
+  `"<HEAD_SHA>"`; its revoke-ordering assertion reddened when the revoke was moved
+  below the snapshot, the FAIL-outcome one when the FAIL block's revoke was deleted, and
+  the `"<HEAD_SHA>"` and `"<RUN_ID>"` pins each when one occurrence was removed.
   `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn, and prints
   `withdrawn` only when the marker existed before Run B.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
