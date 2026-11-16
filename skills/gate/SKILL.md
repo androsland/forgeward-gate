@@ -381,17 +381,20 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
-**First, withdraw any earlier PASS for this branch.** From the moment this run commits
-to reviewing, only its own outcome may authorize a push. A re-run that fails must not
-leave the previous PASS usable for the same diff, and neither may a run that is
-interrupted:
+**First, withdraw any earlier PASS for every local branch at the reviewed commit.** The
+push hook accepts the marker of any local branch whose tip is the pushed commit, so
+`--revoke` removes each of those, not only this branch's. From the moment this run
+commits to reviewing, no earlier run's PASS on a branch at this commit may authorize a
+push. A re-run that fails must not leave the previous PASS usable for the same diff,
+and neither may a run that is interrupted:
 
 ```bash
 "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
 ```
 
-Non-zero means a marker exists and could not be removed. Stop with
-`forgeward gate: could not withdraw the earlier PASS; it may still authorize a push. Nothing was reviewed.`
+Non-zero means a marker exists and could not be removed; the writer names each one.
+Print its message verbatim and stop with
+`forgeward gate: could not withdraw an earlier PASS for a branch at this commit; it may still authorize a push. Nothing was reviewed.`
 
 **Before spawning anything**, snapshot the working tree so the read-only contract can
 be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
@@ -484,7 +487,8 @@ than the one it cleans up. Print the paths and let the user run
   "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
   ```
 
-  Then print the paths and stop with:
+  If that exits non-zero, print its message verbatim and say that the earlier PASS it
+  names may still authorize a push. Either way, then print the paths and stop with:
   `forgeward gate: reviewers left files in your repo — delete them and re-run. Nothing was shipped.`
   The verdicts still stand (contamination does not invalidate a security finding), but
   /ship stages and commits, so handing off now is how the artifact lands in the user's
@@ -499,9 +503,10 @@ than the one it cleans up. Print the paths and let the user run
 
   Pass the two full names Step 0 printed, literally. If the writer exits non-zero, nothing
   was certified: run `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke`, print
-  the writer's message, and stop with no handoff. The usual cause is that `HEAD` or the
-  base moved while reviewers ran, so the PASS was for code that is no longer what would be
-  pushed.
+  the writer's message, and stop with no handoff. If that `--revoke` also exits non-zero,
+  print its message verbatim too and say that the earlier PASS it names may still
+  authorize a push. The usual cause of the refusal is that `HEAD` or the base moved while
+  reviewers ran, so the PASS was for code that is no longer what would be pushed.
 
   Then hand off — **but only if there is something to hand off to.** Use
   `gstack_ship` from the Step 1c probe (re-run it if you skipped Step 1c):
@@ -532,15 +537,20 @@ than the one it cleans up. Print the paths and let the user run
   success report**, telling the user their work shipped when nothing was pushed. A gate
   that lies about what it did is worse than one that stops. Report only what happened.
 
-- **If any fired reviewer returned `VERDICT: FAIL`**: do NOT write a marker and do NOT
-  invoke /ship. Withdraw any marker a reviewer may have written during the run:
+- **If any fired reviewer returned `VERDICT: FAIL`, or anything other than PASS**: do NOT
+  write a marker and do NOT invoke /ship. A fired reviewer whose output carries no
+  `<AXIS> VERDICT:` line at all (it crashed, timed out, or ignored the format) is a FAIL
+  for that axis, never a skip: an unmeasured axis cannot return PASS. Withdraw any marker
+  a reviewer may have written during the run:
 
   ```bash
   "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
   ```
 
-  Then print each failing reviewer's Critical/High findings (severity, `file:line`,
-  issue, fix) grouped by axis, and stop with:
+  If that exits non-zero, print its message verbatim and say that the earlier PASS it
+  names may still authorize a push. Then print each failing reviewer's Critical/High
+  findings (severity, `file:line`, issue, fix) grouped by axis — for a reviewer with no
+  verdict line, say that it returned none — and stop with:
   `forgeward gate: FAIL — fix the Critical/High findings above and re-run /forgeward:gate. Nothing was shipped.`
 
 ## Rules
@@ -555,8 +565,10 @@ than the one it cleans up. Print the paths and let the user run
   forbade it. Do not treat an instruction as a control.
 - **Conditional.** Only fire reviewers whose surface the diff touches; say which you skipped and why.
 - **The marker is only written on all-PASS, and only for the commits Step 0 froze.** Every
-  run withdraws the branch's earlier PASS before it reviews anything, and every outcome
-  that ends without a written marker withdraws again. A `--revoke` that exits non-zero is
-  reported verbatim and stops the gate: that PASS may still authorize a push. No marker ⇒
-  the push hook blocks /ship. That is the gate.
+  run that reaches Step 2 withdraws the earlier PASS of every local branch at the
+  reviewed commit before it reviews anything, and every later outcome that ends without a
+  written marker withdraws again. A run that stops before Step 2 reviews nothing and
+  leaves an earlier marker in place, still bound to its own diff hash. A `--revoke` that
+  exits non-zero is reported verbatim and stops the gate, because that PASS may still
+  authorize a push. No marker ⇒ the push hook blocks /ship. That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.

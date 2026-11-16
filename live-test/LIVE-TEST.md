@@ -702,7 +702,16 @@ EOF
 git add -A && git commit -qm "feat: currency column"
 ```
 
-Run **`/forgeward:gate`** again.
+Before the gate runs, record whether Run A's marker exists. An absence afterwards means
+something only if there was a marker to withdraw:
+
+```bash
+M="$(git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+if [ -e "$M" ]; then echo "before: present"; else echo "before: absent"; fi
+```
+
+`before: absent` voids the withdrawal check below — Run A wrote no marker, which is
+itself a Run A finding. Run **`/forgeward:gate`** again.
 
 - `data-migration` must **FAIL**, and at **High**: lock-taking DDL with no `CONCURRENTLY`
   on a table whose size it cannot see. Its own rubric says table size is the fact it
@@ -714,16 +723,20 @@ Run **`/forgeward:gate`** again.
   (the gate prints `withdrew the earlier PASS marker`), so a failed re-run leaves no
   marker at all. Until then Run A's marker survived a failed Run B and still authorized
   pushing Run A's diff, and this check read "the marker still pins Run A's commit". An
-  absence test means something here only because Run A wrote a marker first: if the
-  withdrawal did not run, Run A's file is still there.
+  absence test means something here only because Run A wrote a marker first, so set
+  `BEFORE` to the word the block above printed:
 
   ```bash
-  M="$(git rev-parse --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
-  if [ -e "$M" ]; then grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"; else echo withdrawn; fi
+  BEFORE=present   # or absent: what the block above printed after "before:"
+  M="$(git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+  if [ -e "$M" ]; then grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"
+  elif [ "$BEFORE" = present ]; then echo withdrawn
+  else echo "no marker before or after: the withdrawal was not observed"; fi
   git rev-parse HEAD
   ```
 
-  `withdrawn` is the pass. A `reviewed_head` equal to Run A's commit means the withdrawal
+  `withdrawn` is the pass, and it prints only when the marker existed before Run B and is
+  gone after it. A `reviewed_head` equal to Run A's commit means the withdrawal
   did not run. One equal to Run B's commit means the gate wrote a marker for a run it
   failed, and that is the most serious finding this section can produce.
 - The other four must be unaffected. If `performance` or `api-contract` also turns red on

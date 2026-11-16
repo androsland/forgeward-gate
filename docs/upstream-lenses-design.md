@@ -174,11 +174,13 @@ SHAs printed in Step 0.
 A marker is keyed by branch and binds a diff hash. If a run of an already-passed diff now fails,
 the old marker still authorizes pushing that same diff. "Write no marker" is not enough.
 
-- **The first action of Step 2** is `forgeward-write-marker.sh --revoke`. It deletes this
-  branch's marker if one exists, and prints one line when it did. From the moment the gate
-  commits to reviewing, only this run's outcome can authorize a push. A run that is interrupted,
-  crashes or stops therefore leaves no usable PASS, with no exit path having to remember
-  anything.
+- **The first action of Step 2** is `forgeward-write-marker.sh --revoke`. It deletes the
+  marker of every local branch whose tip is HEAD's commit (the push hook accepts any of
+  them for that commit, enumerated by the hook's own `for-each-ref --points-at`), plus the
+  current branch's, and prints one line per marker it removed. Branches at other commits
+  keep theirs. From the moment the gate commits to reviewing, no earlier run's PASS on a
+  branch at this commit can authorize a push. A run that is interrupted, crashes or stops
+  therefore leaves no usable PASS there, with no exit path having to remember anything.
 - **Every non-PASS outcome revokes again**, after the final guard check. That closes a marker a
   reviewer wrote during the run (§5.1 detects it; this removes it).
 - `--revoke` shares the writer's marker-path code, the one-reader rule. It exits 0 when the
@@ -206,6 +208,11 @@ The rule: a marker certifies exactly the commits the reviewers were given.
     fail-safe direction: an unrecognised schema reads as stale.
   - Reviewers read surrounding context from the **working tree**, which differs from
     `<HEAD_SHA>` when the tree is dirty. This is pre-existing. Filed in `TODOS.md`.
+  - **The push hook also accepts the marker named after the push's destination branch.**
+    `--revoke` cannot know destination names, so pushing local branch `y` to remote branch
+    `x` is still authorized by a stale `x` marker whose diff hash matches. Closing it would
+    need the writer to parse marker JSON, a dependency it deliberately does not take. Found
+    by the final review of PR 1. Filed in `TODOS.md`.
 
 ### 4.5 Tests
 
@@ -213,16 +220,23 @@ The rule: a marker certifies exactly the commits the reviewers were given.
   - a moved HEAD writes no marker and prints the message;
   - a moved base that changes the diff refuses;
   - a fetch-style base advance that leaves the merge base alone writes;
-  - an abbreviated SHA is accepted;
+  - `HEAD`, a branch name, a short hex and an uppercase id are each refused with exit 64
+    and a message naming the argument (the final review of PR 1 reversed the earlier plan
+    to accept an abbreviated SHA: a symbolic or short name lets the checks compare a live
+    ref with itself);
   - a non-commit object, an empty third argument and a missing fourth argument are each exit
     64, with the message asserted;
-  - the marker's `reviewed_head` is the argument's **full** name when the argument was
-    abbreviated. "The argument, not live `HEAD`" is not separately observable: the HEAD
-    check refuses unless the two are equal, so on every path that writes, they are.
+  - a reviewed pair, or a base ref and reviewed head, with no merge base refuses;
+  - the marker's `reviewed_head` is the full id it was given. "The argument, not live
+    `HEAD`" is not separately observable: the HEAD check refuses unless the two are equal,
+    so on every path that writes, they are.
 - **Revoke:**
   - an existing marker is removed;
   - an absent one is exit 0, silent;
-  - an unremovable one (read-only directory) is exit 1 with its message.
+  - an unremovable one (read-only directory) is exit 1 with its message;
+  - a sibling branch's marker at the same commit is removed, and a branch's at another
+    commit is kept;
+  - a directory at a marker path is skipped, and a detached or unborn HEAD exits 0.
 - **Mutation controls:** delete the writer's HEAD-moved refusal and the moved-HEAD
   assertion reddens; make the base comparison always pass and the moved-base assertion
   reddens; drop revoke's after-`rm` existence check and the unremovable-marker

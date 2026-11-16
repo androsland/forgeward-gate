@@ -9,15 +9,20 @@
   refuses when `HEAD` moved or the base moved in a way that changes the diff, and hashes
   the frozen pair. Before, a commit landing while reviewers ran was certified by a marker
   nobody reviewed.
-- A gate run that reaches review withdraws the branch's earlier PASS first, and again on
-  every later outcome that ends without a marker, so a failed re-run no longer leaves the
-  old PASS authorizing the same diff.
+- A gate run that reaches review withdraws the earlier PASS of every local branch at the
+  reviewed commit first, and again on every later outcome that ends without a marker, so
+  a failed re-run no longer leaves an old PASS, on this branch or a sibling at the same
+  commit, authorizing the same diff.
+- The marker writer refuses a reviewed pair, or a base ref and reviewed head, that share
+  no merge base (an orphan branch, a shallow clone). The diff hash of such a pair was the
+  empty-diff hash, which the hooks recompute identically for any later code on it.
 
 ### Changed
 
 - `forgeward-write-marker.sh` takes `<base-ref> <fired-csv> <reviewed-base>
   <reviewed-head>`; all four are required (fired may be empty), and every usage error
-  exits 64. New `--revoke` mode.
+  exits 64. The two reviewed arguments must be the full commit ids Step 0 printed (40 or
+  64 lowercase hex); `HEAD`, a branch name or a short hex is refused. New `--revoke` mode.
 
 ## 0.30.0 — 2026-10-19
 

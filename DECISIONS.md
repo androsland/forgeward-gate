@@ -17,11 +17,21 @@ already-passed diff left the old marker authorizing that diff, because "write no
 does not remove one.
 
 **Decision.** Step 0 freezes `<BASE_SHA>` and `<HEAD_SHA>`; everything after reviews
-`<BASE_SHA>...<HEAD_SHA>`. The writer takes both, refuses on a moved `HEAD`, refuses when
-the base moved in a way that changes the diff (comparing the frozen-pair hash with the
-hash the push hook will recompute from the ref), and stores the frozen-pair hash. The
-gate runs `--revoke` before Step 2 snapshots anything and again on every outcome after
-that which ends without a marker.
+`<BASE_SHA>...<HEAD_SHA>`. The writer takes both as full commit ids (40 or 64 lowercase
+hex) and refuses anything else with exit 64: `HEAD` as the reviewed head made the
+moved-HEAD check compare HEAD with itself, a branch as the reviewed base made the base
+comparison read one live ref twice, and a short hex that collides with a branch name
+resolves to the branch. It refuses on a moved `HEAD`; refuses a reviewed pair, or a base
+ref and reviewed head, with no merge base, because `forgeward-diff-hash.sh` then hashes
+an empty diff with exit 0 and the hooks would recompute that same hash for any later
+code; refuses when the base moved in a way that changes the diff (comparing the
+frozen-pair hash with the hash the push hook will recompute from the ref); and stores
+the frozen-pair hash. The gate runs `--revoke` before Step 2 snapshots anything and again
+on every outcome after that which ends without a marker. `--revoke` withdraws the marker
+of every local branch whose tip is HEAD's commit, enumerated with the push hook's own
+`for-each-ref --points-at` expression because the hook accepts any of them, plus the
+current branch's, and leaves branches at other commits alone. The full-id rule, the
+sibling markers and the no-merge-base refusal came from the whole-branch review of PR 1.
 
 **Rejected:** refusing whenever the base ref's SHA changed. A `git fetch` during the run
 would then fail every gate on a busy base, though the merge base, the diff and the hash
@@ -29,11 +39,23 @@ are all unchanged. K9 pins this.
 
 **Not covered (filed in `TODOS.md`):** a marker earned under an older release stays valid
 for its exact diff after an upgrade, until the gate runs again; reviewers read surrounding
-context from the working tree, which differs from `<HEAD_SHA>` when the tree is dirty.
+context from the working tree, which differs from `<HEAD_SHA>` when the tree is dirty;
+the push hook also accepts the marker named after the push's **destination** branch,
+which `--revoke` cannot know, so pushing local branch `y` to remote branch `x` is still
+authorized by a stale `x` marker whose diff hash matches (closing it would need the
+writer to parse marker JSON, a dependency it deliberately does not take); and
+`forgeward-diff-hash.sh` itself still hashes an empty diff with exit 0 for a pair with no
+merge base. The writer refuses to certify such a pair; the helper does not fail.
 
-**Coverage.** `test/gate-test.sh` K1–K13. `test/dual-client-test.sh` pins the Step 0
-freeze, the frozen range (one symbolic occurrence allowed, with a floor of five frozen),
-revoke before snapshot, the four writer arguments, and at least three revokes in Step 3.
+**Coverage.** `test/gate-test.sh` K1–K27: K14–K17 the full-id refusals, K18 a dash-led
+base ref, K19 an unresolvable base ref, K20–K21 the no-merge-base refusals, K22–K27
+revoke (sibling withdrawn, another commit's marker kept, a directory skipped, a symlink
+removed, detached and unborn HEAD). `test/pre-push-test.sh` drives one sibling end to
+end: its push is allowed before the revoke and blocked after it.
+`test/dual-client-test.sh` pins the Step 0 freeze, the frozen range (one symbolic
+occurrence allowed, with a floor of five frozen), revoke before snapshot, the four
+writer arguments, and a revoke inside each of Step 3's three no-marker outcomes, each
+section checked on its own.
 
 ## DECISION — pre-push scans every published commit for credentials with Gitleaks
 

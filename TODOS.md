@@ -421,6 +421,28 @@ preferring to delete a weightless detail rather than correct it.
 
 ## Gate — base detection and freshness
 
+- **`--revoke` cannot withdraw a marker named after a push's DESTINATION branch.**
+  `scripts/forgeward-pre-push.sh` authorizes a pushed commit with the marker of any local
+  branch at that commit, plus the marker named after the destination branch. Since 0.31.0
+  `forgeward-write-marker.sh --revoke` removes every local branch's marker at HEAD's
+  commit, but destination names are not knowable at revoke time, so pushing local branch
+  `y` to remote branch `x` is still authorized by a stale `x` marker whose diff hash
+  matches. **Not fixed here:** closing it would need the writer to parse marker JSON
+  (read each marker's `.base` and `.diff_hash` and withdraw any that match this commit),
+  a dependency the writer deliberately does not take. **What would settle it:** decide
+  whether a JSON reader on the revoke path is acceptable, or whether the hook should stop
+  accepting the destination-name marker when no local branch at the commit has one.
+  (source: final review of PR 1, 2026-11-16) **Priority:** P3
+- **`forgeward-diff-hash.sh` hashes an EMPTY diff and exits 0 when the pair has no merge
+  base.** Its `diff_part` assignment from `git diff "${base}...${tip}"` is unguarded, so
+  on an orphan branch or a shallow clone git fails, the diff part is empty, and the hash
+  is the empty-diff hash, which both hooks recompute identically for any later code on
+  that pair. Since 0.31.0 the marker writer refuses to certify such a pair (K20, K21),
+  but the helper itself should fail. **Not fixed here:** making it fail changes what
+  both hooks do on a hash failure (`is_fresh` reads a failure as stale, which would turn
+  this into a hard block), and that is its own posture decision. (source: final review
+  of PR 1, 2026-11-16) **Priority:** P2
+
 - **The drive-letter arm in `remote_is_networked()` approximates git's third
   locality clause and diverges on DOS reserved device names.** git's real predicate is
   `!colon || (slash && slash < colon) || (has_dos_drive_prefix() && is_valid_path())`.
@@ -2686,13 +2708,22 @@ shipped on its own branch instead.
   merged when this was written.** Check with `git merge-base --is-ancestor` before
   reading it as landed.) PR 1 of the seven-PR upstream-lenses stack
   (`docs/upstream-lenses-design.md`). Step 0 freezes both commits; the writer takes them,
-  refuses on a moved `HEAD` or merge base, and hashes the frozen pair; `--revoke` runs
-  before Step 2 and on every later outcome that ends without a marker. `test/gate-test.sh`
-  gains K1–K13 (255 → 268 assertions). K7, K8, K10 and K12 were observed failing
-  against the 0.30.0 writer, and three mutations (HEAD check, base comparison, revoke's
-  existence check) each reddened their assertion. `test/dual-client-test.sh` gains five
-  assertions, and its revoke-ordering assertion reddened when the revoke was moved below
-  the snapshot. `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn.
+  refuses on a moved `HEAD` or a diff-changing base move, and hashes the frozen pair;
+  `--revoke` runs before Step 2 and on every later outcome that ends without a marker.
+  The final review then required full commit ids, widened `--revoke` to every local
+  branch's marker at the reviewed commit, and made the writer refuse a pair with no merge
+  base. `test/gate-test.sh` gains K1–K27 (255 → 282 assertions). K7, K8, K10 and K12
+  were observed failing against the 0.30.0 writer, and three mutations (HEAD check, base
+  comparison, revoke's existence check) each reddened their assertion; the final
+  review's K14–K27 name their own control kind, each pre-fix control was observed
+  failing against the writer at `283c205`, and seven more mutations reddened exactly
+  their assertions. `test/pre-push-test.sh` gains one end-to-end sibling assertion
+  (observed failing against `283c205`). `test/dual-client-test.sh` gains seven
+  assertions: five, plus two from checking a revoke inside each of Step 3's three
+  outcomes separately; its revoke-ordering assertion reddened when the revoke was moved
+  below the snapshot, and the FAIL-outcome one when the FAIL block's revoke was deleted.
+  `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn, and prints
+  `withdrawn` only when the marker existed before Run B.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

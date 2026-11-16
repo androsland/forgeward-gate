@@ -168,6 +168,22 @@ pp "$R" "HEAD $SHA_G refs/heads/main $RSHA"$'\n'
 pp "$R" "HEAD $SHA_BAD refs/heads/main $RSHA"$'\n'
 [ "$RC" = 1 ] && ok "HEAD source of an ungated commit -> BLOCKED" || nok "HEAD-source ungated blocked" "rc=$RC out=$OUT"
 
+# P29 (PRE-FIX control, end to end): this hook accepts the marker of ANY local branch at
+# the pushed commit, so the writer's --revoke must withdraw a sibling branch's marker
+# too. Against `git show 283c205:scripts/forgeward-write-marker.sh` the sibling's PASS
+# survived the revoke and its push was still ALLOWED. The first leg is the control that
+# the sibling's marker really authorized the push before the revoke.
+git checkout -qb rv1 main; echo rv > rv.js; git add -A; git commit -qm rv; write_marker main "privacy" >/dev/null
+git checkout -qb rv2; write_marker main "privacy" >/dev/null
+SHA_RV="$(git rev-parse refs/heads/rv2)"
+pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'; P29_BEFORE="$RC"
+git checkout -q rv1; "$WRITE" --revoke >/dev/null
+pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'
+git checkout -q main
+{ [ "$P29_BEFORE" = 0 ] && [ "$RC" = 1 ] && case "$OUT" in *"rv2"*) true ;; *) false ;; esac; } \
+  && ok "revoke from one branch withdraws a sibling's PASS at the same commit -> the sibling's push is BLOCKED" \
+  || nok "sibling PASS survives revoke" "before=$P29_BEFORE rc=$RC out=$OUT"
+
 # P14: marker_get must trust jq's EXIT STATUS, not just its output.
 #
 # This copy of marker_get had drifted from gate-check.sh's in two ways at once: it

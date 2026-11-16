@@ -138,10 +138,33 @@ case "$gate_step3" in
     ok "Step 3 hands the marker writer the commits Step 0 froze" ;;
   *) nok "Step 3 writer arguments" ;;
 esac
-step3_revokes="$(grep -o 'forgeward-write-marker\.sh" --revoke' <<<"$gate_step3" | wc -l)"
-[ "$step3_revokes" -ge 3 ] \
-  && ok "Step 3 withdraws the marker on the workspace halt, on a refused write and on FAIL" \
-  || nok "Step 3 revoke on non-PASS" "count=$step3_revokes"
+# Each of Step 3's three no-marker outcomes must carry its OWN revoke. A count over the
+# whole step (it was `>= 3`) stays green when one outcome loses its revoke and another
+# gains a second, so each outcome's text is cut out between its own two anchors and
+# checked alone. If EITHER anchor stops matching, the section is empty and the check
+# fails -- a missing end anchor must not let a section run on into the next outcome's
+# revoke and pass vacuously.
+between() { # between <text> <start> <end>: the text between the two, or nothing
+  local t="$1"
+  case "$t" in *"$2"*) ;; *) return 0 ;; esac
+  t="${t#*"$2"}"
+  case "$t" in *"$3"*) printf '%s' "${t%%"$3"*}" ;; esac
+}
+for outcome in halt refused fail; do
+  case "$outcome" in
+    halt) label="the workspace-guard halt"
+      section="$(between "$gate_step3" 'If the workspace guard reported new paths' 'If every fired reviewer returned')" ;;
+    refused) label="a refused marker write"
+      section="$(between "$gate_step3" 'If the writer exits non-zero' 'Then hand off')" ;;
+    fail) label="FAIL"
+      section="$(between "$gate_step3" 'If any fired reviewer returned' '## Rules')" ;;
+  esac
+  case "$section" in
+    *'forgeward-write-marker.sh" --revoke'*)
+      ok "Step 3 withdraws the marker on $label" ;;
+    *) nok "Step 3 revoke on $label" "section-bytes=${#section}" ;;
+  esac
+done
 
 audit_policy="$(sed -n '/^## Runtime compatibility/,/^<!-- PORTED AUDIT PHASES/p' "$PLUGIN/skills/audit/SKILL.md"; sed -n '/^\*\*Parallel verification\.\*\*/,/^\*\*Give the verifier/p' "$PLUGIN/skills/audit/SKILL.md")"
 case "$audit_policy" in

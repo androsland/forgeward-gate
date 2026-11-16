@@ -17,18 +17,37 @@
 #
 # A MARKER CERTIFIES THE COMMITS THE REVIEWERS WERE GIVEN, NOT WHATEVER IS CHECKED OUT
 # WHEN THIS RUNS. The gate freezes <reviewed-base> and <reviewed-head> in Step 0 and
-# passes them here. This refuses if HEAD is no longer <reviewed-head> (a commit landed
-# while reviewers ran), refuses if <base-ref> moved in a way that changes the diff (the
-# merge base moved), and hashes the FROZEN pair, so nothing is hashed from a live ref
-# alone. A fetch that only advances <base-ref> leaves the merge base and the hash alone
-# and is not refused. Until 0.31.0 this read HEAD and hashed the live range at write
-# time, which pinned a marker to code no reviewer saw.
+# passes them here, and each must be the FULL commit id Step 0 printed (40 or 64
+# lowercase hex). A symbolic name is refused: `HEAD` as <reviewed-head> would make the
+# moved-HEAD check compare HEAD with itself, and a branch as <reviewed-base> would make
+# the base comparison read one live ref twice -- both checks would pass vacuously. A
+# short hex is refused too, because git resolves one that collides with a branch name to
+# the branch. This refuses if HEAD is no longer <reviewed-head> (a commit landed while
+# reviewers ran); refuses if either the reviewed pair or <base-ref> and <reviewed-head>
+# share no merge base (orphan history, shallow clone), because forgeward-diff-hash.sh
+# then hashes an EMPTY diff with exit 0 and the hooks would recompute that same empty
+# hash for any later code; refuses if the hash of the frozen pair differs from the hash
+# the push hook will recompute from <base-ref>; and stores the frozen pair's hash, so
+# nothing is hashed from a live ref alone. A fetch that only advances <base-ref> leaves
+# both hashes equal and is not refused. Until 0.31.0 this read HEAD and hashed the live
+# range at write time, which pinned a marker to code no reviewer saw.
 #
-# --revoke deletes THIS branch's marker. The gate runs it when it commits to reviewing
-# and again on every outcome that ends without a marker, so a failed or interrupted
-# re-run never leaves an earlier PASS usable for the same diff. Exit 1 when a marker
-# exists and cannot be removed -- that PASS may still authorize a push, and the gate
-# stops on it.
+# --revoke deletes the marker of EVERY local branch whose tip is HEAD's commit --
+# enumerated with the push hook's own `for-each-ref --points-at` expression, because the
+# hook accepts any of them for that commit -- plus the current branch's own marker. The
+# gate runs it when it commits to reviewing and again on every outcome that ends without
+# a marker, so a failed or interrupted re-run never leaves an earlier PASS on a branch at
+# that commit. Markers of branches at OTHER commits are left alone: they certify other
+# diffs. A directory at a marker path is not a marker (the hooks cannot read one) and is
+# skipped; a symlink is removed. Every path is tried before the exit status is decided:
+# exit 1, naming each, when any marker exists and could not be removed -- that PASS may
+# still authorize a push, and the gate stops on it.
+#
+# NOT COVERED by --revoke, deliberately: the push hook also accepts the marker named
+# after the push's DESTINATION branch. Revoke cannot know destination names, so pushing
+# local branch `y` to remote branch `x` is still authorized by a stale `x` marker whose
+# diff hash matches. Closing it would mean parsing marker JSON here, a dependency this
+# script deliberately does not take (see the provenance block below). Filed in TODOS.md.
 set -euo pipefail
 
 # Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
@@ -53,6 +72,19 @@ else
   for _a in "$base" "$reviewed_base_arg" "$reviewed_head_arg"; do
     case "$_a" in ''|-*) usage ;; esac
   done
+  # The reviewed commits must be the full ids Step 0 printed; <base-ref> is a ref name
+  # and stays symbolic. Matched by length and charset, not by asking git, because git
+  # is exactly what turns `HEAD`, `main` or a branch-colliding short hex into a live ref.
+  full_id() { # full_id <label> <value>
+    case "${#2}:$2" in
+      40:*[!0-9a-f]*|64:*[!0-9a-f]*) ;;
+      40:*|64:*) return 0 ;;
+    esac
+    printf "forgeward: %s '%s' must be the full commit id Step 0 printed (40 or 64 lowercase hex characters).\n" "$1" "$2" >&2
+    exit 64
+  }
+  full_id "reviewed base" "$reviewed_base_arg"
+  full_id "reviewed head" "$reviewed_head_arg"
 fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,26 +97,54 @@ if [ -z "$common_dir" ]; then
   case "$common_dir" in /*) ;; *) common_dir="$(cd "$common_dir" && pwd)" ;; esac
 fi
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
+# A detached HEAD reads as literal "HEAD" (and keys that marker). An UNBORN HEAD makes
+# `--abbrev-ref` fail after printing "HEAD", so fall back to the symbolic name; revoke
+# must not crash on either.
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+  || branch="$(git symbolic-ref --short -q HEAD 2>/dev/null)" || branch=""
 # Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't
 # collide. Git branch names are already filesystem-safe (they map to
-# refs/heads/<name> files), so no extra sanitization is needed. Computed once, here,
-# for both modes: one reader of where a marker lives, never two.
-marker="$common_dir/forgeward-gate-markers/$branch.json"
-
-if [ "$mode" = revoke ]; then
-  { [ -e "$marker" ] || [ -L "$marker" ]; } || exit 0
-  rm -f -- "$marker" 2>/dev/null || true
-  if [ -e "$marker" ] || [ -L "$marker" ]; then
-    printf "forgeward: could not withdraw the earlier PASS for '%s' (%s); it may still authorize a push.\n" \
-      "$branch" "$marker" >&2
-    exit 1
-  fi
-  printf "forgeward gate: withdrew the earlier PASS marker for '%s'; only this run's outcome can authorize a push.\n" "$branch"
-  exit 0
-fi
+# refs/heads/<name> files), so no extra sanitization is needed. marker_of is the one
+# reader of where a marker lives, for both modes and for every branch revoke visits.
+marker_of() { printf '%s/forgeward-gate-markers/%s.json' "$common_dir" "$1"; }
+marker="$(marker_of "$branch")"
 
 commit_of() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || true; }
+
+if [ "$mode" = revoke ]; then
+  # Every local branch at HEAD's commit, by the push hook's own expression, then the
+  # current branch unless already listed (it is not, on a detached or unborn HEAD).
+  head_commit="$(commit_of HEAD)"
+  names=""
+  if [ -n "$head_commit" ]; then
+    names="$(git for-each-ref --format='%(refname:short)' --points-at "$head_commit" refs/heads/ 2>/dev/null || true)"
+  fi
+  case $'\n'"$names"$'\n' in
+    *$'\n'"$branch"$'\n'*) ;;
+    *) names="$names"$'\n'"$branch" ;;
+  esac
+  failed=0
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    m="$(marker_of "$b")"
+    if [ -L "$m" ]; then :                       # a symlink is removed, whatever it points at
+    elif [ -d "$m" ]; then continue              # a directory is not a marker
+    elif [ -e "$m" ]; then :
+    else continue
+    fi
+    rm -f -- "$m" 2>/dev/null || true
+    if [ -e "$m" ] || [ -L "$m" ]; then
+      printf "forgeward: could not withdraw the earlier PASS for '%s' (%s); it may still authorize a push.\n" \
+        "$b" "$m" >&2
+      failed=1
+    else
+      printf "forgeward gate: withdrew the earlier PASS marker for '%s'; it can no longer authorize a push.\n" "$b"
+    fi
+  done <<EOF
+$names
+EOF
+  exit "$failed"
+fi
 reviewed_base="$(commit_of "$reviewed_base_arg")"
 reviewed_head="$(commit_of "$reviewed_head_arg")"
 [ -n "$reviewed_base" ] || { printf 'forgeward: reviewed base %s is not a commit\n' "$reviewed_base_arg" >&2; exit 64; }
@@ -92,8 +152,20 @@ reviewed_head="$(commit_of "$reviewed_head_arg")"
 # A base ref that no longer resolves is refused before hashing: forgeward-diff-hash.sh
 # hashes an EMPTY diff for a bad base and exits 0, so the comparison below would refuse
 # with a misleading "base moved" message instead of this one.
-[ -n "$(commit_of "$base")" ] || {
+base_commit="$(commit_of "$base")"
+[ -n "$base_commit" ] || {
   printf "forgeward: base ref '%s' does not resolve to a commit; nothing was written.\n" "$base" >&2; exit 1; }
+# With no merge base, forgeward-diff-hash.sh's `git diff <base>...<tip>` fails, its diff
+# part is empty and it still exits 0 -- so the hash would be the EMPTY-diff hash, which
+# both hooks recompute identically for any later code on the same pair. Refused here
+# rather than in the helper; making the helper fail changes what both hooks do on a hash
+# failure, which is its own decision (TODOS.md).
+git merge-base "$reviewed_base" "$reviewed_head" >/dev/null 2>&1 || {
+  printf 'forgeward: the reviewed base %s and the reviewed head %s share no merge base, so the reviewed diff cannot be hashed; nothing was written.\n' \
+    "${reviewed_base:0:12}" "${reviewed_head:0:12}" >&2; exit 1; }
+git merge-base "$base_commit" "$reviewed_head" >/dev/null 2>&1 || {
+  printf "forgeward: the base '%s' and the reviewed head %s share no merge base, so the reviewed diff cannot be hashed; nothing was written.\n" \
+    "$base" "${reviewed_head:0:12}" >&2; exit 1; }
 
 head="$(commit_of HEAD)"
 if [ "$head" != "$reviewed_head" ]; then
@@ -102,8 +174,9 @@ if [ "$head" != "$reviewed_head" ]; then
   exit 1
 fi
 # The REVIEWED hash is what the marker stores. The LIVE hash is what the push hook will
-# recompute from `.base` (the ref name); if the two differ, the merge base moved and the
-# marker would certify a diff nobody reviewed.
+# recompute from `.base` (the ref name); if the two differ, the marker would certify a
+# diff nobody reviewed. The comparison of the two hashes is the mechanism, not a check
+# on any one ref.
 hash="$("$here/forgeward-diff-hash.sh" "$reviewed_base" "$reviewed_head")" || {
   echo "forgeward: could not hash the reviewed diff; nothing was written." >&2; exit 1; }
 live="$("$here/forgeward-diff-hash.sh" "$base" "$reviewed_head")" || {

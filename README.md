@@ -308,13 +308,15 @@ Lifecycle hooks are intentionally fast feedback, not a complete policy boundary:
 expose every hosted tool through `PreToolUse`, and neither client can reliably infer resolved Git
 refs from shell command text.
 
-The marker pins a hash of the **reviewed code and dependencies** (`base...HEAD`), excluding
+The marker pins a hash of the **reviewed code and dependencies** (the frozen
+`<BASE_SHA>...<HEAD_SHA>` range the gate resolved once, in its Step 0), excluding
 only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and exact
 version-field-only bumps in the four version-bearing package/client manifests. Any other
 manifest change, and any change to source **or dependencies** after the gate flips the hash and
 forces a re-gate — a dependency added between gate and push does **not** sail through. The
 push-time credential scan is separate from that hash and still reads commits touching every one
-of those excluded paths.
+of those excluded paths. A re-run withdraws the earlier PASS for every local branch at that
+commit before it reviews anything, so only the latest run's outcome counts.
 
 ## Turn on enforcement (one command per repo)
 
