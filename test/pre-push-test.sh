@@ -10,6 +10,11 @@ PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
 INSTALL="$PLUGIN/scripts/forgeward-install-pre-push.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits explicitly since 0.31.0. Every caller here gates
+# the commit it just made, so both are resolved in the caller's cwd at call time.
+write_marker() { # write_marker <base-ref> <fired-csv>
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$(git rev-parse HEAD)"
+}
 ZERO='0000000000000000000000000000000000000000'
 RSHA='1111111111111111111111111111111111111111'   # arbitrary "remote" sha (hook ignores it)
 ORIGINAL_PATH="$PATH"
@@ -83,9 +88,9 @@ echo ok > src.js; git add -A; git commit -qm base; git branch -M main
 git update-ref refs/remotes/origin/main "$(git rev-parse main)"
 git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
-git checkout -qb g   main; echo g > g.js;  git add -A; git commit -qm g;  "$WRITE" main "privacy" >/dev/null
+git checkout -qb g   main; echo g > g.js;  git add -A; git commit -qm g;  write_marker main "privacy" >/dev/null
 SHA_G="$(git rev-parse refs/heads/g)"
-git checkout -qb g2  main; echo g2 > g2.js; git add -A; git commit -qm g2; "$WRITE" main "privacy" >/dev/null
+git checkout -qb g2  main; echo g2 > g2.js; git add -A; git commit -qm g2; write_marker main "privacy" >/dev/null
 SHA_G2="$(git rev-parse refs/heads/g2)"
 git checkout -qb bad main; echo b > b.js;  git add -A; git commit -qm bad          # no marker
 SHA_BAD="$(git rev-parse refs/heads/bad)"
@@ -138,7 +143,7 @@ pp "$R" "refs/tags/v1 $SHA_BAD refs/tags/v1 $RSHA"$'\n'
 # no parsing — git hands the exact ref+sha on stdin and the marker is found under the
 # shared common git dir.
 WT="$TMP/wt"; git -C "$R" worktree add -q -b wt "$WT" main >/dev/null 2>&1
-( cd "$WT"; echo w > w.js; git add -A; git commit -qm wt; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WT"; echo w > w.js; git add -A; git commit -qm wt; write_marker main "privacy" ) >/dev/null
 SHA_WT="$(git -C "$R" rev-parse refs/heads/wt)"
 pp "$R" "refs/heads/wt $SHA_WT refs/heads/wt $RSHA"$'\n'
 [ "$RC" = 0 ] && ok "worktree: marker from a linked worktree honored from the main checkout (exact ref on stdin)" \
@@ -191,7 +196,7 @@ R3="$TMP/repo-markerget"; git init -q "$R3"
   echo base > a.txt; git add -A; git commit -qm base; git branch -M main
   git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
   git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
-  "$WRITE" main "privacy" ) >/dev/null 2>&1
+  write_marker main "privacy" ) >/dev/null 2>&1
 SHA_MG="$(git -C "$R3" rev-parse refs/heads/gated)"
 SHA_MGU="$(git -C "$R3" rev-parse refs/heads/ungated)"
 
@@ -245,7 +250,7 @@ git -C "$R" checkout -qb secret-new main
 mkdir -p "$R/src"; printf '%s\n' "$PAT" > "$R/src/token.txt"
 git -C "$R" add src/token.txt; git -C "$R" commit -qm "secret new branch"
 SHA_SECRET_NEW="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/secret-new $SHA_SECRET_NEW refs/heads/secret-new $ZERO"$'\n'
 { [ "$RC" = 1 ] \
   && { case "$OUT" in *github-pat*src/token.txt:1*'preview=[REDACTED]'*) true ;; *) false ;; esac; } \
@@ -264,7 +269,7 @@ pp "$R" "refs/heads/secret-new $SHA_SECRET_NEW refs/heads/secret-new $RSHA"$'\n'
 # P17: TODOS.md is omitted from the marker hash. Write the marker first, then add the
 # credential there: the marker stays fresh, so a block proves the independent scan ran.
 git -C "$R" checkout -qb secret-todo main
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 printf '%s\n' "$PAT" > "$R/TODOS.md"
 git -C "$R" add TODOS.md; git -C "$R" commit -qm "deferred secret fixture"
 SHA_SECRET_TODO="$(git -C "$R" rev-parse HEAD)"
@@ -281,7 +286,7 @@ mkdir -p "$R/src"; printf '%s\n' "$PAT" > "$R/src/token.txt"
 git -C "$R" add src/token.txt; git -C "$R" commit -qm "add transient credential"
 git -C "$R" rm -q src/token.txt; git -C "$R" commit -qm "remove transient credential"
 SHA_SECRET_REMOVED="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/secret-removed $SHA_SECRET_REMOVED refs/heads/secret-removed $(git -C "$R" rev-parse main)"$'\n'
 { [ "$RC" = 1 ] \
   && { case "$OUT" in *github-pat*) true ;; *) false ;; esac; } \
@@ -304,7 +309,7 @@ git -C "$R" checkout -qb benign-fixtures main
 printf 'API_KEY=\nSECRET_KEY=\n' > "$R/.env.example"
 git -C "$R" add benign.txt .env.example; git -C "$R" commit -qm "benign scanner fixtures"
 SHA_BENIGN="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/benign-fixtures $SHA_BENIGN refs/heads/benign-fixtures $(git -C "$R" rev-parse main)"$'\n'
 [ "$RC" = 0 ] && [ -z "$OUT" ] \
   && ok "PII-shaped values, AWS example, empty .env.example and REDACTED placeholder -> ALLOWED silently" \
@@ -453,7 +458,7 @@ if [ -n "$REAL_GITLEAKS" ]; then
   printf '%s:src/token.txt:github-pat:1\n' "$SUPPRESSED_COMMIT" > "$R/.gitleaksignore"
   git -C "$R" add .gitleaksignore; git -C "$R" commit -qm "repository scanner suppression"
   SHA_SUPPRESSION="$(git -C "$R" rev-parse HEAD)"
-  ( cd "$R" && "$WRITE" main testing >/dev/null )
+  ( cd "$R" && write_marker main testing >/dev/null )
   RAW_SUPPRESSION="$(cd "$R" && "$REAL_GITLEAKS" git \
     --log-opts="main..$SHA_SUPPRESSION" --no-banner --redact \
     --report-format=json --report-path=- . 2>&1)"; RAW_SUPPRESSION_RC=$?

@@ -13,6 +13,11 @@ set -uo pipefail
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$PLUGIN/scripts/forgeward-gate-check.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits explicitly since 0.31.0. Every caller here gates
+# the commit it just made, so both are resolved in the caller's cwd at call time.
+write_marker() { # write_marker <base-ref> <fired-csv>
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$(git rev-parse HEAD)"
+}
 HASH="$PLUGIN/scripts/forgeward-diff-hash.sh"
 
 PASS=0; FAIL=0
@@ -690,7 +695,7 @@ git init -q "$_MG"
   echo base > a.txt; git add -A; git commit -qm base; git branch -M main
   git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
   git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
-  "$WRITE" main "privacy" ) >/dev/null 2>&1
+  write_marker main "privacy" ) >/dev/null 2>&1
 
 _mg_push() { # _mg_push <path-prefix|empty> <branch> -> hook stdout
   git -C "$_MG" checkout -q "$2"
@@ -849,7 +854,7 @@ else
 fi
 
 # S5: PASS marker written -> publish allowed
-"$WRITE" main "privacy" >/dev/null
+write_marker main "privacy" >/dev/null
 out="$(pretool "$R" "git push -u origin feature")"
 [ -z "$out" ] && ok "PASS marker -> git push ALLOWED" || nok "PASS marker -> git push ALLOWED" "got: $out"
 [ "$(expansion "$R")" = "0" ] && ok "PASS marker -> /ship expansion ALLOWED (exit 0)" || nok "/ship expansion allowed"
@@ -996,7 +1001,7 @@ out="$(pretool "$TMP" "git push")"   # $TMP is not a git repo
 # R stays on `feature`; worktrees are added without moving R's HEAD. ---
 WT="$TMP/wt"
 git -C "$R" worktree add -q -b wtfeat "$WT" main >/dev/null 2>&1
-( cd "$WT"; printf 'const w = 1;\n' > wt.js; git add -A; git commit -qm "feat: worktree"; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WT"; printf 'const w = 1;\n' > wt.js; git add -A; git commit -qm "feat: worktree"; write_marker main "privacy" ) >/dev/null
 
 # W1: `cd <worktree> && git push` -> honor cd -> the worktree's GATED branch -> ALLOWED
 # (marker written inside the worktree is found via the common git dir).
@@ -1015,7 +1020,7 @@ denies "$(pretool "$R" "cd $WTB && git push")" \
 # W3: single-quoted cd with a spaced path resolves too (gated) -> ALLOWED.
 WTS="$TMP/wt spaced"
 git -C "$R" worktree add -q -b wtspace "$WTS" main >/dev/null 2>&1
-( cd "$WTS"; echo x > s.js; git add -A; git commit -qm "feat: spaced"; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WTS"; echo x > s.js; git add -A; git commit -qm "feat: spaced"; write_marker main "privacy" ) >/dev/null
 out="$(pretool "$R" "cd '$WTS' && git push")"
 [ -z "$out" ] && ok "worktree: single-quoted 'cd <spaced worktree> && git push' (gated) -> ALLOWED" \
   || nok "worktree single-quoted cd allow" "got: $out"
@@ -2363,13 +2368,13 @@ fi
 MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
 
 # G1: a marker is written for a branch that is about to be deleted.
-( cd "$R" && git checkout -qb gcdead && echo g > gc.txt && git add -A && git commit -qm gc && "$WRITE" main "privacy" ) >/dev/null 2>&1
+( cd "$R" && git checkout -qb gcdead && echo g > gc.txt && git add -A && git commit -qm gc && write_marker main "privacy" ) >/dev/null 2>&1
 [ -f "$MARKDIR/gcdead.json" ] && ok "marker GC: precondition — a marker exists for branch 'gcdead'" \
   || nok "marker GC precondition" "no $MARKDIR/gcdead.json"
 
 # G2: delete the branch, gate again -> the orphaned marker is pruned.
 ( cd "$R" && git checkout -q feature && git branch -D gcdead ) >/dev/null 2>&1
-( cd "$R" && "$WRITE" main "privacy" ) >/dev/null 2>&1
+( cd "$R" && write_marker main "privacy" ) >/dev/null 2>&1
 [ ! -f "$MARKDIR/gcdead.json" ] && ok "marker GC: a marker whose branch no longer exists is pruned on the next write" \
   || nok "marker GC prunes orphan" "$MARKDIR/gcdead.json still present"
 
@@ -2979,7 +2984,7 @@ E9J="$(envprobe "$EMPTY_CFG")"
 EM="$TMP/envmarker"; mkrepo "$EM"
 ( cd "$EM" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-   && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+   && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" "$(git rev-parse master)" "$(git rev-parse HEAD)" ) >/dev/null 2>&1
 EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EMJ" ] \
   && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
@@ -2996,7 +3001,7 @@ printf '#!/usr/bin/env bash\necho "NOT JSON {oops"\nexit 3\n' > "$FAKE_PLUGIN/fo
 chmod +x "$FAKE_PLUGIN"/*.sh
 ( cd "$EB" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-   && "$FAKE_PLUGIN/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+   && "$FAKE_PLUGIN/forgeward-write-marker.sh" master "security" "$(git rev-parse master)" "$(git rev-parse HEAD)" ) >/dev/null 2>&1
 EBJ="$(cd "$EB" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EBJ" ] \
   && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["passed"] is True and d["environment"]=={"probe":"unavailable"} else 1)' "$EBJ" \
@@ -3094,7 +3099,7 @@ fakeprobe() { # fakeprobe <name> <line-it-prints> -> path to the resulting marke
   mkrepo "$r"
   ( cd "$r" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
      && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-     && "$d/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+     && "$d/forgeward-write-marker.sh" master "security" "$(git rev-parse master)" "$(git rev-parse HEAD)" ) >/dev/null 2>&1
   printf '%s/forgeward-gate-markers/feat.json' \
     "$(cd "$r" && git rev-parse --path-format=absolute --git-common-dir)"
 }
@@ -3468,7 +3473,7 @@ mkdir -p "$E37R/.forgeward"
 printf '%s\n' 'standalone:' '  substitues:' '    - quality' > "$E37R/.forgeward/config.yml"
 ( cd "$E37R" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && git checkout -q -b feat && echo b > b.txt && git add -A && git commit -qm work \
-   && CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" \
+   && CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" "$(git rev-parse master)" "$(git rev-parse HEAD)" \
 ) >/dev/null 2>&1
 E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$E37J" ] \
@@ -4955,6 +4960,127 @@ else
         "path:${_a31_path:-MISSING} commit:${_a31_commit:-MISSING} sha256:$_a31_shastate"
   fi
 fi
+
+# =============================================================================
+# K1..K13 — a PASS certifies the commits the reviewers were given (0.31.0).
+#
+# The writer used to read HEAD and hash the live `<base>...HEAD` at write time, so a
+# commit landing while reviewers ran was pinned to a marker nobody reviewed, and a
+# failed re-run left an earlier PASS usable for the same diff. It now takes the commits
+# Step 0 froze, refuses when HEAD moved or the merge base moved, hashes the frozen pair,
+# and has a `--revoke` mode the gate runs when a review starts and on every non-PASS.
+#
+# KIND OF CONTROL, per CLAUDE.md. K7, K8, K10 and K12 are PRE-FIX controls: against
+# `git show 57c7192:scripts/forgeward-write-marker.sh` they fail (it ignores the third
+# and fourth arguments and has no --revoke). K9 is a WRONG-FIX control: green against
+# the pre-fix writer by construction, it pins that a fetch-style base advance still
+# writes, which the plausible wrong fix -- refusing whenever the base ref's SHA changed
+# -- would refuse. K1-K6, K11 and K13 pin the contract, not a bug.
+# =============================================================================
+KR="$TMP/bind"; mkrepo "$KR"
+( cd "$KR" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb kfeat && echo b > b.js && git add -A && git commit -qm work ) >/dev/null 2>&1
+KB="$(git -C "$KR" rev-parse main)"; KH="$(git -C "$KR" rev-parse HEAD)"
+KMARK="$(git -C "$KR" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/kfeat.json"
+kw() { kout="$(cd "$KR" && "$WRITE" "$@" 2>&1)"; kst=$?; }
+kfield() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$KMARK" "$1" 2>/dev/null; }
+KUSAGE='usage: forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>'
+
+# K1-K5: the reviewed commits are REQUIRED, and anything that is not one is a usage error.
+kw main privacy
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K1: the writer refuses the old two-argument call with exit 64 and its usage line" \
+  || nok "K1: two-argument call" "st=$kst out=$kout"
+kw main privacy "" "$KH"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K2: an empty reviewed-base is a usage error, not a silent default" \
+  || nok "K2: empty reviewed-base" "st=$kst out=$kout"
+kw main privacy "$KB"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K3: a missing reviewed-head is a usage error" \
+  || nok "K3: missing reviewed-head" "st=$kst out=$kout"
+kw main privacy "$KB" "$(git -C "$KR" rev-parse 'HEAD^{tree}')"
+[ "$kst" -eq 64 ] && case "$kout" in *"reviewed head"*"is not a commit"*) true ;; *) false ;; esac \
+  && ok "K4: a tree object as reviewed-head is refused as not a commit" \
+  || nok "K4: non-commit reviewed-head" "st=$kst out=$kout"
+kw main privacy "--output=x" "$KH"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K5: a dash-led reviewed argument is refused before git can read it as an option" \
+  || nok "K5: dash-led argument" "st=$kst out=$kout"
+
+# K6: ABBREVIATED names are normalised -- the marker records the full reviewed head and
+# the frozen pair's hash.
+rm -f "$KMARK"
+kw main privacy "${KB:0:7}" "${KH:0:7}"
+K6HASH="$(cd "$KR" && "$HASH" main "$KH")"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ "$(kfield reviewed_head)" = "$KH" ] \
+  && [ -n "$K6HASH" ] && [ "$(kfield diff_hash)" = "$K6HASH" ] \
+  && ok "K6: abbreviated reviewed names write a marker recording the full reviewed head and its hash" \
+  || nok "K6: happy path" "st=$kst out=$kout head=$(kfield reviewed_head) want=$KH"
+
+# K7 (PRE-FIX control): a commit lands after the review subject was frozen.
+( cd "$KR" && echo c > c.js && git add -A && git commit -qm more ) >/dev/null 2>&1
+K7NEW="$(git -C "$KR" rev-parse HEAD)"
+rm -f "$KMARK"
+kw main privacy "$KB" "$KH"
+[ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"HEAD moved during the gate run (${KH:0:12} -> ${K7NEW:0:12}); nothing reviewed ${K7NEW:0:12}"*) true ;; *) false ;; esac \
+  && ok "K7: a commit made after Step 0 froze the subject writes no marker and says HEAD moved" \
+  || nok "K7: moved HEAD" "st=$kst out=$kout"
+KH="$K7NEW"
+
+# K8 (PRE-FIX control): the base moves in a way that CHANGES the reviewed diff.
+git -C "$KR" branch -f main "$KH" >/dev/null 2>&1
+kw main privacy "$KB" "$KH"
+[ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"the base 'main' moved during the gate run in a way that changes the reviewed diff"*) true ;; *) false ;; esac \
+  && ok "K8: a base move that changes the merge base writes no marker and says the base moved" \
+  || nok "K8: moved base" "st=$kst out=$kout"
+git -C "$KR" branch -f main "$KB" >/dev/null 2>&1
+
+# K9 (WRONG-FIX control): a fetch-style advance of the base leaves the merge base -- and
+# so the diff -- unchanged, and must still write.
+( cd "$KR" && git checkout -q main && echo m > m.txt && git add -A && git commit -qm upstream \
+   && git checkout -q kfeat ) >/dev/null 2>&1
+kw main privacy "$KB" "$KH"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] \
+  && ok "K9: a base that only advanced (merge base unchanged) still writes the marker" \
+  || nok "K9: fetch-style advance refused" "st=$kst out=$kout"
+
+# K10 (PRE-FIX control): --revoke withdraws an existing marker.
+kw --revoke
+[ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && ok "K10: --revoke removes this branch's marker and says so" \
+  || nok "K10: revoke existing" "st=$kst out=$kout"
+
+# K11: nothing to withdraw is silent success.
+rm -f "$KMARK"
+kw --revoke
+[ "$kst" -eq 0 ] && [ -z "$kout" ] \
+  && ok "K11: --revoke with no marker exits 0 and prints nothing" \
+  || nok "K11: revoke absent" "st=$kst out=$kout"
+
+# K12 (PRE-FIX control): a marker that cannot be removed is a loud failure, never a
+# silent success -- the gate stops on it because that PASS may still authorize a push.
+if [ "$(id -u)" -eq 0 ]; then
+  ok "K12: # SKIP running as root -- a read-only directory does not stop root"
+else
+  kw main privacy "$KB" "$KH"
+  chmod a-w "$(dirname "$KMARK")"
+  kw --revoke
+  chmod u+w "$(dirname "$KMARK")"
+  [ "$kst" -eq 1 ] && [ -f "$KMARK" ] \
+    && case "$kout" in *"could not withdraw the earlier PASS for 'kfeat'"*"it may still authorize a push"*) true ;; *) false ;; esac \
+    && ok "K12: an unremovable marker makes --revoke fail loudly with the marker still named" \
+    || nok "K12: unremovable marker" "st=$kst out=$kout"
+fi
+
+# K13: --revoke takes no other arguments.
+kw --revoke extra
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K13: --revoke with extra arguments is a usage error" \
+  || nok "K13: revoke extra args" "st=$kst out=$kout"
 
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"

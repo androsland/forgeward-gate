@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# forgeward-write-marker.sh <base-ref> [fired-csv]
+# forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>
+# forgeward-write-marker.sh --revoke
 #
 # Called by the /forgeward:gate skill ONLY after every fired reviewer returned
-# "<AXIS> VERDICT: PASS". Writes the HEAD-pinned PASS marker so it is repo-scoped
+# "<AXIS> VERDICT: PASS". Writes the PASS marker so it is repo-scoped
 # and never committed. The marker stores the substantive-diff hash that the
 # PreToolUse hook re-checks at push time.
 #
@@ -13,6 +14,21 @@
 # checkout of the same repo. This is what makes the gate worktree-safe; keying by
 # branch keeps concurrent worktrees on different branches from clobbering each
 # other's marker.
+#
+# A MARKER CERTIFIES THE COMMITS THE REVIEWERS WERE GIVEN, NOT WHATEVER IS CHECKED OUT
+# WHEN THIS RUNS. The gate freezes <reviewed-base> and <reviewed-head> in Step 0 and
+# passes them here. This refuses if HEAD is no longer <reviewed-head> (a commit landed
+# while reviewers ran), refuses if <base-ref> moved in a way that changes the diff (the
+# merge base moved), and hashes the FROZEN pair, so nothing is hashed from a live ref
+# alone. A fetch that only advances <base-ref> leaves the merge base and the hash alone
+# and is not refused. Until 0.31.0 this read HEAD and hashed the live range at write
+# time, which pinned a marker to code no reviewer saw.
+#
+# --revoke deletes THIS branch's marker. The gate runs it when it commits to reviewing
+# and again on every outcome that ends without a marker, so a failed or interrupted
+# re-run never leaves an earlier PASS usable for the same diff. Exit 1 when a marker
+# exists and cannot be removed -- that PASS may still authorize a push, and the gate
+# stops on it.
 set -euo pipefail
 
 # Locale-pinned repo-wide, not per-effect — see CLAUDE.md. A non-interactive script
@@ -20,8 +36,24 @@ set -euo pipefail
 # collation and grep's handling of invalid UTF-8 all move with the locale, and the
 # last one was a complete bypass of an ambiguity guard before it was pinned.
 export LC_ALL=C
-base="${1:?usage: forgeward-write-marker.sh <base-ref> [fired-csv]}"
-fired="${2:-}"
+usage() {
+  printf 'usage: forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head>\n' >&2
+  printf '       forgeward-write-marker.sh --revoke\n' >&2
+  exit 64
+}
+mode=write
+if [ "${1:-}" = "--revoke" ]; then
+  [ "$#" -eq 1 ] || usage
+  mode=revoke
+else
+  [ "$#" -eq 4 ] || usage
+  base="$1"; fired="$2"; reviewed_base_arg="$3"; reviewed_head_arg="$4"
+  # Dash-led values are refused before git sees them: `git rev-parse` would read one as
+  # an option. <fired-csv> may be empty; the other three may not.
+  for _a in "$base" "$reviewed_base_arg" "$reviewed_head_arg"; do
+    case "$_a" in ''|-*) usage ;; esac
+  done
+fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "forgeward: not a git repo" >&2; exit 1; }
@@ -34,8 +66,52 @@ if [ -z "$common_dir" ]; then
 fi
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
-head="$(git rev-parse HEAD)"
-hash="$("$here/forgeward-diff-hash.sh" "$base")"
+# Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't
+# collide. Git branch names are already filesystem-safe (they map to
+# refs/heads/<name> files), so no extra sanitization is needed. Computed once, here,
+# for both modes: one reader of where a marker lives, never two.
+marker="$common_dir/forgeward-gate-markers/$branch.json"
+
+if [ "$mode" = revoke ]; then
+  { [ -e "$marker" ] || [ -L "$marker" ]; } || exit 0
+  rm -f -- "$marker" 2>/dev/null || true
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    printf "forgeward: could not withdraw the earlier PASS for '%s' (%s); it may still authorize a push.\n" \
+      "$branch" "$marker" >&2
+    exit 1
+  fi
+  printf "forgeward gate: withdrew the earlier PASS marker for '%s'; only this run's outcome can authorize a push.\n" "$branch"
+  exit 0
+fi
+
+commit_of() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || true; }
+reviewed_base="$(commit_of "$reviewed_base_arg")"
+reviewed_head="$(commit_of "$reviewed_head_arg")"
+[ -n "$reviewed_base" ] || { printf 'forgeward: reviewed base %s is not a commit\n' "$reviewed_base_arg" >&2; exit 64; }
+[ -n "$reviewed_head" ] || { printf 'forgeward: reviewed head %s is not a commit\n' "$reviewed_head_arg" >&2; exit 64; }
+# A base ref that no longer resolves is refused before hashing: forgeward-diff-hash.sh
+# hashes an EMPTY diff for a bad base and exits 0, so the comparison below would refuse
+# with a misleading "base moved" message instead of this one.
+[ -n "$(commit_of "$base")" ] || {
+  printf "forgeward: base ref '%s' does not resolve to a commit; nothing was written.\n" "$base" >&2; exit 1; }
+
+head="$(commit_of HEAD)"
+if [ "$head" != "$reviewed_head" ]; then
+  printf 'forgeward: HEAD moved during the gate run (%s -> %s); nothing reviewed %s. Re-run /forgeward:gate.\n' \
+    "${reviewed_head:0:12}" "${head:0:12}" "${head:0:12}" >&2
+  exit 1
+fi
+# The REVIEWED hash is what the marker stores. The LIVE hash is what the push hook will
+# recompute from `.base` (the ref name); if the two differ, the merge base moved and the
+# marker would certify a diff nobody reviewed.
+hash="$("$here/forgeward-diff-hash.sh" "$reviewed_base" "$reviewed_head")" || {
+  echo "forgeward: could not hash the reviewed diff; nothing was written." >&2; exit 1; }
+live="$("$here/forgeward-diff-hash.sh" "$base" "$reviewed_head")" || {
+  echo "forgeward: could not hash '$base'...HEAD; nothing was written." >&2; exit 1; }
+if [ -z "$hash" ] || [ "$hash" != "$live" ]; then
+  printf "forgeward: the base '%s' moved during the gate run in a way that changes the reviewed diff; nothing reviewed the new diff. Re-run /forgeward:gate.\n" "$base" >&2
+  exit 1
+fi
 
 # --- environment provenance ---------------------------------------------------
 # WHY THE MARKER CARRIES THIS. forgeward is scoped as a delta against gstack, so what
@@ -116,10 +192,6 @@ _env_ok='^\{"gstack_ship":"(present|absent)","gstack_review":"(present|absent)",
 printf '%s' "$env_json" | grep -Eq "$_env_ok" || env_json=""
 [ -n "$env_json" ] || env_json='{"probe":"unavailable"}'
 
-# Nest the marker under refs-style branch path so 'design/x' and 'design-x' can't
-# collide. Git branch names are already filesystem-safe (they map to
-# refs/heads/<name> files), so no extra sanitization is needed.
-marker="$common_dir/forgeward-gate-markers/$branch.json"
 mkdir -p "$(dirname "$marker")"
 
 cat > "$marker" <<EOF
@@ -128,7 +200,7 @@ cat > "$marker" <<EOF
   "passed": true,
   "branch": "$branch",
   "base": "$base",
-  "reviewed_head": "$head",
+  "reviewed_head": "$reviewed_head",
   "diff_hash": "$hash",
   "fired": "$fired",
   "environment": $env_json
@@ -212,4 +284,4 @@ EOF
 }
 gc_markers 2>/dev/null || true
 
-echo "forgeward gate: PASS marker written for '$branch' @ ${head:0:8} (substantive-diff hash ${hash:0:12})"
+echo "forgeward gate: PASS marker written for '$branch' @ ${reviewed_head:0:8} (substantive-diff hash ${hash:0:12})"

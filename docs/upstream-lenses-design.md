@@ -157,6 +157,10 @@ forgeward-write-marker.sh --revoke
    A `git fetch` that only advances the base leaves the merge base, and so the hash, unchanged.
    It does not refuse. The second hash closes the TOCTOU between today's `rev-parse HEAD` and
    its separate hashing call, because nothing is hashed from a live ref alone.
+
+   A `<base-ref>` that no longer resolves to a commit is refused (exit 1) before anything
+   is hashed: `forgeward-diff-hash.sh` hashes an empty diff for a bad base and exits 0, so
+   the comparison would otherwise refuse with a misleading "base moved" message.
 4. Writes the marker with `reviewed_head` set to `<reviewed-head>`. The marker schema and the
    hooks' `marker_get` are unchanged: `.base` stays the ref name, and the push hook keeps
    recomputing against it.
@@ -212,13 +216,19 @@ The rule: a marker certifies exactly the commits the reviewers were given.
   - an abbreviated SHA is accepted;
   - a non-commit object, an empty third argument and a missing fourth argument are each exit
     64, with the message asserted;
-  - the marker's `reviewed_head` is the argument, not live `HEAD`.
+  - the marker's `reviewed_head` is the argument's **full** name when the argument was
+    abbreviated. "The argument, not live `HEAD`" is not separately observable: the HEAD
+    check refuses unless the two are equal, so on every path that writes, they are.
 - **Revoke:**
   - an existing marker is removed;
   - an absent one is exit 0, silent;
   - an unremovable one (read-only directory) is exit 1 with its message.
-- **Mutation control:** revert the writer to hashing live `HEAD`. The moved-HEAD hash assertion
-  reddens.
+- **Mutation controls:** delete the writer's HEAD-moved refusal and the moved-HEAD
+  assertion reddens; make the base comparison always pass and the moved-base assertion
+  reddens; drop revoke's after-`rm` existence check and the unremovable-marker
+  assertion reddens. "Revert to hashing live `HEAD`" is not a usable mutation: the
+  HEAD check runs first, so on any path that reaches hashing, live `HEAD` already
+  equals the reviewed head, and the two hashes cannot differ in a deterministic test.
 - Every existing caller in the suite moves to four arguments.
 
 ---

@@ -5,6 +5,11 @@ set -uo pipefail
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$PLUGIN/scripts/forgeward-gate-check.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits explicitly since 0.31.0. Every caller here gates
+# the commit it just made, so both are resolved in the caller's cwd at call time.
+write_marker() { # write_marker <base-ref> <fired-csv>
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$(git rev-parse HEAD)"
+}
 HASH="$PLUGIN/scripts/forgeward-diff-hash.sh"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
 
@@ -341,7 +346,7 @@ out="$(printf '%s' "$codex_ship" | PLUGIN_ROOT="$PLUGIN" bash -c "$codex_cmd" 2>
   || nok "Codex plugin root" "st=$st out=$out"
 
 # A fresh marker allows every lifecycle path.
-( cd "$R" && "$WRITE" main dual-client >/dev/null )
+( cd "$R" && write_marker main dual-client >/dev/null )
 run_hook expansion "$claude_expansion"
 [ "$st" -eq 0 ] && [ -z "$out" ] \
   && ok "fresh marker allows Claude UserPromptExpansion" \
