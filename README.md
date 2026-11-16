@@ -21,9 +21,10 @@ reviewer spawn pins `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
 `fork_turns: none`. Audit's independent finding verifiers use the same selections.
 
 The isolation is deliberate: a Gate reviewer receives its complete authoritative rubric,
-the absolute repository and Forgeward roots, the exact base ref, `HEAD` and its resolved
-commit, the `<base>...HEAD` range, and the read-only/verdict instructions—nothing from the
-parent conversation. In concrete terms, a Claude agent definition contains:
+the absolute repository and Forgeward roots, the exact base ref, the base and head commits
+the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, and the
+read-only/verdict instructions—nothing from the parent conversation. In concrete terms, a
+Claude agent definition contains:
 
 ```yaml
 model: sonnet

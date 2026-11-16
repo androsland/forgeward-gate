@@ -709,19 +709,22 @@ Run **`/forgeward:gate`** again.
   usually cannot establish, and that the answer there is High rather than Critical — so a
   Critical verdict here is a floor violation in the other direction and is equally a
   finding.
-- The gate must report the FAIL and **write no marker for this commit**. The check is
-  emphatically NOT "no marker file exists": Run A already wrote one for this branch, a
-  failed gate does not delete it, and the marker is per-branch rather than per-commit. An
-  absence test here passes whatever happens and proves nothing. Confirm instead that the
-  marker still pins **Run A's** commit:
+- The gate must report the FAIL, **write no marker for this commit, and withdraw Run A's**.
+  Since 0.31.0 every run withdraws the branch's earlier PASS before it reviews anything
+  (the gate prints `withdrew the earlier PASS marker`), so a failed re-run leaves no
+  marker at all. Until then Run A's marker survived a failed Run B and still authorized
+  pushing Run A's diff, and this check read "the marker still pins Run A's commit". An
+  absence test means something here only because Run A wrote a marker first: if the
+  withdrawal did not run, Run A's file is still there.
 
   ```bash
   M="$(git rev-parse --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
-  grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"   # must still be Run A's HEAD
-  git rev-parse HEAD                              # must NOT equal it
+  if [ -e "$M" ]; then grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"; else echo withdrawn; fi
+  git rev-parse HEAD
   ```
 
-  If `reviewed_head` has advanced to Run B's commit, the gate wrote a marker for a run it
+  `withdrawn` is the pass. A `reviewed_head` equal to Run A's commit means the withdrawal
+  did not run. One equal to Run B's commit means the gate wrote a marker for a run it
   failed, and that is the most serious finding this section can produce.
 - The other four must be unaffected. If `performance` or `api-contract` also turns red on
   the migration commit, that is a scope leak worth recording.

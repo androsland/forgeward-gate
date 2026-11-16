@@ -108,10 +108,40 @@ EOF
   || nok "Gate reviewer dispatch coverage"
 
 case "$gate_step2" in
-  *'complete applicable'*'absolute repository root'*'`<base>` exactly'*'`HEAD` plus `$HEAD_SHA`'*'<base>...HEAD'*'required verdict format'*'Do not pass'*'the parent conversation'*)
+  *'complete applicable'*'absolute repository root'*'`<base>` exactly'*'`<BASE_SHA>` and `<HEAD_SHA>`'*'<BASE_SHA>...<HEAD_SHA>'*'required verdict format'*'Do not pass'*'the parent conversation'*)
     ok "reviewer launch context keeps the complete rubric and required repository/diff instructions" ;;
   *) nok "reviewer launch context contract" ;;
 esac
+
+# 0.31.0: the gate freezes its review subject in Step 0 and certifies exactly that.
+gate_step0="$(sed -n '/^## Step 0 — /,/^## Step 1 — /p' "$PLUGIN/skills/gate/SKILL.md")"
+gate_step3="$(sed -n '/^## Step 3 — Decide/,/^## Rules/p' "$PLUGIN/skills/gate/SKILL.md")"
+case "$gate_step0" in
+  *'BASE_SHA="$(git rev-parse --verify --quiet "<base>^{commit}")"'*'HEAD_SHA="$(git rev-parse --verify --quiet "HEAD^{commit}")"'*'full names exactly as printed'*)
+    ok "Step 0 freezes the review subject to two commit names before anything is scoped" ;;
+  *) nok "Step 0 frozen review subject" ;;
+esac
+# Pin the VIOLATING form, with a floor on the right one: the symbolic range may survive
+# only in the one sentence that translates rubrics written against it.
+symbolic_ranges="$(grep -o '<base>\.\.\.HEAD' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+frozen_ranges="$(grep -o '<BASE_SHA>\.\.\.<HEAD_SHA>' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+[ "$symbolic_ranges" -eq 1 ] && [ "$frozen_ranges" -ge 5 ] \
+  && ok "the gate reviews <BASE_SHA>...<HEAD_SHA> throughout; the symbolic range survives only where rubrics are translated" \
+  || nok "frozen review range" "symbolic=$symbolic_ranges frozen=$frozen_ranges"
+revoke_at="$(awk '/forgeward-write-marker\.sh" --revoke/{print NR; exit}' <<<"$gate_step2")"
+snapshot_at="$(awk '/forgeward-workspace-guard\.sh" snapshot/{print NR; exit}' <<<"$gate_step2")"
+[ -n "$revoke_at" ] && [ -n "$snapshot_at" ] && [ "$revoke_at" -lt "$snapshot_at" ] \
+  && ok "Step 2 withdraws any earlier PASS before it snapshots or spawns anything" \
+  || nok "Step 2 revoke ordering" "revoke=$revoke_at snapshot=$snapshot_at"
+case "$gate_step3" in
+  *'forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>"'*)
+    ok "Step 3 hands the marker writer the commits Step 0 froze" ;;
+  *) nok "Step 3 writer arguments" ;;
+esac
+step3_revokes="$(grep -o 'forgeward-write-marker\.sh" --revoke' <<<"$gate_step3" | wc -l)"
+[ "$step3_revokes" -ge 3 ] \
+  && ok "Step 3 withdraws the marker on the workspace halt, on a refused write and on FAIL" \
+  || nok "Step 3 revoke on non-PASS" "count=$step3_revokes"
 
 audit_policy="$(sed -n '/^## Runtime compatibility/,/^<!-- PORTED AUDIT PHASES/p' "$PLUGIN/skills/audit/SKILL.md"; sed -n '/^\*\*Parallel verification\.\*\*/,/^\*\*Give the verifier/p' "$PLUGIN/skills/audit/SKILL.md")"
 case "$audit_policy" in

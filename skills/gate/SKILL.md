@@ -81,6 +81,22 @@ unauthenticated `gh`, or a base branch never pushed all correctly stay local.
 If you need the bare branch name (e.g. to pass `gh pr create --base <name>`), ask for
 it explicitly: `forgeward-detect-base.sh --name`.
 
+**Freeze the review subject.** Resolve both ends of the review to commit names once,
+here, and print them:
+
+```bash
+BASE_SHA="$(git rev-parse --verify --quiet "<base>^{commit}")"; echo "BASE_SHA=$BASE_SHA"
+HEAD_SHA="$(git rev-parse --verify --quiet "HEAD^{commit}")"; echo "HEAD_SHA=$HEAD_SHA"
+```
+
+If either is empty, stop: `forgeward gate: could not resolve <base> or HEAD to a commit. Nothing was reviewed.`
+Shell variables do not survive between tool calls, so from here on write the two
+**full names exactly as printed** wherever this skill says `<BASE_SHA>` or
+`<HEAD_SHA>`. Every later step reviews `<BASE_SHA>...<HEAD_SHA>`, never a symbolic
+`HEAD`: a commit landing while the gate runs would otherwise be reviewed by reviewers
+chosen for the commit before it, and the marker would certify code nobody saw.
+`<base>` stays the name the user reads and the marker records.
+
 **Surface the script's stderr.** When the local base branch has drifted from the
 publish boundary, the script re-scopes automatically and prints a note like
 `local 'master' is 14 commit(s) behind and 0 ahead of 'origin/master'`. Repeat that
@@ -100,7 +116,7 @@ surface differ from what they'd compute by hand.
   say you did.
 
 Decide "nothing to gate" from the **diff**, never from branch names. If
-`git diff --name-only "<base>...HEAD"` is empty, stop: "Nothing to gate — HEAD matches
+`git diff --name-only "<BASE_SHA>...<HEAD_SHA>"` is empty, stop: "Nothing to gate — HEAD matches
 the publish boundary `<base>`." Being *on* the base branch is not that condition: a base
 branch with unpushed commits resolves `<base>` to `origin/<base>`, and those unpushed
 commits are exactly what needs reviewing.
@@ -110,8 +126,8 @@ commits are exactly what needs reviewing.
 Get the changed files and the diff content:
 
 ```bash
-git diff --name-only "<base>...HEAD"
-git diff "<base>...HEAD"
+git diff --name-only "<BASE_SHA>...<HEAD_SHA>"
+git diff "<BASE_SHA>...<HEAD_SHA>"
 ```
 
 Decide which reviewers to fire. Fire a reviewer when its surface is present; otherwise
@@ -365,6 +381,18 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
+**First, withdraw any earlier PASS for this branch.** From the moment this run commits
+to reviewing, only its own outcome may authorize a push. A re-run that fails must not
+leave the previous PASS usable for the same diff, and neither may a run that is
+interrupted:
+
+```bash
+"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+```
+
+Non-zero means a marker exists and could not be removed. Stop with
+`forgeward gate: could not withdraw the earlier PASS; it may still authorize a push. Nothing was reviewed.`
+
 **Before spawning anything**, snapshot the working tree so the read-only contract can
 be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
 
@@ -373,19 +401,19 @@ ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")"
 "<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
 ```
 
-Resolve the repository and head once as well:
+Resolve the repository root once as well (Step 0 already froze the commits):
 
 ```bash
 REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
-HEAD_SHA="$(git rev-parse HEAD)"
 ```
 
 The launch context is intentionally small. Every reviewer gets its complete applicable
 rubric, the absolute repository root, the resolved forgeward root when the rubric needs
-it, `<base>` exactly as Step 0 returned it, `HEAD` plus `$HEAD_SHA`, the review range
-`<base>...HEAD`, the read-only instruction, and the required verdict format. Do not pass
-the parent conversation, implementation discussion, suspected findings, or a summary of
-the rubric. Those add anchoring and cost without adding review evidence.
+it, `<base>` exactly as Step 0 returned it, `<BASE_SHA>` and `<HEAD_SHA>` exactly as
+Step 0 printed them, the review range `<BASE_SHA>...<HEAD_SHA>`, the read-only
+instruction, and the required verdict format. Do not pass the parent conversation,
+implementation discussion, suspected findings, or a summary of the rubric. Those add
+anchoring and cost without adding review evidence.
 
 For each fired reviewer, spawn it in parallel. Select the runtime path automatically:
 
@@ -410,14 +438,18 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
   any plugin-root expression in the rubric; normal Codex shell commands do not inherit
   the plugin hook environment. The prompt must also carry `$REPOSITORY_ROOT`, `<base>`,
-  `HEAD`, `$HEAD_SHA`, `<base>...HEAD`, the read-only instruction, and the rubric's
-  verdict format. Do not paraphrase or copy only part of the rubric into the prompt.
+  `<BASE_SHA>`, `<HEAD_SHA>`, `<BASE_SHA>...<HEAD_SHA>`, the read-only instruction, and
+  the rubric's verdict format. Do not paraphrase or copy only part of the rubric into the
+  prompt.
 
-In either runtime, tell each reviewer to review the diff of `<base>...HEAD`, passing
-`<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
+In either runtime, tell each reviewer to review the diff of `<BASE_SHA>...<HEAD_SHA>`,
+and that wherever its rubric names the range `<base>...HEAD` it means that frozen range;
+pass `<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
 reviewers with the explicit runtime policy above, stop without writing a marker; an
-unmeasured axis cannot return PASS. This is also the fallback for any other runtime,
-preserving the existing fail-closed reviewer-launch behavior.
+unmeasured axis cannot return PASS. A reviewer that did start may have written one, so
+once it has finished, withdraw it with `--revoke` exactly as Step 3's FAIL path does.
+This is also the fallback for any other runtime, preserving the existing fail-closed
+reviewer-launch behavior.
 
 `maintainability` and `testing` are always-on, so on any diff carrying code the parallel
 batch is at least three reviewers wide. That is the intended cost: the quality axis used
@@ -445,17 +477,31 @@ than the one it cleans up. Print the paths and let the user run
 ## Step 3 — Decide
 
 - **If the workspace guard reported new paths**: HALT before shipping, whatever the
-  verdicts were. Print the paths and stop with:
+  verdicts were. Withdraw any marker the run could have left behind (a reviewer holding
+  Bash can write one):
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+  ```
+
+  Then print the paths and stop with:
   `forgeward gate: reviewers left files in your repo — delete them and re-run. Nothing was shipped.`
   The verdicts still stand (contamination does not invalidate a security finding), but
   /ship stages and commits, so handing off now is how the artifact lands in the user's
-  history. This is a halt, not a FAIL: no marker is written and nothing is deleted.
+  history. This is a halt, not a FAIL: no marker is written, and none of the reported
+  paths is deleted.
 
 - **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
   ```bash
-  "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>"
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>"
   ```
+
+  Pass the two full names Step 0 printed, literally. If the writer exits non-zero, nothing
+  was certified: run `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke`, print
+  the writer's message, and stop with no handoff. The usual cause is that `HEAD` or the
+  base moved while reviewers ran, so the PASS was for code that is no longer what would be
+  pushed.
 
   Then hand off — **but only if there is something to hand off to.** Use
   `gstack_ship` from the Step 1c probe (re-run it if you skipped Step 1c):
@@ -487,8 +533,14 @@ than the one it cleans up. Print the paths and let the user run
   that lies about what it did is worse than one that stops. Report only what happened.
 
 - **If any fired reviewer returned `VERDICT: FAIL`**: do NOT write a marker and do NOT
-  invoke /ship. Print each failing reviewer's Critical/High findings (severity,
-  `file:line`, issue, fix) grouped by axis, then stop with:
+  invoke /ship. Withdraw any marker a reviewer may have written during the run:
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke
+  ```
+
+  Then print each failing reviewer's Critical/High findings (severity, `file:line`,
+  issue, fix) grouped by axis, and stop with:
   `forgeward gate: FAIL — fix the Critical/High findings above and re-run /forgeward:gate. Nothing was shipped.`
 
 ## Rules
@@ -502,5 +554,9 @@ than the one it cleans up. Print the paths and let the user run
   broke this contract twice — the second time with a spawn prompt that explicitly
   forbade it. Do not treat an instruction as a control.
 - **Conditional.** Only fire reviewers whose surface the diff touches; say which you skipped and why.
-- **The marker is only written on all-PASS.** No marker ⇒ the push hook blocks /ship. That is the gate.
+- **The marker is only written on all-PASS, and only for the commits Step 0 froze.** Every
+  run withdraws the branch's earlier PASS before it reviews anything, and every outcome
+  that ends without a written marker withdraws again. A `--revoke` that exits non-zero is
+  reported verbatim and stops the gate: that PASS may still authorize a push. No marker ⇒
+  the push hook blocks /ship. That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.
