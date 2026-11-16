@@ -2605,6 +2605,53 @@ else
   nok "V10 setup failed" "could not inject a bad mode into a copy of $HASH — the call-site text no longer matches, so V10 asserted NOTHING"
 fi
 
+# V11-V13: a `git diff` that FAILS must not hash as the empty diff. The diff part was an
+# unguarded assignment, so a failed diff left it empty with exit 0 and the hash was the
+# empty-diff hash -- which every later commit on that pair also produces, because its
+# diff fails the same way. V11 and V12 are PRE-FIX controls (6e11899's helper printed a
+# hash for both, and its writer certified V11's repo so the later push was allowed);
+# V13 is the positive control. Mutation-checked: removing the guard turns V11 and V12 red.
+VDMSG='failed; refusing to hash an empty diff'
+VD="$TMP/vdiff"; mkrepo "$VD"
+( cd "$VD" && git config forgeward.gate enabled && echo base > a.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb vfeat && echo change >> a.txt && git commit -qam feat ) >/dev/null 2>&1
+VDB="$(git -C "$VD" rev-parse main)"; VDH="$(git -C "$VD" rev-parse vfeat)"
+# V13 (positive control): the intact repo hashes.
+v13_out="$(cd "$VD" && "$HASH" main "$VDH" 2>&1)"; v13_rc=$?
+[ "$v13_rc" -eq 0 ] && [ "${#v13_out}" -eq 64 ] && case "$v13_out" in *[!0-9a-f]*) false ;; *) true ;; esac \
+  && ok "V13: an intact repo still hashes (control for V11/V12)" \
+  || nok "V13: intact repo did not hash" "rc=$v13_rc out=$v13_out"
+# V11: the base-side blob of a.txt is missing (a partial clone or corruption); the merge
+# base is intact, so only the guard can refuse.
+v11_blob="$(git -C "$VD" rev-parse main:a.txt)"
+rm -f "$VD/.git/objects/${v11_blob:0:2}/${v11_blob:2}"
+v11_out="$(cd "$VD" && "$HASH" main "$VDH" 2>"$TMP/v11.err")"; v11_rc=$?
+v11_err="$(cat "$TMP/v11.err")"
+v11_run="$(cd "$VD" && "$WRITE" --revoke "$VDH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+v11_wout="$(cd "$VD" && "$WRITE" main privacy "$VDB" "$VDH" "$v11_run" 2>&1)"; v11_wrc=$?
+( cd "$VD" && echo new > new.txt && git add new.txt && git commit -qm "unreviewed" ) >/dev/null 2>&1
+v11_z="$(git -C "$VD" rev-parse HEAD)"
+v11_push="$(cd "$VD" && printf 'refs/heads/vfeat %s refs/heads/vfeat %s\n' "$v11_z" 0000000000000000000000000000000000000000 \
+  | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1)"; v11_prc=$?
+[ "$v11_rc" -ne 0 ] && [ -z "$v11_out" ] \
+  && case "$v11_err" in *"forgeward-diff-hash: git diff main...$VDH $VDMSG"*) true ;; *) false ;; esac \
+  && [ "$v11_wrc" -eq 1 ] && case "$v11_wout" in *"could not hash the reviewed diff; nothing was written."*) true ;; *) false ;; esac \
+  && [ "$v11_prc" -eq 1 ] && case "$v11_push" in *"have not passed /forgeward:gate"*"vfeat @ ${v11_z:0:12}"*) true ;; *) false ;; esac \
+  && ok "V11: a diff that fails on a missing blob prints no hash and says why; the writer refuses and a later commit cannot be pushed" \
+  || nok "V11: a failed diff still produced a hash or a usable marker" \
+         "rc=$v11_rc out=$v11_out err=$v11_err write=$v11_wrc:$v11_wout push=$v11_prc:$v11_push"
+# V12: a tip with no merge base with the base.
+VN="$TMP/vnomb"; mkrepo "$VN"
+( cd "$VN" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -q --orphan vorph && git rm -rqf . && echo o > o.txt && git add o.txt && git commit -qm o ) >/dev/null 2>&1
+VNO="$(git -C "$VN" rev-parse vorph)"
+v12_out="$(cd "$VN" && "$HASH" main "$VNO" 2>"$TMP/v12.err")"; v12_rc=$?
+v12_err="$(cat "$TMP/v12.err")"
+[ "$v12_rc" -ne 0 ] && [ -z "$v12_out" ] \
+  && case "$v12_err" in *"forgeward-diff-hash: git diff main...$VNO $VDMSG"*) true ;; *) false ;; esac \
+  && ok "V12: a tip with no merge base with the base prints no hash and says why" \
+  || nok "V12: no-merge-base diff still hashed" "rc=$v12_rc out=$v12_out err=$v12_err"
+
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
 # Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —
 # doing so fails plugin load with "Duplicate hooks file detected". The manifest.hooks
@@ -2995,8 +3042,8 @@ EM="$TMP/envmarker"; mkrepo "$EM"
    && write_marker_with "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
 EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EMJ" ] \
-  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
-  && ok "env: the pass marker is schema 4 and carries a readable environment object" \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==5 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
+  && ok "env: the pass marker is schema 5 and carries a readable environment object" \
   || nok "env E10" "marker '$EMJ'"
 
 # E11: the probe must never cost a PASS. If it is missing or broken, the marker is still
@@ -4970,8 +5017,9 @@ else
 fi
 
 # =============================================================================
-# K1..K38 — a PASS certifies the commits the reviewers were given, and only the latest
-# gate run on that commit may write it (0.31.0).
+# K1..K39 — a PASS certifies the commits the reviewers were given, and only the latest
+# gate run on that commit may write it (0.31.0). K33b and K39 pin the run id's marker
+# field and the run-file prune; F1-F10 below pin what the hooks do with them.
 #
 # The writer used to read HEAD and hash the live `<base>...HEAD` at write time, so a
 # commit landing while reviewers ran was pinned to a marker nobody reviewed, and a
@@ -5196,8 +5244,9 @@ kw no-such-ref privacy "$KB" "$KH" "$KRUN"
   && ok "K19: a base ref that resolves to nothing writes no marker and says so" \
   || nok "K19: unresolvable base ref" "st=$kst out=$kout"
 
-# K20/K21: an ORPHAN history shares no merge base with main. forgeward-diff-hash.sh then
-# hashes an empty diff with exit 0, and the hooks would recompute that same hash.
+# K20/K21: an ORPHAN history shares no merge base with main. forgeward-diff-hash.sh used
+# to hash that as the empty diff with exit 0 (V12 pins its refusal now); the writer
+# refuses first, with the clearer message.
 ( cd "$KR" && git checkout -q --orphan korph && git rm -rqf . && echo o1 > o.txt \
    && git add o.txt && git commit -qm o1 && echo o2 > o.txt && git commit -qam o2 ) >/dev/null 2>&1
 KO1="$(git -C "$KR" rev-parse korph~1)"; KO2="$(git -C "$KR" rev-parse korph)"
@@ -5233,7 +5282,7 @@ kw --revoke "$KH"
   && ok "K22: --revoke withdraws the marker of every local branch at the reviewed commit, one line each" \
   || nok "K22: sibling marker survives revoke" "st=$kst out=$kout"
 # K23 (WRONG-FIX control): green against 283c205 by construction. A branch at ANOTHER
-# commit certifies another diff; the plausible wrong fix withdraws every marker.
+# commit belongs to another run; the plausible wrong fix withdraws every marker.
 [ -f "$KMDIR/kother.json" ] \
   && case "$kout" in *"'kother'"*) false ;; *) true ;; esac \
   && ok "K23: --revoke leaves the marker of a branch at a different commit alone" \
@@ -5295,6 +5344,9 @@ kout="$(cd "$KUNB" && "$WRITE" --revoke "$KUC" 2>&1)"; kst=$?
 # K28..K37 -- the pre-landing review of 0.31.0. PRE-FIX controls are measured against
 # `git show 72e9c2e:scripts/forgeward-write-marker.sh` run under its own contract.
 KSUPER="a later gate run on ${KH:0:12} superseded this one (or no run is recorded for that commit); nothing was written. Re-run /forgeward:gate."
+# After the write the refusal says what is true then: the marker, if still on disk, names
+# a run that is no longer current, so no hook accepts it.
+KSUPERW="a later gate run on ${KH:0:12} superseded this one (or no run is recorded for that commit); nothing it wrote can authorize a push. Re-run /forgeward:gate."
 K28N="$(printf 'a%.0s' $(seq 64))"
 K28MSG='rather than to itself; pass the full commit id Step 0 printed.'
 
@@ -5414,7 +5466,7 @@ kout="$(cd "$KR" && "$K33P/forgeward-write-marker.sh" main privacy "$KB" "$KH" "
 K33NOW="$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)"
 [ -n "$E1J" ] && khex "$K33RUN" && khex "$K33NOW" && [ "$K33NOW" != "$K33RUN" ] \
   && [ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
-  && case "$kout" in *"forgeward: $KSUPER"*) true ;; *) false ;; esac \
+  && case "$kout" in *"forgeward: $KSUPERW"*) true ;; *) false ;; esac \
   && ok "K33: a run that starts between the writer's first read and its write makes the writer remove its marker and refuse" \
   || nok "K33: marker outlived a newer run" "st=$kst run=$K33RUN now=$K33NOW mark=$([ -e "$KMARK" ] && echo present) out=$kout"
 
@@ -5469,6 +5521,210 @@ rmdir "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null
   && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
   && ok "K38: a run that cannot be recorded makes --revoke exit 1 and say so, still withdrawing, with no RUN_ID line" \
   || nok "K38: unrecorded run" "written=$k38_written st=$kst out=$kout"
+
+# K33b (contract pin): a newer run's marker lands at the same path between this writer's
+# write and its second read. It is not the bytes this process wrote -- the marker now
+# names its run, so two runs never write identical bytes -- so the writer must leave it
+# alone, and still refuse. A `cat` shim on PATH is the hook point: the second read is the
+# first `cat` of the run file once the marker exists, and there the shim runs a whole
+# newer gate run (revoke, then a write with its id), once. The newer run's id is checked,
+# so a shim that never fired cannot leave this green. Mutation-checked: removing the
+# byte comparison (the writer then removes whatever is at the path) turns it red.
+K33BIN="$TMP/k33bbin"; mkdir -p "$K33BIN"
+K33CAT="$(command -v cat)"
+cat > "$K33BIN/cat" <<K33BEOF
+#!/usr/bin/env bash
+if [ ! -e "$K33BIN/fired" ] && [ -e "$KMARK" ] && [ "\${1:-}" = "$KCOMMON/forgeward-gate-runs/$KH" ]; then
+  : > "$K33BIN/fired"
+  run="\$("$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  "$WRITE" main privacy "$KB" "$KH" "\$run" >/dev/null 2>&1 && printf '%s\n' "\$run" > "$K33BIN/newer"
+fi
+exec "$K33CAT" "\$@"
+K33BEOF
+chmod +x "$K33BIN/cat"
+rm -f "$KMARK"; krun "$KH"; K33BRUN="$KRUN"
+kout="$(cd "$KR" && PATH="$K33BIN:$PATH" "$WRITE" main privacy "$KB" "$KH" "$K33BRUN" 2>&1)"; kst=$?
+K33BNEW="$("$K33CAT" "$K33BIN/newer" 2>/dev/null)"
+khex "$K33BRUN" && khex "$K33BNEW" && [ "$K33BNEW" != "$K33BRUN" ] \
+  && [ "$kst" -eq 1 ] && [ -f "$KMARK" ] && [ "$(kfield run_id)" = "$K33BNEW" ] \
+  && case "$kout" in *"forgeward: $KSUPERW"*) true ;; *) false ;; esac \
+  && ok "K33b: a newer run's marker written between this writer's write and its second read survives, and the writer still refuses" \
+  || nok "K33b: superseded writer removed a newer run's marker or reported a PASS" \
+         "st=$kst run=$K33BRUN newer=$K33BNEW on-disk-run=$(kfield run_id) out=$kout"
+
+# K39 (contract pin): run files are pruned at 30 days on the write path, and only those.
+# Three run files: one 40 days old (pruned), one 10 days old (kept -- the plausible wrong
+# fix `-mtime +0` would prune it), and the current run's (kept). Ages are set with
+# python3 rather than `touch -d`, which is GNU-only. Mutation-checked: deleting the prune
+# line or widening it to `-mtime +0` turns this red.
+K39OLD="$KCOMMON/forgeward-gate-runs/$(printf 'b%.0s' $(seq 40))"
+K39MID="$KCOMMON/forgeward-gate-runs/$(printf 'c%.0s' $(seq 40))"
+printf 'x\n' > "$K39OLD"; printf 'x\n' > "$K39MID"
+python3 -I -c 'import os,sys,time
+for p,d in ((sys.argv[1],40),(sys.argv[2],10)):
+    t=time.time()-d*86400; os.utime(p,(t,t))' "$K39OLD" "$K39MID"
+rm -f "$KMARK"; krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ ! -e "$K39OLD" ] && [ -f "$K39MID" ] \
+  && [ "$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)" = "$KRUN" ] \
+  && ok "K39: a write prunes run files older than 30 days and keeps a 10-day-old one and the current run's" \
+  || nok "K39: run-file prune" "st=$kst old=$([ -e "$K39OLD" ] && echo kept || echo pruned) mid=$([ -e "$K39MID" ] && echo kept || echo pruned) out=$kout"
+rm -f "$K39MID"
+
+# =============================================================================
+# F1..F10 -- both hooks accept a PASS only while the gate run that wrote it is still the
+# latest on the commit it reviewed, and never for a pushed commit that a gate run has
+# started on unless it is that commit (`run_is_current`, 0.31.0). These drive the fast
+# reminder, forgeward-gate-check.sh; P30-P39 in test/pre-push-test.sh drive the enforced
+# hook through the same cases. Revoke's deletions are hygiene now, so every refusal below
+# is built with the marker still ON DISK and its diff hash still matching: what refuses
+# it is the run file. F3-F5 and F7-F10 are PRE-FIX controls -- 6e11899's hooks allow
+# each of those pushes. F2 and F6 are positive controls and the WRONG-FIX controls for
+# the plausible over-fix of refusing any pushed commit other than the reviewed one: F6 is
+# the /ship flow, a VERSION-only commit after the PASS with no gate run of its own.
+# Mutation-checked: with run_is_current made to always succeed, F3-F5 and F7-F10 go red
+# while F2 and F6 stay green. The fast reminder consults only the checked-out branch's
+# marker, so the sibling-branch case is pinned on the enforced hook only (P39).
+# =============================================================================
+# F1: run_is_current must stay byte-identical in both hooks, on A19's pattern -- the
+# bodies compared, each required non-empty so a broken extraction fails loudly.
+_rc_body() { awk '/^run_is_current\(\)/{f=1;next} f{print} f&&/^\}$/{exit}' "$1"; }
+_rc_a="$(_rc_body "$PLUGIN/scripts/forgeward-gate-check.sh")"
+_rc_b="$(_rc_body "$PLUGIN/scripts/forgeward-pre-push.sh")"
+if [ -n "$_rc_a" ] && [ -n "$_rc_b" ] && [ "$_rc_a" = "$_rc_b" ]; then
+  ok "F1: run_is_current is byte-identical in gate-check.sh and pre-push.sh"
+else
+  nok "F1: run_is_current has drifted between gate-check.sh and pre-push.sh" \
+      "$({ [ -z "$_rc_a" ] || [ -z "$_rc_b" ]; } && echo 'extraction returned nothing -- the function shape changed' || diff <(printf '%s\n' "$_rc_a") <(printf '%s\n' "$_rc_b") | tr '\n' ' ')"
+fi
+
+FR="$TMP/fresh"; mkrepo "$FR"
+( cd "$FR" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb ffeat && echo 'const f = 1;' > f.js && git add -A && git commit -qm work ) >/dev/null 2>&1
+FB="$(git -C "$FR" rev-parse main)"; FC="$(git -C "$FR" rev-parse refs/heads/ffeat)"
+FCOMMON="$(git -C "$FR" rev-parse --path-format=absolute --git-common-dir)"
+FMD="$FCOMMON/forgeward-gate-markers"; FRUNS="$FCOMMON/forgeward-gate-runs"
+# fgate <commit>: a gate run on <commit> from the current checkout that PASSes -- revoke
+# (which mints the run; FRUN keeps its id), then the write with that id.
+fgate() {
+  FRUN="$(cd "$FR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$FR" && "$WRITE" main privacy "$FB" "$1" "$FRUN" ) >/dev/null 2>&1
+}
+frevoke() { ( cd "$FR" && "$WRITE" --revoke "$1" ) >/dev/null 2>&1; }
+fallowed() { fout="$(pretool "$FR" "git push origin HEAD")"; [ -z "$fout" ]; }
+fdenied() { # fdenied <label>: denied, naming the branch the reminder evaluated
+  fout="$(pretool "$FR" "git push origin HEAD")"
+  denies "$fout" && case "$fout" in *"the current branch ($1 @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac
+}
+fset() { # fset <marker> <key> [<json-value>]: rewrite one field of a fixture marker; no value deletes it
+  python3 -I -c 'import json,sys
+p,k=sys.argv[1],sys.argv[2]; d=json.load(open(p))
+if len(sys.argv)>3: d[k]=json.loads(sys.argv[3])
+else: d.pop(k,None)
+open(p,"w").write(json.dumps(d,indent=2)+"\n")' "$@"
+}
+fout=""   # set -u: a failed fgate short-circuits before fallowed/fdenied assign it
+
+# F2 (positive control, case j): a plain PASS from the latest run on the pushed commit.
+fgate "$FC"
+[ -f "$FMD/ffeat.json" ] && khex "$FRUN" && fallowed \
+  && ok "F2: a PASS from the latest gate run on the checked-out commit is accepted" \
+  || nok "F2: a current PASS was refused" "run=$FRUN out=$fout"
+
+# F3 (PRE-FIX control, case a): a killed writer's marker restored after a newer run's
+# revoke deleted it -- the same bytes, so the same diff hash.
+cp "$FMD/ffeat.json" "$TMP/f3.json"
+frevoke "$FC"; f3_deleted=0; [ -e "$FMD/ffeat.json" ] || f3_deleted=1
+cp "$TMP/f3.json" "$FMD/ffeat.json"
+[ "$f3_deleted" = 1 ] && fdenied ffeat \
+  && ok "F3: a marker restored after a newer run started on its commit is refused" \
+  || nok "F3: a superseded run's marker was accepted" "deleted=$f3_deleted out=$fout"
+
+# F4 (PRE-FIX control, case e): a schema-4 marker, which has no run_id, while the run
+# file still holds the run that wrote it -- the upgrade path costs one re-gate.
+fgate "$FC"; fset "$FMD/ffeat.json" run_id; fset "$FMD/ffeat.json" schema 4
+[ "$(cat "$FRUNS/$FC" 2>/dev/null)" = "$FRUN" ] && fdenied ffeat \
+  && ok "F4: a schema-4 marker (no run_id) is refused even while its run is current" \
+  || nok "F4: a marker without run_id was accepted" "out=$fout"
+
+# F5 (PRE-FIX control, case f): the run file is gone, as after the 30-day prune.
+fgate "$FC"; rm -f "$FRUNS/$FC"
+[ -f "$FMD/ffeat.json" ] && fdenied ffeat \
+  && ok "F5: a marker whose run file is missing is refused" \
+  || nok "F5: a marker with no run file was accepted" "out=$fout"
+
+# F6 (positive and WRONG-FIX control, case h): the /ship flow. A VERSION-only commit
+# after the PASS has the same diff and no gate run of its own, so the PASS still holds.
+fgate "$FC"
+( cd "$FR" && echo 1.0.1 > VERSION && git add VERSION && git commit -qm "chore: bump version" ) >/dev/null 2>&1
+FV="$(git -C "$FR" rev-parse HEAD)"
+[ "$FV" != "$FC" ] && [ ! -e "$FRUNS/$FV" ] && fallowed \
+  && ok "F6: a VERSION-only commit after the PASS, with no gate run of its own, is accepted (the /ship flow)" \
+  || nok "F6: the /ship version bump was refused" "out=$fout"
+
+# F7 (PRE-FIX control, case g): a malformed run_id or reviewed_head is refused, and no
+# file outside forgeward-gate-runs/ is read. Each case PLANTS the file the bad value
+# would name, holding the id it would need, so only the shape check stands between it
+# and an accept: `../planted` names a file one level up, which holds the run id. The tip
+# is F6's VERSION commit, which has no run file, so nothing else can refuse it. The
+# unmodified marker in the same state is the control.
+cp "$FMD/ffeat.json" "$TMP/f7.json"
+fallowed; f7_ctl=$?
+FUP="$(printf '%s' "$FC" | tr 'a-f' 'A-F')"; FRUP="$(printf '%s' "$FRUN" | tr 'a-f' 'A-F')"
+f7_fail=""
+f7() { # f7 <label> <key> <value> <plant-path> <plant-line>
+  cp "$TMP/f7.json" "$FMD/ffeat.json"; fset "$FMD/ffeat.json" "$2" "\"$3\""
+  printf '%s\n' "$5" > "$4"
+  fdenied ffeat || f7_fail="$f7_fail $1"
+  rm -f "$4"; printf '%s\n' "$FRUN" > "$FRUNS/$FC"
+}
+f7 head-dotdot reviewed_head ../planted "$FCOMMON/planted" "$FRUN"
+f7 head-upper reviewed_head "$FUP" "$FRUNS/$FUP" "$FRUN"
+f7 head-short reviewed_head "${FC:0:12}" "$FRUNS/${FC:0:12}" "$FRUN"
+f7 run-upper run_id "$FRUP" "$FRUNS/$FC" "$FRUP"
+f7 run-short run_id "${FRUN:0:12}" "$FRUNS/$FC" "${FRUN:0:12}"
+cp "$TMP/f7.json" "$FMD/ffeat.json"
+[ "$f7_ctl" = 0 ] && [ -z "$f7_fail" ] \
+  && ok "F7: a run_id or reviewed_head that is not a full lowercase id is refused, even with the file it names planted" \
+  || nok "F7: a malformed run_id or reviewed_head was accepted" "control=$f7_ctl accepted:$f7_fail"
+
+# F8 (PRE-FIX control, case c): the same diff on another commit. PASS on ffeat at C1;
+# C2 is C1 with a reworded message; a gate run starts on C2 (and FAILs) while ffeat is
+# still at C1, then ffeat moves to C2. The C1 marker is untouched and its hash matches.
+( cd "$FR" && git checkout -q main && git branch -f ffeat "$FC" && git checkout -q ffeat ) >/dev/null 2>&1
+fgate "$FC"
+( cd "$FR" && git checkout -qb ftmp && git commit -q --amend -m "work (reworded)" ) >/dev/null 2>&1
+FC2="$(git -C "$FR" rev-parse refs/heads/ftmp)"
+frevoke "$FC2"
+( cd "$FR" && git branch -f ffeat "$FC2" && git checkout -q ffeat ) >/dev/null 2>&1
+[ "$FC2" != "$FC" ] && [ -f "$FMD/ffeat.json" ] && [ -e "$FRUNS/$FC2" ] && fdenied ffeat \
+  && ok "F8: a PASS for one commit is refused for another with the same diff once a gate run started there" \
+  || nok "F8: a PASS crossed onto a commit with its own gate run" "c1=$FC c2=$FC2 out=$fout"
+
+# F9 (PRE-FIX control, case d): a PASS written on a detached HEAD (key `HEAD`), then a
+# newer run on that commit started from a branch checkout, which never visits that key.
+( cd "$FR" && git checkout -qb fdet main && echo d > d.js && git add -A && git commit -qm det \
+   && git checkout -q --detach ) >/dev/null 2>&1
+FDC="$(git -C "$FR" rev-parse HEAD)"
+fgate "$FDC"; fallowed; f9_before=$?
+( cd "$FR" && git checkout -q fdet ) >/dev/null 2>&1
+frevoke "$FDC"
+( cd "$FR" && git checkout -q --detach ) >/dev/null 2>&1
+[ "$f9_before" = 0 ] && [ -f "$FMD/HEAD.json" ] && fdenied HEAD \
+  && ok "F9: a detached-HEAD PASS is refused once a newer run starts on its commit, with HEAD.json still on disk" \
+  || nok "F9: a detached-HEAD PASS outlived a newer run" "before=$f9_before out=$fout"
+
+# F10 (PRE-FIX control, case b): a branch and a same-named tag, so the PASS lands at
+# heads/<name>.json; the tag is deleted, a newer run's revoke looks only under the bare
+# name, and the tag comes back.
+( cd "$FR" && git checkout -qb fsp main && echo s > s.js && git add -A && git commit -qm sp \
+   && git tag fsp ) >/dev/null 2>&1
+FSC="$(git -C "$FR" rev-parse refs/heads/fsp)"
+fgate "$FSC"; fallowed; f10_before=$?
+f10_written=0; [ -f "$FMD/heads/fsp.json" ] && f10_written=1
+git -C "$FR" tag -d fsp >/dev/null 2>&1; frevoke "$FSC"; git -C "$FR" tag fsp "$FSC" >/dev/null 2>&1
+[ "$f10_written" = 1 ] && [ "$f10_before" = 0 ] && [ -f "$FMD/heads/fsp.json" ] && fdenied heads/fsp \
+  && ok "F10: a PASS under the heads/<name> spelling is refused once a newer run starts on its commit" \
+  || nok "F10: the stale heads/<name> PASS was accepted" "written=$f10_written before=$f10_before out=$fout"
 
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"

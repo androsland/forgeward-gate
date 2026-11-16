@@ -5,9 +5,60 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
-## DECISION — a PASS certifies the commits Step 0 froze, and every run withdraws the last one
+## DECISION — the run file, not revoke's name list, decides whether a PASS still stands
 
 **Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** Until this change a newer gate run withdrew an older PASS only by
+deleting markers by name, and the hooks accepted any marker whose diff hash matched. That
+name list was wrong twice in one release. First, a tag named like the branch made revoke
+look for `heads/<b>.json` while the hook still accepted `<b>.json` (fixed by withdrawing
+both spellings, entry below). Then the reverse: a PASS written while such a tag existed
+lands at `heads/<b>.json`; delete the tag, revoke (with no tag present both of its
+spellings are `<b>`, so it removes only `<b>.json`), recreate the tag, and the hook reads
+the surviving `heads/<b>.json` and allows the push. The same shape covered the detached
+`HEAD` key, a push's destination branch, a marker restored from a copy after the revoke,
+and an older run's write landing after the delete. Separately, `forgeward-diff-hash.sh`
+hashed a pair whose `git diff` failed (a missing blob, no merge base) as the empty diff
+with exit 0, so a later commit on that pair matched a hash nobody reviewed.
+
+**Decision.** The marker (schema 5) records the `run_id` the gate's revoke printed, and
+both hooks accept a marker only through `run_is_current`, byte-identical in both: the
+`run_id`, `reviewed_head` and pushed commit must be 40 or 64 lowercase hex before any is
+used in a path; `forgeward-gate-runs/<reviewed_head>` must be a regular file whose first
+line is that `run_id`; and a pushed commit that has a run file of its own and is not the
+marker's `reviewed_head` is refused. Any failure reads as not passed. Revoke's deletions
+stay, as hygiene; the run file is the authority, so a third enumeration of marker names
+is not needed and was not attempted. `forgeward-diff-hash.sh` exits 1 with a message when
+its `git diff` fails.
+
+**Rejected:** patching the name list a third time (add `heads/<b>`). Every spelling the
+hook can read is a name revoke must know in advance, and the destination branch is one it
+cannot know at all; two misses in one release is the class, not two bugs. Binding the
+marker to the pushed commit instead of the diff: `/ship` commits a version bump after the
+PASS, and that commit must still push on it (F6, P38 pin this).
+
+**Not covered.** Acceptance is per diff and revocation per commit: a PASS on C1 and a FAIL
+on C2 with the same diff do not stop a push of a third commit C3 with that diff that no
+run ever started on, or whose run file was pruned (more than 30 days after its run
+started, by a later marker write). A write stalled across a whole newer run can overwrite
+that run's marker and then remove it (one re-gate). Markers and run files are local
+files; forging both is outside the threat model. Every marker written before this change
+lacks `run_id` and reads as not passed until the branch is gated once more.
+
+**Coverage.** `test/gate-test.sh` F1 pins the helper byte-identical across the hooks;
+F2–F10 drive the reminder hook (refused: killed writer, schema-4 marker, missing run
+file, malformed fields, same diff on another commit, detached `HEAD`, stale `heads/`
+spelling; allowed: a plain PASS and a `/ship` bump). `test/pre-push-test.sh` P30–P39
+drive the enforced hook with `forgeward.gate` enabled, adding the sibling-branch control.
+V11–V13 pin the diff-hash refusal (missing blob end to end, no merge base, a positive
+control), K33b a newer marker surviving a superseded write, and K39 the 30-day prune.
+
+## DECISION — a PASS certifies the commits Step 0 froze, and every run withdraws the last one
+
+**Date:** 2026-11-16 · **Version:** 0.31.0 · **PARTLY SUPERSEDED** by the run-file entry
+above, which closes the destination-branch, detached-`HEAD`, older-release and empty-diff
+items under "Not covered" and makes revoke's deletions hygiene rather than the authority.
 
 **What was wrong.** Three gaps, all present in 0.30.0, found by two hole reviews of the
 upstream-lenses design (`docs/upstream-lenses-design.md` §1, §4). The marker writer read

@@ -258,7 +258,8 @@ Expected:
   ```bash
   # one file per branch; there is no single `.git/forgeward-gate-marker.json`
   cat "$(git rev-parse --git-common-dir)"/forgeward-gate-markers/"$(git branch --show-current)".json
-  # shows passed:true, base, diff_hash, reviewed_head
+  # shows passed:true, base, reviewed_head, run_id, diff_hash; the push is allowed only
+  # while forgeward-gate-runs/<reviewed_head> beside it still holds that run_id
   ```
   Ask Claude to push → it now **succeeds**; `git ls-remote --heads origin` shows `feature/signup`.
 
@@ -721,7 +722,9 @@ itself a Run A finding. Run **`/forgeward:gate`** again.
 - The gate must report the FAIL, **write no marker for this commit, and withdraw Run A's**.
   Since 0.31.0 every run withdraws the branch's earlier PASS before it reviews anything
   (the gate prints `withdrew the earlier PASS marker`), so a failed re-run leaves no
-  marker at all. Until then Run A's marker survived a failed Run B and still authorized
+  marker at all; the hooks would refuse Run A's marker for Run B's commit even if it
+  survived, because a gate run has started on that commit and Run A's did not review it.
+  Until then Run A's marker survived a failed Run B and still authorized
   pushing Run A's diff, and this check read "the marker still pins Run A's commit". An
   absence test means something here only because Run A wrote a marker first, so set
   `BEFORE` to the word the block above printed:

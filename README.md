@@ -315,9 +315,15 @@ version-field-only bumps in the four version-bearing package/client manifests. A
 manifest change, and any change to source **or dependencies** after the gate flips the hash and
 forces a re-gate — a dependency added between gate and push does **not** sail through. The
 push-time credential scan is separate from that hash and still reads commits touching every one
-of those excluded paths. A re-run withdraws the earlier PASS for every local branch at that
-commit before it reviews anything, and a later run on the same commit supersedes an earlier
-one still in flight (that run's write is refused), so only the latest run's outcome counts.
+of those excluded paths. The marker also names the gate run that wrote it, and both hooks
+accept it only while that run is still the latest on the commit it reviewed: a re-run records
+a new run on that commit before it reviews anything, which stales every earlier PASS for the
+commit under any branch name, and a later run supersedes an earlier one still in flight (that
+run's write is refused), so only the latest run's outcome counts. A PASS is never accepted for
+a pushed commit that a gate run has started on unless it is the commit that run reviewed. It
+is accepted for a later commit with the same reviewed diff that no gate run has started on —
+that is what lets `/ship`'s version bump push — so acceptance is per diff and revocation per
+commit. Run files are pruned after 30 days, and a marker whose run file is gone reads stale.
 
 ## Turn on enforcement (one command per repo)
 

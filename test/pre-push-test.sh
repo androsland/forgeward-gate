@@ -499,6 +499,159 @@ else
   ok "real Gitleaks repository-ignore control SKIPPED (optional scanner not installed; explicit ignore argv still asserted by mock)"
 fi
 
+# P30..P39 -- a PASS is accepted only while the gate run that wrote it is still the latest
+# on the commit it reviewed, and never for a pushed commit that a gate run has started on
+# unless it is that commit (`run_is_current`, 0.31.0). The same cases as F2-F10 in
+# test/gate-test.sh, driven through this, the enforced hook. Every refusal is built with
+# the marker still ON DISK and its diff hash still matching, so what refuses it is the
+# run file. P31-P37 are PRE-FIX controls: 6e11899's hook allows each push. P30, P38 and
+# P39 are positive controls, and P38/P39 the WRONG-FIX controls for refusing any pushed
+# commit other than the reviewed one. Mutation-checked: with run_is_current made to
+# always succeed, P31-P37 go red while P30, P38 and P39 stay green.
+RX="$TMP/repo-run"; git init -q "$RX"
+( cd "$RX"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  git config forgeward.gate enabled
+  echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb x; echo 'const x = 1;' > x.js; git add -A; git commit -qm x ) >/dev/null 2>&1
+XB="$(git -C "$RX" rev-parse main)"; XC="$(git -C "$RX" rev-parse refs/heads/x)"
+XCOMMON="$(git -C "$RX" rev-parse --path-format=absolute --git-common-dir)"
+XMD="$XCOMMON/forgeward-gate-markers"; XRUNS="$XCOMMON/forgeward-gate-runs"
+# xgate <commit>: a gate run on <commit> from the current checkout that PASSes -- revoke
+# (which mints the run; XRUN keeps its id), then the write with that id.
+xgate() {
+  XRUN="$(cd "$RX" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$RX" && "$WRITE" main privacy "$XB" "$1" "$XRUN" ) >/dev/null 2>&1
+}
+xrevoke() { ( cd "$RX" && "$WRITE" --revoke "$1" ) >/dev/null 2>&1; }
+xpush() { pp "$RX" "refs/heads/$1 $2 refs/heads/$1 $RSHA"$'\n'; }   # xpush <remote-branch> <sha>
+xblocked() { # xblocked <remote-branch> <sha>: refused as ungated, naming the ref
+  [ "$RC" = 1 ] && case "$OUT" in *"have not passed /forgeward:gate"*"  - $1 @ ${2:0:12}"*) true ;; *) false ;; esac
+}
+xset() { # xset <marker> <key> [<json-value>]: rewrite one field of a fixture marker; no value deletes it
+  python3 -I -c 'import json,sys
+p,k=sys.argv[1],sys.argv[2]; d=json.load(open(p))
+if len(sys.argv)>3: d[k]=json.loads(sys.argv[3])
+else: d.pop(k,None)
+open(p,"w").write(json.dumps(d,indent=2)+"\n")' "$@"
+}
+
+# P30 (positive control, case j): a plain PASS from the latest run on the pushed commit.
+xgate "$XC"; xpush x "$XC"
+[ "$RC" = 0 ] && [ -f "$XMD/x.json" ] \
+  && ok "P30: a PASS from the latest gate run on the pushed commit -> ALLOWED" \
+  || nok "P30: a current PASS was refused" "rc=$RC out=$OUT"
+
+# P31 (PRE-FIX control, case a): a killed writer's marker restored after a newer run's
+# revoke deleted it -- the same bytes, so the same diff hash.
+cp "$XMD/x.json" "$TMP/p31.json"; xrevoke "$XC"
+p31_deleted=0; [ -e "$XMD/x.json" ] || p31_deleted=1
+cp "$TMP/p31.json" "$XMD/x.json"; xpush x "$XC"
+[ "$p31_deleted" = 1 ] && xblocked x "$XC" \
+  && ok "P31: a marker restored after a newer run started on its commit -> BLOCKED" \
+  || nok "P31: a superseded run's marker authorized the push" "deleted=$p31_deleted rc=$RC out=$OUT"
+
+# P35 (PRE-FIX control, case e): a schema-4 marker has no run_id; refused even while the
+# run that wrote it is current -- the upgrade path costs one re-gate.
+xgate "$XC"; xset "$XMD/x.json" run_id; xset "$XMD/x.json" schema 4; xpush x "$XC"
+[ "$(cat "$XRUNS/$XC" 2>/dev/null)" = "$XRUN" ] && xblocked x "$XC" \
+  && ok "P35: a schema-4 marker (no run_id) -> BLOCKED" \
+  || nok "P35: a marker without run_id authorized the push" "rc=$RC out=$OUT"
+
+# P36 (PRE-FIX control, case f): the run file is gone, as after the 30-day prune.
+xgate "$XC"; rm -f "$XRUNS/$XC"; xpush x "$XC"
+[ -f "$XMD/x.json" ] && xblocked x "$XC" \
+  && ok "P36: a marker whose run file is missing -> BLOCKED" \
+  || nok "P36: a marker with no run file authorized the push" "rc=$RC out=$OUT"
+
+# P38 (positive and WRONG-FIX control, case h): the /ship flow. A VERSION-only commit
+# after the PASS has the same diff and no gate run of its own, so the PASS still holds.
+xgate "$XC"
+( cd "$RX" && echo 1.0.1 > VERSION && git add VERSION && git commit -qm "chore: bump version" ) >/dev/null 2>&1
+XV="$(git -C "$RX" rev-parse HEAD)"; xpush x "$XV"
+[ "$XV" != "$XC" ] && [ ! -e "$XRUNS/$XV" ] && [ "$RC" = 0 ] \
+  && ok "P38: a VERSION-only commit after the PASS, with no gate run of its own -> ALLOWED (the /ship flow)" \
+  || nok "P38: the /ship version bump was refused" "rc=$RC out=$OUT"
+
+# P37 (PRE-FIX control, case g): a malformed run_id or reviewed_head is refused, and no
+# file outside forgeward-gate-runs/ is read. Each case PLANTS the file the bad value
+# would name, holding the id it would need, so only the shape check stands between it
+# and an accept; `../planted` names a file one level up. The tip is P38's VERSION commit,
+# which has no run file, so nothing else can refuse it. The unmodified marker is the
+# control.
+cp "$XMD/x.json" "$TMP/p37.json"
+xpush x "$XV"; p37_ctl=$RC
+XUP="$(printf '%s' "$XC" | tr 'a-f' 'A-F')"; XRUP="$(printf '%s' "$XRUN" | tr 'a-f' 'A-F')"
+p37_fail=""
+p37() { # p37 <label> <key> <value> <plant-path> <plant-line>
+  cp "$TMP/p37.json" "$XMD/x.json"; xset "$XMD/x.json" "$2" "\"$3\""
+  printf '%s\n' "$5" > "$4"
+  xpush x "$XV"; xblocked x "$XV" || p37_fail="$p37_fail $1"
+  rm -f "$4"; printf '%s\n' "$XRUN" > "$XRUNS/$XC"
+}
+p37 head-dotdot reviewed_head ../planted "$XCOMMON/planted" "$XRUN"
+p37 head-upper reviewed_head "$XUP" "$XRUNS/$XUP" "$XRUN"
+p37 head-short reviewed_head "${XC:0:12}" "$XRUNS/${XC:0:12}" "$XRUN"
+p37 run-upper run_id "$XRUP" "$XRUNS/$XC" "$XRUP"
+p37 run-short run_id "${XRUN:0:12}" "$XRUNS/$XC" "${XRUN:0:12}"
+cp "$TMP/p37.json" "$XMD/x.json"
+[ "$p37_ctl" = 0 ] && [ -z "$p37_fail" ] \
+  && ok "P37: a run_id or reviewed_head that is not a full lowercase id -> BLOCKED, even with the file it names planted" \
+  || nok "P37: a malformed run_id or reviewed_head authorized the push" "control=$p37_ctl accepted:$p37_fail"
+
+# P33 (PRE-FIX control, case c): the same diff on another commit. PASS on x at C1; C2 is
+# C1 with a reworded message. Pushed to remote `x`, C2 is first authorized by x's marker
+# through the destination-name lookup (the control); a gate run then starts on C2 (and
+# FAILs) while x is still at C1, which never visits x.json; then x moves to C2.
+( cd "$RX" && git checkout -q main && git branch -f x "$XC" && git checkout -q x ) >/dev/null 2>&1
+xgate "$XC"
+( cd "$RX" && git checkout -qb x2 && git commit -q --amend -m "x (reworded)" ) >/dev/null 2>&1
+XC2="$(git -C "$RX" rev-parse refs/heads/x2)"
+xpush x "$XC2"; p33_before=$RC
+xrevoke "$XC2"; xpush x "$XC2"; p33_dest=$RC; p33_dest_out=$OUT
+git -C "$RX" branch -f x "$XC2" >/dev/null 2>&1; xpush x "$XC2"
+[ "$XC2" != "$XC" ] && [ "$p33_before" = 0 ] && [ "$p33_dest" = 1 ] && [ -f "$XMD/x.json" ] \
+  && case "$p33_dest_out" in *"  - x @ ${XC2:0:12}"*) true ;; *) false ;; esac \
+  && xblocked x "$XC2" \
+  && ok "P33: a PASS for one commit no longer authorizes another with the same diff once a gate run started there, by either name" \
+  || nok "P33: a PASS crossed onto a commit with its own gate run" "before=$p33_before dest=$p33_dest rc=$RC out=$OUT"
+
+# P34 (PRE-FIX control, case d): a PASS written on a detached HEAD (key `HEAD`), which
+# this hook reads for a push to a branch named `HEAD`; then a newer run on that commit
+# started from a branch checkout, which never visits that key.
+( cd "$RX" && git checkout -qb dx main && echo d > d.js && git add -A && git commit -qm d \
+   && git checkout -q --detach ) >/dev/null 2>&1
+XDC="$(git -C "$RX" rev-parse HEAD)"
+xgate "$XDC"; xpush HEAD "$XDC"; p34_before=$RC
+( cd "$RX" && git checkout -q dx ) >/dev/null 2>&1
+xrevoke "$XDC"; xpush HEAD "$XDC"
+[ "$p34_before" = 0 ] && [ -f "$XMD/HEAD.json" ] && xblocked HEAD "$XDC" \
+  && ok "P34: a detached-HEAD PASS is BLOCKED once a newer run starts on its commit, with HEAD.json still on disk" \
+  || nok "P34: a detached-HEAD PASS outlived a newer run" "before=$p34_before rc=$RC out=$OUT"
+
+# P32 (PRE-FIX control, case b): a branch and a same-named tag, so the PASS lands at
+# heads/<name>.json, the spelling this hook enumerates; the tag is deleted, a newer run's
+# revoke looks only under the bare name, and the tag comes back.
+( cd "$RX" && git checkout -qb feature main && echo f > f.js && git add -A && git commit -qm feature \
+   && git tag feature ) >/dev/null 2>&1
+XFC="$(git -C "$RX" rev-parse refs/heads/feature)"
+xgate "$XFC"; xpush feature "$XFC"; p32_before=$RC
+p32_written=0; [ -f "$XMD/heads/feature.json" ] && p32_written=1
+git -C "$RX" tag -d feature >/dev/null 2>&1; xrevoke "$XFC"; git -C "$RX" tag feature "$XFC" >/dev/null 2>&1
+xpush feature "$XFC"
+[ "$p32_written" = 1 ] && [ "$p32_before" = 0 ] && [ -f "$XMD/heads/feature.json" ] && xblocked feature "$XFC" \
+  && ok "P32: a PASS under the heads/<name> spelling is BLOCKED once a newer run starts on its commit" \
+  || nok "P32: the stale heads/<name> PASS authorized the push" "written=$p32_written before=$p32_before rc=$RC out=$OUT"
+
+# P39 (positive and WRONG-FIX control, case i): a sibling branch at the same commit as a
+# current PASS, with no marker of its own.
+( cd "$RX" && git checkout -qb s1 main && echo s > s.js && git add -A && git commit -qm s ) >/dev/null 2>&1
+XSC="$(git -C "$RX" rev-parse refs/heads/s1)"
+xgate "$XSC"; git -C "$RX" branch s2 "$XSC" >/dev/null 2>&1; xpush s2 "$XSC"
+[ "$RC" = 0 ] && [ ! -e "$XMD/s2.json" ] \
+  && ok "P39: a sibling branch at the same commit as a current PASS -> ALLOWED" \
+  || nok "P39: a sibling of a current PASS was refused" "rc=$RC out=$OUT"
+git -C "$RX" checkout -q main >/dev/null 2>&1
+
 [ "$CAPTURE_LEAK" = 0 ] \
   && ok "all captured hook stdout/stderr and the bypass log omit the planted credential value" \
   || nok "captured output/log credential non-disclosure" "a captured channel contained the planted value"

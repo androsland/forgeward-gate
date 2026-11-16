@@ -164,14 +164,14 @@ forgeward-write-marker.sh --revoke <reviewed-head>
    its separate hashing call, because nothing is hashed from a live ref alone.
 
    A `<base-ref>` that no longer resolves to a commit is refused (exit 1) before anything
-   is hashed: `forgeward-diff-hash.sh` hashes an empty diff for a bad base and exits 0, so
-   the comparison would otherwise refuse with a misleading "base moved" message.
+   is hashed: `forgeward-diff-hash.sh` refuses it too, but only as "could not hash".
 4. Refuses, exit 1, unless the run file for `<reviewed-head>` still holds `<run-id>`
    (§4.3), checked after every check above and before the environment probe runs.
-5. Writes the marker with `reviewed_head` set to `<reviewed-head>`, then reads the run file
-   again; if it no longer holds `<run-id>`, it removes the marker when its bytes are still
-   the bytes it wrote, and refuses. The marker schema and the hooks' `marker_get` are
-   unchanged: `.base` stays the ref name, and the push hook keeps recomputing against it.
+5. Writes the marker (schema 5) with `reviewed_head` set to `<reviewed-head>` and `run_id`
+   to `<run-id>`, then reads the run file again; if it no longer holds `<run-id>`, it
+   removes the marker when its bytes are still the bytes it wrote, and refuses. The hooks'
+   `marker_get` is unchanged: `.base` stays the ref name, and the push hook keeps
+   recomputing against it.
 
 **One exit code for every usage error, 64.** The existing `${1:?}` path exits 1 today; it moves
 to 64, and any test pinning 1 moves with it. Step 3 of SKILL.md is amended to pass the literal
@@ -196,17 +196,24 @@ the old marker still authorizes pushing that same diff. "Write no marker" is not
   branch at this commit can authorize a push. A run that is interrupted, crashes or stops
   therefore leaves no usable PASS there, with no exit path having to remember anything.
 - **A later run supersedes an in-flight write.** The writer refuses unless the run file
-  still holds its own id, before writing and again after (§4.2). Because a revoke records
-  before it deletes, an older run's write either sees the newer id or is deleted by the
-  newer revoke. No lock is taken: macOS has no portable `flock`, and a stale lock would
+  still holds its own id, before writing and again after (§4.2), so a superseded run never
+  reports a PASS. No lock is taken: macOS has no portable `flock`, and a stale lock would
   wedge the gate.
+- **The run file is the authority; the deletions above are hygiene.** Both hooks accept a
+  marker only while the run file for its `reviewed_head` still holds its `run_id`, and
+  refuse it for a pushed commit that has a run file of its own and is not its
+  `reviewed_head` (`run_is_current`, byte-identical in both hooks). A newer revoke
+  therefore stales every marker for that commit under any name, including one written
+  under a spelling the deletions miss (`heads/<name>`, the detached `HEAD` key, a
+  destination branch) and one an older run's write lands after the delete. The name list
+  was wrong twice before this replaced it as the authority.
 - **Every non-PASS outcome revokes again**, after the final guard check. That closes a marker a
   reviewer wrote during the run (§5.1 detects it; this removes it).
 - `--revoke` shares the writer's marker-path code, the one-reader rule. It exits 0 when the
   markers are absent or removed, and 1 when one exists and cannot be removed, when the
   branches at the commit cannot be listed, or when the run cannot be recorded; on 1 it
   prints no `RUN_ID`. On 1 the gate stops:
-  `could not withdraw the earlier PASS; it may still authorize a push.`
+  `could not start this gate run cleanly (the reason is above), so an earlier PASS may still authorize a push.`
 
 ### 4.4 Rule analysis
 
@@ -221,25 +228,16 @@ The rule: a marker certifies exactly the commits the reviewers were given.
   - re-running the gate on an unchanged, passing branch, which withdraws and rewrites the
     marker in one run.
 - **Structurally cannot see (non-goal):**
-  - **A marker earned under an older forgeward release stays valid for the exact diff it
-    covers after an upgrade, until the gate runs again.** The hooks read `.base` and
-    `.diff_hash`, not a policy version. Any new commit changes the hash and forces a re-gate,
-    so the exposure is pushing an already-passed diff unchanged. This is folded into the
-    existing `TODOS.md` entry on the marker's unread `schema` field, which already names the
-    fail-safe direction: an unrecognised schema reads as stale.
   - Reviewers read surrounding context from the **working tree**, which differs from
     `<HEAD_SHA>` when the tree is dirty. This is pre-existing. Filed in `TODOS.md`.
-  - **The push hook also accepts the marker named after the push's destination branch.**
-    `--revoke` cannot know destination names, so pushing local branch `y` to remote branch
-    `x` is still authorized by a stale `x` marker whose diff hash matches. Closing it would
-    need the writer to parse marker JSON, a dependency it deliberately does not take. Found
-    by the final review of PR 1. Filed in `TODOS.md`.
-  - **The run id's residuals.** The writer's compare-then-remove is not atomic, so a third
-    run writing byte-identical content in that instant loses its marker; every revoke
-    supersedes, so a run's own later revoke or another run's FAIL can refuse a concurrent
-    PASS. Both cost one re-gate. A write from a detached `HEAD` keys the literal `HEAD`,
-    which a revoke from a branch checkout does not visit, so that one marker can outlive a
-    newer run; the push hook reads it only for a push to a branch literally named `HEAD`.
+  - **Acceptance is per diff, revocation per commit.** A PASS on C1 and a FAIL on C2 with
+    the same diff do not stop a push of a third commit C3 with that diff that no gate run
+    ever started on, or whose run file was pruned (30 days after the run). The same
+    property is what lets `/ship`'s version-bump commit push on the PASS before it.
+  - **The run id's residuals.** Every revoke supersedes, so a run's own later revoke or
+    another run's FAIL can refuse a concurrent PASS, and a write stalled across a whole
+    newer run can overwrite that run's marker and then remove it. Both cost one re-gate.
+    Markers and run files are local files; forging both is outside the threat model.
 
 ### 4.5 Tests
 

@@ -275,8 +275,38 @@ marker_path() {
   printf '%s/forgeward-gate-markers/%s.json' "$common" "$1"
 }
 
-# fresh == a marker for <branch> exists AND the substantive-diff hash of <tip-sha>
-# vs the marker's recorded base matches what was reviewed (version-bump-invariant).
+# The gate run that wrote <marker> must still be the latest on the commit it reviewed, and
+# no gate run may have started on <tip> itself unless <tip> is that commit (see the header
+# of forgeward-write-marker.sh). Both values name a file, so each is checked to be a full
+# lowercase id BEFORE it reaches a path. Every read or parse failure returns 1: on the
+# gating path a failure re-gates, never passes. Byte-identical in forgeward-gate-check.sh
+# and forgeward-pre-push.sh; F1 in test/gate-test.sh fails when the copies drift.
+run_is_current() {
+  local run head tipc runs v line=""
+  run="$(marker_get "$1" '.run_id')" || return 1
+  head="$(marker_get "$1" '.reviewed_head')" || return 1
+  tipc="$(git rev-parse --verify --quiet "$2^{commit}" 2>/dev/null)" || return 1
+  for v in "$run" "$head" "$tipc"; do
+    case "${#v}:$v" in
+      40:*[!0-9a-f]*|64:*[!0-9a-f]*) return 1 ;;
+      40:*|64:*) ;;
+      *) return 1 ;;
+    esac
+  done
+  runs="$(common_git_dir)" || return 1
+  runs="$runs/forgeward-gate-runs"
+  [ -f "$runs/$head" ] || return 1
+  { IFS= read -r line || [ -n "$line" ]; } 2>/dev/null < "$runs/$head" || return 1
+  [ "$line" = "$run" ] || return 1
+  if [ "$tipc" != "$head" ] && { [ -e "$runs/$tipc" ] || [ -L "$runs/$tipc" ]; }; then
+    return 1
+  fi
+  return 0
+}
+
+# fresh == a marker for <branch> exists, the substantive-diff hash of <tip-sha> vs the
+# marker's recorded base matches what was reviewed (version-bump-invariant), and the run
+# that wrote it is still current (run_is_current).
 is_fresh() { # is_fresh <branch> <tip-sha>
   local branch="$1" tip="$2" marker base stored cur
   marker="$(marker_path "$branch")" || return 1
@@ -284,7 +314,8 @@ is_fresh() { # is_fresh <branch> <tip-sha>
   base="$(marker_get "$marker" '.base')";        [ -n "$base" ]   || return 1
   stored="$(marker_get "$marker" '.diff_hash')"; [ -n "$stored" ] || return 1
   cur="$("$DIFF_HASH" "$base" "$tip" 2>/dev/null)" || return 1
-  [ -n "$cur" ] && [ "$cur" = "$stored" ]
+  [ -n "$cur" ] && [ "$cur" = "$stored" ] || return 1
+  run_is_current "$marker" "$tip"
 }
 
 blocked=()

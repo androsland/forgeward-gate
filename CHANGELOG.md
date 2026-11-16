@@ -2,7 +2,28 @@
 
 ## 0.31.0 — 2026-11-16
 
+### Upgrading
+
+- Every marker written before 0.31.0 reads as not passed: the hooks now require the
+  marker's gate run (`run_id`, schema 5), which older markers do not carry. Run
+  `/forgeward:gate` once per branch you mean to push.
+- A PASS now stops reading fresh once its run file is pruned. Any later marker write in
+  the repo prunes run files whose run started more than 30 days ago, so re-gate a branch
+  that has waited longer than that.
+
 ### Fixed
+
+- Both hooks refuse a PASS whose gate run is no longer the latest for its commit. The
+  marker records its run id, and a marker is accepted only while
+  `forgeward-gate-runs/<reviewed_head>` still holds that id, and never for a pushed
+  commit that has a run file of its own and is not the marker's `reviewed_head`. Before,
+  the only thing standing between a newer run and an older PASS was `--revoke` deleting
+  the old marker by name, and that name list missed a marker under the historical
+  `heads/<name>` spelling, the detached `HEAD` key, a push's destination branch, and a
+  write that landed after the delete.
+- `forgeward-diff-hash.sh` exits 1 with a message when `git diff` fails (no merge base, a
+  bad ref, a missing blob). It used to hash such a pair as the empty diff and exit 0, so a
+  later commit on it could match that hash.
 
 - The PASS marker now certifies the commits the reviewers were given. Step 0 freezes the
   base and head commits and every later step reviews that range; the marker writer
@@ -41,7 +62,10 @@
   short hex is refused. `<run-id>` is the id `--revoke` printed.
 - New `--revoke <reviewed-head>` mode. It takes the commit Step 0 froze, records a new
   gate run for it, withdraws every marker at it, and on success prints `RUN_ID=<id>` as
-  its last line.
+  its last line. Recording the run is what stales earlier markers; the deletions are
+  hygiene.
+- The marker is schema 5 and carries `run_id`. The diff hash is unchanged, so a `/ship`
+  version-bump commit still pushes on the PASS before it.
 
 ## 0.30.0 — 2026-10-19
 

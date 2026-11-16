@@ -182,7 +182,13 @@ diff_part="$(git diff "${base}...${tip}" -- . \
   ':(exclude).claude-plugin/plugin.json' \
   ':(exclude).claude-plugin/marketplace.json' \
   ':(exclude).codex-plugin/plugin.json' \
-  2>/dev/null)"
+  2>/dev/null)" || {
+  # A failed diff (no merge base, a bad ref, a missing blob) would otherwise leave this
+  # part empty and hash as the EMPTY diff, which any later code on the pair matches.
+  printf 'forgeward-diff-hash: git diff %s...%s failed; refusing to hash an empty diff\n' \
+    "$base" "$tip" >&2
+  exit 1
+}
 
 # Part 2 — canonical snapshots at <tip>, version neutralized per manifest.
 #
@@ -211,26 +217,11 @@ diff_part="$(git diff "${base}...${tip}" -- . \
 # the `set` line, not a halt at the guard. A non-zero exit is not evidence of the
 # mechanism you are testing for -- check WHY it is non-zero.
 #
-# The actual reason is scope and locality, and the scope is ONE line, not the file.
-# The only statement whose behaviour changes under `-e` is the unguarded
-# `diff_part="$(git diff ...)"` assignment in Part 1 -- with a bad base ref it is rc=0
-# and a printed hash today, rc=128 and no output under `-e`. Everything else either
-# already exits regardless (`base="${1:?...}"`), cannot fail, or is `-e`-exempt behind
-# a guard.
-#
-# That is a universal quantifier in a comment already wrong three times, so it is
-# measured twice rather than reasoned once. (1) Enumeration: exactly ONE unguarded
-# assignment-from-substitution exists in this file; the other four carry `|| exit 1`
-# or `|| out=""`. (2) A differential battery -- the whole script re-run with `-e`
-# under bad base ref, bad tip ref, dash-led base, non-repo cwd, missing jq, missing
-# python3, empty base, and the happy path. Four diverge, and all four halt at this
-# same statement; the other four are byte-identical with and without `-e`.
-#
-# One silently-changed statement is still a reason not to flip a file-wide option to
-# fix a three-line problem, but it is a much smaller reason than "every other command
-# in the file", which is what this said before.
-# `|| exit 1` checks the status where it is produced, is visible at the call site
-# rather than 130 lines up in a `set` line, and holds regardless of shell options.
+# The actual reason is scope and locality. The one statement whose behaviour `-e` was
+# measured to change, the `diff_part="$(git diff ...)"` assignment in Part 1, now
+# carries its own guard. `|| exit 1` checks the status where it is produced, is visible
+# at the call site rather than 130 lines up in a `set` line, and holds regardless of
+# shell options.
 pkg_part="$(snapshot_manifest package.json top)" || exit 1
 plugin_part="$(snapshot_manifest .claude-plugin/plugin.json top)" || exit 1
 market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)" || exit 1

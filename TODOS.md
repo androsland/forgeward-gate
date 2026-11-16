@@ -421,39 +421,28 @@ preferring to delete a weightless detail rather than correct it.
 
 ## Gate — base detection and freshness
 
-- **`--revoke` cannot withdraw a marker named after a push's DESTINATION branch.**
-  `scripts/forgeward-pre-push.sh` authorizes a pushed commit with the marker of any local
-  branch at that commit, plus the marker named after the destination branch. Since 0.31.0
-  `forgeward-write-marker.sh --revoke <reviewed-head>` removes every local branch's marker
-  at the frozen commit, but destination names are not knowable at revoke time, so pushing
-  local branch `y` to remote branch `x` is still authorized by a stale `x` marker whose
-  diff hash matches. **Not fixed here:** closing it would need the writer to parse marker
-  JSON (read each marker's `.base` and `.diff_hash` and withdraw any that match this commit),
-  a dependency the writer deliberately does not take. **What would settle it:** decide
-  whether a JSON reader on the revoke path is acceptable, or whether the hook should stop
-  accepting the destination-name marker when no local branch at the commit has one.
-  (source: final review of PR 1, 2026-11-16) **Priority:** P3
-- **A detached-HEAD PASS can outlive a newer gate run on the same commit.** On a detached
-  `HEAD` the writer keys the marker as the literal `HEAD`. `--revoke <reviewed-head>`
-  withdraws that key only when its own checkout is detached at the commit, so a newer run
-  started from a branch checkout (another worktree) leaves `HEAD.json` standing, whether
-  the older write finished long ago or lands mid-run; the run id refuses only a write that
-  has not yet passed its second read. The enforced push hook reads `HEAD.json` only for a
-  push to a branch literally named `HEAD`; the fast reminder reads it on any detached
-  checkout. **Not fixed here:** always
-  withdrawing the `HEAD` key would also withdraw an unrelated detached checkout's PASS at
-  another commit, since one key serves every worktree. **What would settle it:** decide
-  whether a detached-HEAD write should be refused outright, or keyed by commit. (source:
-  pre-landing review fix of PR 1, 2026-11-16) **Priority:** P3
-- **`forgeward-diff-hash.sh` hashes an EMPTY diff and exits 0 when the pair has no merge
-  base.** Its `diff_part` assignment from `git diff "${base}...${tip}"` is unguarded, so
-  on an orphan branch or a shallow clone git fails, the diff part is empty, and the hash
-  is the empty-diff hash, which both hooks recompute identically for any later code on
-  that pair. Since 0.31.0 the marker writer refuses to certify such a pair (K20, K21),
-  but the helper itself should fail. **Not fixed here:** making it fail changes what
-  both hooks do on a hash failure (`is_fresh` reads a failure as stale, which would turn
-  this into a hard block), and that is its own posture decision. (source: final review
-  of PR 1, 2026-11-16) **Priority:** P2
+- **A PASS is accepted per diff, but withdrawn per commit.** Since 0.31.0 both hooks accept
+  a marker only while `forgeward-gate-runs/<reviewed_head>` still holds its `run_id`, and
+  refuse it for a pushed commit that has a run file of its own (`run_is_current`). A
+  commit no gate run ever started on has no run file, so a PASS on C1 and a FAIL on C2
+  with the same diff do not stop a push of a third commit C3 with that diff; nor does a
+  FAIL on a commit keep refusing it once that commit's run file is pruned (more than 30
+  days after the run started, by a later marker write). The same property is what lets `/ship`'s
+  version-bump commit push on the PASS before it, so binding the marker to one commit is
+  not the fix. Also not covered: a write stalled across a whole newer run on the same
+  commit can overwrite that run's marker and then remove it, which costs one re-gate.
+  **What would settle it:** decide whether a FAIL should record its diff hash so that any
+  later commit with that diff is refused, and what that does to a legitimate re-gate.
+  (source: pre-landing review fix of PR 1, 2026-11-16) **Priority:** P3
+- **UNVERIFIED: the diff hash may not cover a binary file's content.**
+  `scripts/forgeward-diff-hash.sh` hashes `git diff` without `--binary` or `--full-index`,
+  so a binary or `-diff`-attributed file may be represented only by `Binary files …
+  differ` plus an abbreviated `index` line. If so, replacement content would need only a
+  short-prefix blob collision to keep a marker fresh. **Not reproduced.** **Not fixed
+  here:** adding `--full-index` would change every hash and stale every marker, so it
+  wants its own release note. **What would settle it:** hash a pair that changes one
+  binary file twice, with different content of the same abbreviated blob prefix, and
+  compare. (source: pre-landing review of PR 1, 2026-11-16) **Priority:** P3
 
 - **The drive-letter arm in `remote_is_networked()` approximates git's third
   locality clause and diverges on DOS reserved device names.** git's real predicate is
@@ -1158,12 +1147,11 @@ did *not* close.
   *does* need to be enforced, the version field has to start being read first — and the
   fail-safe direction is already available for free (an unrecognised schema should read as
   stale, which costs one re-gate). **Upgrade compatibility is the concrete case**
-  (upstream-lenses spec §4.4, 2026-11-16): a marker earned under an older release stays
-  valid for its exact diff after an upgrade until the gate runs again, because the hooks
-  read only `.base` and `.diff_hash`. Any new commit re-gates, so the exposure is pushing
-  an already-passed diff unchanged. 0.31.0's `--revoke` closes it the moment the gate
-  runs; nothing closes it without a run. (0.8.0, restated 0.9.0 2026-08-06; amended
-  0.31.0, 2026-11-16) **Priority:** P3
+  (upstream-lenses spec §4.4, 2026-11-16), and 0.31.0 closed it through another field
+  rather than this one: the hooks require `run_id`, which no older marker carries, so
+  every pre-0.31.0 marker reads as not passed (F4, P35). `schema` itself still gates
+  nothing. (0.8.0, restated 0.9.0 2026-08-06; amended 0.31.0, 2026-11-16)
+  **Priority:** P3
 - **The probe and the marker writer are now coupled, and the coupling is a standing
   maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
   its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
@@ -2748,6 +2736,17 @@ shipped on its own branch instead.
   the `"<HEAD_SHA>"` and `"<RUN_ID>"` pins each when one occurrence was removed.
   `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn, and prints
   `withdrawn` only when the marker existed before Run B.
+  A second pre-landing review (Codex twice, an adversarial pass, a red team) then
+  reproduced four ways an old or never-reviewed PASS still authorized a push, because the
+  hooks checked only `.base` and `.diff_hash` and revoke's name list missed spellings. The
+  marker now records its `run_id` (schema 5) and both hooks accept it only through
+  `run_is_current`, so the run file is the authority and the deletions are hygiene;
+  `forgeward-diff-hash.sh` exits 1 when `git diff` fails. That closed three entries from
+  `## Gate — base detection and freshness`: the destination-branch marker revoke could
+  not withdraw, the detached-`HEAD` PASS outliving a newer run, and the helper hashing a
+  failed diff as the empty diff. What the run id cannot see is filed there in their place.
+  `test/gate-test.sh` gains F1–F10, V11–V13, K33b and K39; `test/pre-push-test.sh` gains
+  P30–P39.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

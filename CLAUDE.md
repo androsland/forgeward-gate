@@ -129,36 +129,41 @@ commit that was fixing it — a line number cannot survive its own fix.
   `forgeward-write-marker.sh` takes both as FULL commit ids that must RESOLVE TO
   THEMSELVES (a symbolic name, a short hex, a branch named with 64 hex characters in a
   SHA-1 repo, or a tag's id all let its checks compare a live ref with itself), refuses
-  when `HEAD` moved, refuses a pair with no merge base (its diff hash is the empty-diff
-  hash), refuses when the frozen pair's hash differs from the hash the push hook will
-  recompute from the base ref, and stores the frozen pair's hash. Until 0.31.0 it read
+  when `HEAD` moved, refuses a pair with no merge base, refuses when the frozen pair's
+  hash differs from the hash the push hook will recompute from the base ref, and stores
+  the frozen pair's hash and the gate run's `run_id`. Until 0.31.0 it read
   `HEAD` and hashed the live range at write time, so a commit landing while reviewers
   ran was certified by a marker nobody reviewed. **A fetch that only advances the base is
   not refused** — both hashes stay equal, and K9 pins that the obvious wrong fix
-  (refusing on any base-SHA change) is not taken.
-- **Every run that reaches review withdraws the earlier PASS of every local branch at the
-  FROZEN commit first, and again on every outcome after that which ends without a
-  marker** (`forgeward-write-marker.sh --revoke <HEAD_SHA>`, never live `HEAD`: a
-  checkout change after Step 0 would aim it at the wrong commit). The push hook accepts
-  any local branch's marker for the pushed commit, so withdrawing only the current
-  branch's left a sibling's PASS standing. Each branch is withdrawn under BOTH spellings,
-  the short name and the canonical one, because a same-named tag splits them and the hook
-  reads both. A failed branch listing exits 1 after trying every other path; it never
-  passes as a clean revoke. "Write no marker" was not enough: a re-run that FAILs on an
-  already-passed diff left the old PASS authorizing that same diff. Revoking at the start
-  means an interrupted run needs no exit path to remember anything. A marker that cannot
-  be removed stops the gate. **A later run supersedes an in-flight write:** each revoke
-  records a run id for the commit BEFORE it deletes anything, and the writer refuses
-  unless the run file still holds its own id, read once before the write and once after
-  (removing the marker it wrote, compared byte-for-byte). No lock, deliberately. The
-  residuals, listed in the writer's header, are fail-closed re-gates except one: a
-  detached-HEAD write's `HEAD` key, which a revoke from a branch checkout does not visit,
-  can outlive a newer run. **Not covered, deliberately:** a run that stops in Step 0
-  (nothing to gate, or an unresolvable ref) reviews nothing and withdraws nothing, so an
-  earlier marker survives it, still bound to its own diff hash. **Not covered either:**
-  the push hook also accepts the marker named after the push's DESTINATION branch, which
-  revoke cannot know, so pushing local `y` to remote `x` is still authorized by a stale
-  `x` marker whose hash matches. Closing it needs the writer to parse marker JSON.
+  (refusing on any base-SHA change) is not taken. Both hooks accept a marker only while
+  the run file for its `reviewed_head` still holds its `run_id`, and never for a pushed
+  commit that has a run file of its own and is not its `reviewed_head`
+  (`run_is_current`, byte-identical in both hooks; F1 pins it).
+- **Every run that reaches review starts a new run on the FROZEN commit first, and
+  revokes again on every outcome after that which ends without a marker**
+  (`forgeward-write-marker.sh --revoke <HEAD_SHA>`, never live `HEAD`: a checkout change
+  after Step 0 would aim it at the wrong commit). Revoke records a new run id for the
+  commit BEFORE it deletes anything, and **the run file is the authority, not the
+  deletions**: once it is recorded, every marker for that commit, under any name, names a
+  stale run to both hooks. Revoke's name list was wrong twice — a same-named tag, then the
+  `heads/<name>` spelling a marker had already been written under — so it was demoted to
+  hygiene rather than patched a third time (DECISIONS.md). It still deletes every local
+  branch's marker at the commit under both spellings, a failed branch listing still exits
+  1, and a marker that cannot be removed still stops the gate. "Write no marker" was not
+  enough: a re-run that FAILs on an already-passed diff left the old PASS authorizing
+  that same diff. Revoking at the start means an interrupted run needs no exit path to
+  remember anything. The writer refuses unless the run file still holds its own id, read
+  once before the write and once after, so a superseded run never reports a PASS. No
+  lock, deliberately. **Must not fire on:** the `/ship` flow, a VERSION-only commit after
+  the PASS with no gate run of its own (F6, P38), or a sibling branch at the reviewed
+  commit (P39). **Cannot see, deliberately:** acceptance is per diff and revocation per
+  commit, so a PASS on C1 and a FAIL on C2 with the same diff do not stop a push of a
+  third commit C3 with that diff that no gate run ever started on, or whose run file was
+  pruned (more than 30 days after the run started). A write stalled across a whole newer
+  run can overwrite that run's marker and then remove it — fail-closed, one re-gate. A
+  run that stops in
+  Step 0 (nothing to gate, or an unresolvable ref) reviews nothing and revokes nothing, so
+  an earlier marker survives it, still bound to its own diff hash and run.
 - **`gc_markers` runs on the marker-write path only.** It is not a scheduled sweep and
   must not become one.
 - **Version-field neutralization in `normalize_manifest` is per-manifest-path, never
@@ -177,15 +182,16 @@ commit that was fixing it — a line number cannot survive its own fix.
   left operand is exempt. Not dash: `set -uo pipefail` is fatal there, so the script never
   runs and its non-zero status is `Illegal option`, not a halt — **a non-zero exit is not
   evidence of the mechanism you are testing for.** `|| exit 1` wins on scope and locality,
-  not correctness, and the scope is **one line**: the unguarded
-  `diff_part="$(git diff …)"` assignment is the only statement whose behaviour changes
-  under `-e`. That is measured twice over, because it is a universal quantifier and this
-  bullet has already been wrong three times. `grep` over the file finds exactly one
-  unguarded assignment-from-substitution; the other four carry `|| exit 1` or `|| out=""`,
-  and every bare command sits behind a guard or is the final pipeline. An eight-case
-  failure battery (bad base, bad tip, dash-led base, non-repo cwd, no jq, no python3,
-  empty base, baseline) agrees: every divergent case halts at that one statement, and the
-  four non-divergent ones are byte-identical with and without `-e`. An earlier draft said
+  not correctness, and the scope was **one line**: the then-unguarded
+  `diff_part="$(git diff …)"` assignment was the only statement whose behaviour changed
+  under `-e`, and it now carries its own guard. That was measured twice over, because it
+  is a universal quantifier and this bullet has already been wrong three times. `grep`
+  over the file found exactly one unguarded assignment-from-substitution; the other four
+  carried `|| exit 1` or `|| out=""`, and every bare command sat behind a guard or was the
+  final pipeline. An eight-case failure battery (bad base, bad tip, dash-led base,
+  non-repo cwd, no jq, no python3, empty base, baseline) agreed: every divergent case
+  halted at that one statement, and the four non-divergent ones were byte-identical with
+  and without `-e`. An earlier draft said
   "every other command in the file" — the same universal-ahead-of-evidence shape the
   bullet below it exists to warn about, committed inside the correction to it.
   Swept `scripts/*.sh` and `ci/*.sh` when this was found — `hooks/` holds no shell, only

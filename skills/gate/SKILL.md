@@ -381,12 +381,13 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
-**First, withdraw any earlier PASS for every local branch at the reviewed commit.** The
-push hook accepts the marker of any local branch whose tip is the pushed commit, so
-`--revoke` removes each of those, not only this branch's. From the moment this run
-commits to reviewing, no earlier run's PASS on a branch at this commit may authorize a
-push. A re-run that fails must not leave the previous PASS usable for the same diff,
-and neither may a run that is interrupted:
+**First, start this run on the reviewed commit.** `--revoke` records a new run id for
+`<HEAD_SHA>`, and both push hooks accept a marker only while its run id is the one
+recorded for the commit it reviewed, so every earlier PASS for this commit, under any
+branch name, stops reading fresh; it also deletes the markers of the local branches at
+this commit. From the moment this run commits to reviewing, no earlier run's PASS for
+this commit may authorize a push. A re-run that fails must not leave the previous PASS
+usable for the same diff, and neither may a run that is interrupted:
 
 ```bash
 "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
@@ -400,7 +401,7 @@ is then refused, so only the latest run's outcome can stand.
 Non-zero means a marker exists and could not be removed, the branches at this commit
 could not be listed, or this run could not be recorded; the writer says which, and prints
 no `RUN_ID`. Print its message verbatim and stop with
-`forgeward gate: could not withdraw an earlier PASS for a branch at this commit; it may still authorize a push. Nothing was reviewed.`
+`forgeward gate: could not start this gate run cleanly (the reason is above), so an earlier PASS may still authorize a push. Nothing was reviewed.`
 
 **Before spawning anything**, snapshot the working tree so the read-only contract can
 be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
@@ -488,8 +489,11 @@ than the one it cleans up. Print the paths and let the user run
 ## Step 3 — Decide
 
 - **If the workspace guard reported new paths**: HALT before shipping, whatever the
-  verdicts were. Withdraw any marker the run could have left behind (a reviewer holding
-  Bash can write one):
+  verdicts were. Revoke again, so any marker a reviewer holding Bash wrote for this
+  commit stops reading fresh: a new run id is recorded for the reviewed commit, and every
+  marker for that commit, under any name, then names a stale run. Markers for other
+  commits are not staled (revoke still deletes, by name, the marker of each local branch
+  at this commit):
 
   ```bash
   "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
@@ -550,8 +554,9 @@ than the one it cleans up. Print the paths and let the user run
 - **If any fired reviewer returned `VERDICT: FAIL`, or anything other than PASS**: do NOT
   write a marker and do NOT invoke /ship. A fired reviewer whose output carries no
   `<AXIS> VERDICT:` line at all (it crashed, timed out, or ignored the format) is a FAIL
-  for that axis, never a skip: an unmeasured axis cannot return PASS. Withdraw any marker
-  a reviewer may have written during the run:
+  for that axis, never a skip: an unmeasured axis cannot return PASS. Revoke again, so
+  any marker for the reviewed commit, under any name, stops reading fresh (a new run id
+  is recorded for that commit; markers for other commits are not staled):
 
   ```bash
   "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
@@ -575,12 +580,12 @@ than the one it cleans up. Print the paths and let the user run
   forbade it. Do not treat an instruction as a control.
 - **Conditional.** Only fire reviewers whose surface the diff touches; say which you skipped and why.
 - **The marker is only written on all-PASS, and only for the commits Step 0 froze.** Every
-  run that reaches Step 2 withdraws the earlier PASS of every local branch at the
-  reviewed commit before it reviews anything, and every later outcome that ends without a
-  written marker withdraws again. A write is refused once a later run on that commit has
-  started or failed, so only the latest run's outcome can stand. A run that stops before
-  Step 2 reviews nothing and leaves an earlier marker in place, still bound to its own
-  diff hash. A `--revoke` that exits non-zero is reported verbatim and stops the gate,
-  because that PASS may still authorize a push. No marker ⇒ the push hook blocks /ship.
-  That is the gate.
+  run that reaches Step 2 records a new run on the reviewed commit before it reviews
+  anything, which stales every earlier PASS for that commit, and every later outcome that
+  ends without a written marker revokes again. A write is refused once a later run on
+  that commit has started or failed, so only the latest run's outcome can stand. A run
+  that stops before Step 2 reviews nothing and leaves an earlier marker in place, still
+  bound to its own diff hash and run. A `--revoke` that exits non-zero is reported
+  verbatim and stops the gate, because an earlier PASS may still authorize a push. No
+  fresh marker ⇒ the push hook blocks /ship. That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.
