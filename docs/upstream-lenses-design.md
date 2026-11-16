@@ -1,6 +1,6 @@
 # Upstream lenses — design
 
-**Status:** draft for review, revised after two hole reviews · **Date:** 2026-11-14 ·
+**Status:** approved 2026-11-16, after two hole reviews · **Date:** 2026-11-14 ·
 **Targets:** 0.31.0 – 0.37.0 (a seven-PR stack) · **Upstream pinned:** gstack
 `0ead11c8e20a82e249f36c3abf89599dfe602324`
 
@@ -820,6 +820,21 @@ A change to a shared settle path puts every cell through it at risk.
 tests. A one-line fix to its shared settle path blocks until all 24 cells have a test. A diff
 that does not touch the settle path does not fire the reviewer at all.
 
+**Why the narrower rule was rejected.** The alternative was to block only cells the diff adds
+or reroutes, and grade the rest as Medium debt. Three reasons it lost:
+
+- **The cost is paid once per machine, not once per change.** The first diff that touches an
+  untested machine pays for its whole matrix. Later diffs need tests only for what they add.
+- **"Which cells does this change reach" is the judgement that shipped upstream's motivating
+  bug.** Kinds that share a branch look covered when one of them is.
+- **A wrong call there is data loss,** not a missed nicety.
+
+**Every untested-cell finding carries a test stub.** The stub settles a pending record of that
+kind with that action and asserts the expected row. Upstream's checklist already asks for a
+`test_stub` per cell. forgeward's output carries it in the finding's **Fix** field, so the
+report hands over the skeletons the block asks for. A live-test positive control asserts the
+stub is present.
+
 This is a **deliberate widening of what the gate blocks**. It is recorded in `DECISIONS.md` the
 way the 0.14.0 accessibility widening was, with its non-goals written into the reviewer prompt.
 The CLAUDE.md bullet saying the a11y widening is "the one place this repo has done that" is
@@ -1171,18 +1186,16 @@ Each PR updates, in the same commit as the behaviour:
 | A reviewer writes into the repo | Guard v2 reports a new path, a path leaving the dirty set, an already-dirty file's content, `HEAD`, the index, the stash, the pre-push hook, `core.hooksPath`, or this branch's marker. It runs on every exit, a crash included, and an error is exit 2, not clean. A forged marker is reported and then revoked. **Not seen:** gitignored writes, writes outside the repo, and other `.git/` writes (§5.4). |
 | Upstream adds a specialist the day after release | The first gate run whose selected root holds it prints it, worded for installers and naming the root. A machine with no gstack, or whose selected root is older, prints nothing (§11.5 non-goal 8). |
 
-## 14. Open, for the maintainer
+## 14. Decided at spec review
 
-- **State-machines on a changed shared settle path (§9.3).** Decision 3 blocks every untested
-  cell. The hole review showed what that means on a legacy path: a one-line fix to a shared
-  settle path with no tests blocks until every kind × action cell through it has one. That is
-  upstream's rule too. The spec writes it in as accepted. The alternative is blocking only the
-  cells the diff adds or reroutes, and grading untouched cells as Medium debt.
-- **`design`.** gstack's design specialist (`review/design-checklist.md`) is generated from a
-  catalog. It depends on `gstack-diff-scope` and an optional detector. Recommendation: record it
-  as **declined** in `docs/upstream-declined.txt`, pinned to its current hash (`b9205f88…`).
-  `accessibility-reviewer` owns the accessibility half, and visual taste is not a push-gate
-  verdict. Discovery cannot see it either way (§11.5 non-goal 4).
+- **State-machines on a changed shared settle path — resolved: every untested cell blocks.**
+  The legacy cost is accepted, and each untested cell carries a test stub (§9.3).
+- **`design` — resolved: declined.** gstack's design specialist (`review/design-checklist.md`)
+  is generated from a catalog. It depends on `gstack-diff-scope` and an optional detector. PR 7
+  records it in `docs/upstream-declined.txt`, pinned to its hash at `0ead11c8` (`b9205f88…`,
+  §16). `accessibility-reviewer` owns the accessibility half, and visual taste is not a
+  push-gate verdict. Discovery cannot see it either way (§11.5 non-goal 4).
+- **Delivery — resolved:** the seven-PR order in §3 is accepted.
 
 ## 15. What the hole reviews changed
 
