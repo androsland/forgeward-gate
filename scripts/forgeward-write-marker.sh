@@ -160,7 +160,14 @@ must_be_itself "reviewed head" "$reviewed_head_arg" "$reviewed_head"
 # certifies it). One file per commit, so a revoke for another commit supersedes nothing.
 runs_dir="$common_dir/forgeward-gate-runs"
 run_file="$runs_dir/$reviewed_head"
-current_run() { cat "$run_file" 2>/dev/null || true; }
+# The FIRST line, read exactly as the hooks' run_is_current reads it. `cat` read the whole
+# file, so a run file holding the run id and then more text was accepted by both hooks and
+# refused here; the writer and the hooks must answer the same question (P43).
+current_run() {
+  local line=""
+  { IFS= read -r line || [ -n "$line" ]; } 2>/dev/null < "$run_file" || true
+  printf '%s' "$line"
+}
 
 if [ "$mode" = revoke ]; then
   failed=0
@@ -171,13 +178,18 @@ if [ "$mode" = revoke ]; then
   # PATH.
   run_id="$(printf '%s\n' "$$" "$(date -u +%Y%m%dT%H%M%S)" "$RANDOM$RANDOM$RANDOM$RANDOM" "$reviewed_head" \
     | git hash-object --stdin 2>/dev/null)" || run_id=""
+  # mktemp creates the temp file 0600 whatever the umask, and the rename keeps that mode, so
+  # a run file was unreadable to anyone the marker beside it (written with `>`, so the
+  # umask decides) was readable to. The chmod gives it the marker's mode (K41).
   record_run() { # temp file in the same directory, then an atomic rename over the old one
     local tmp
     hex_id "$run_id" || return 1
     [ ! -d "$run_file" ] || return 1               # mv would move the new file INTO it
     mkdir -p "$runs_dir" 2>/dev/null || return 1
     tmp="$(mktemp "$runs_dir/.run.XXXXXX" 2>/dev/null)" || return 1
-    if { printf '%s\n' "$run_id" > "$tmp"; } 2>/dev/null && mv -f "$tmp" "$run_file" 2>/dev/null; then
+    if { printf '%s\n' "$run_id" > "$tmp"; } 2>/dev/null \
+       && chmod "$(printf '%04o' $(( 0666 & ~0$(umask) )))" "$tmp" 2>/dev/null \
+       && mv -f "$tmp" "$run_file" 2>/dev/null; then
       return 0
     fi
     rm -f -- "$tmp" 2>/dev/null || true

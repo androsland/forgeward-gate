@@ -26,6 +26,11 @@
 - Each hook reads a marker once: every field comes from one private copy, so a marker
   replaced while a push is checked can no longer lend its current run to a stale PASS
   whose diff hash matches.
+- The marker writer reads a run file's first line, as both hooks do. It read the whole
+  file, so a run file holding the run id and then another line was accepted by the hooks
+  and refused by the writer.
+- A run file gets the same mode as the marker beside it (the umask decides both). It was
+  always `0600`.
 - `forgeward-diff-hash.sh` exits 1 with a message when `git diff` fails (no merge base, a
   bad ref, a missing blob). It used to hash such a pair as the empty diff and exit 0, so a
   later commit on it could match that hash.

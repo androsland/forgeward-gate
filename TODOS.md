@@ -2754,7 +2754,9 @@ shipped on its own branch instead.
   against diff config (V14–V19), which closed `## Gate — base detection and freshness`'s
   "UNVERIFIED: the diff hash may not cover a binary file's content": it was reproduced
   (V19, a binary amended to one sharing its 7-hex blob id, the first pruned, hashed the
-  same against `e9ab0e0`'s helper) and fixed with `--full-index`.
+  same against `e9ab0e0`'s helper) and fixed with `--full-index`. The writer now reads a
+  run file's first line as the hooks do (P43) and gives it the marker's mode (K41); K33b
+  was rebuilt around a stand-in environment probe because the `cat` it hooked is gone.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

@@ -5221,9 +5221,10 @@ else
 fi
 
 # =============================================================================
-# K1..K40 — a PASS certifies the commits the reviewers were given, and only the latest
-# gate run on that commit may write it (0.31.0). K33b and K39 pin the run id's marker
-# field and that no write deletes a run file; F1-F12 below pin what the hooks do with them.
+# K1..K41 — a PASS certifies the commits the reviewers were given, and only the latest
+# gate run on that commit may write it (0.31.0). K33b, K39 and K41 pin the run id's marker
+# field, that no write deletes a run file, and the run file's mode; F1-F12 below pin what
+# the hooks do with them.
 #
 # The writer used to read HEAD and hash the live `<base>...HEAD` at write time, so a
 # commit landing while reviewers ran was pinned to a marker nobody reviewed, and a
@@ -5729,25 +5730,37 @@ rmdir "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null
 # K33b (contract pin): a newer run's marker lands at the same path between this writer's
 # write and its second read. It is not the bytes this process wrote -- the marker now
 # names its run, so two runs never write identical bytes -- so the writer must leave it
-# alone, and still refuse. A `cat` shim on PATH is the hook point: the second read is the
-# first `cat` of the run file once the marker exists, and there the shim runs a whole
-# newer gate run (revoke, then a write with its id), once. The newer run's id is checked,
-# so a shim that never fired cannot leave this green. Mutation-checked: removing the
-# byte comparison (the writer then removes whatever is at the path) turns it red.
-K33BIN="$TMP/k33bbin"; mkdir -p "$K33BIN"
+# alone, and still refuse. The run file is read with the `read` builtin, so there is no
+# external command between the write and the second read to hook. Instead the newer run is
+# split in two around them: a stand-in environment probe in a scratch copy of scripts/
+# (it runs after the first read and before the write) starts the newer run with a
+# `--revoke`, so the second read sees a newer id; then a `cat` shim on PATH, firing on the
+# writer's `cat` of the MARKER in its superseded path, lands the newer run's write first.
+# The newer run's id is checked, so a hook that never fired cannot leave this green.
+# Mutation-checked: removing the byte comparison (the writer then removes whatever is at
+# the path) turns it red.
+K33BIN="$TMP/k33bbin"; mkdir -p "$K33BIN/scripts"
 K33CAT="$(command -v cat)"
+cp -p "$PLUGIN"/scripts/*.sh "$K33BIN/scripts/"
+cat > "$K33BIN/scripts/forgeward-detect-environment.sh" <<K33BEOF
+#!/usr/bin/env bash
+if [ ! -e "$K33BIN/started" ]; then
+  : > "$K33BIN/started"
+  "$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p' > "$K33BIN/newer"
+fi
+K33BEOF
 cat > "$K33BIN/cat" <<K33BEOF
 #!/usr/bin/env bash
-if [ ! -e "$K33BIN/fired" ] && [ -e "$KMARK" ] && [ "\${1:-}" = "$KCOMMON/forgeward-gate-runs/$KH" ]; then
+if [ ! -e "$K33BIN/fired" ] && [ -s "$K33BIN/newer" ] && [ "\${1:-}" = "$KMARK" ]; then
   : > "$K33BIN/fired"
-  run="\$("$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
-  "$WRITE" main privacy "$KB" "$KH" "\$run" >/dev/null 2>&1 && printf '%s\n' "\$run" > "$K33BIN/newer"
+  "$WRITE" main privacy "$KB" "$KH" "\$("$K33CAT" "$K33BIN/newer")" >/dev/null 2>&1 \
+    || : > "$K33BIN/newer-refused"
 fi
 exec "$K33CAT" "\$@"
 K33BEOF
-chmod +x "$K33BIN/cat"
+chmod +x "$K33BIN/cat" "$K33BIN/scripts/forgeward-detect-environment.sh"
 rm -f "$KMARK"; krun "$KH"; K33BRUN="$KRUN"
-kout="$(cd "$KR" && PATH="$K33BIN:$PATH" "$WRITE" main privacy "$KB" "$KH" "$K33BRUN" 2>&1)"; kst=$?
+kout="$(cd "$KR" && PATH="$K33BIN:$PATH" "$K33BIN/scripts/forgeward-write-marker.sh" main privacy "$KB" "$KH" "$K33BRUN" 2>&1)"; kst=$?
 K33BNEW="$("$K33CAT" "$K33BIN/newer" 2>/dev/null)"
 khex "$K33BRUN" && khex "$K33BNEW" && [ "$K33BNEW" != "$K33BRUN" ] \
   && [ "$kst" -eq 1 ] && [ -f "$KMARK" ] && [ "$(kfield run_id)" = "$K33BNEW" ] \
@@ -5792,6 +5805,24 @@ rm -f "$KMARK"; krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"
   && ok "K40: a marker write leaves a sibling branch's marker at another commit byte-identical" \
   || nok "K40: a marker write changed a sibling branch's marker" "st=$kst out=$kout"
 rm -f "$KMDIR/kother.json"
+
+# K41: a run file gets the marker's mode, which the umask decides. Under 022 it is the
+# PRE-FIX control (e9ab0e0 left every run file 0600, mktemp's mode, beside a 0644 marker);
+# under 077 it is the WRONG-FIX control for a fixed `chmod 644`, which would make the run
+# file readable where the marker is not. Modes are read with python3 (`stat -c` is GNU-only).
+# Mutation-checked: dropping the chmod from record_run turns the 022 leg red.
+kmode() { python3 -I -c 'import os,sys; print("%04o" % (os.stat(sys.argv[1]).st_mode & 0o777))' "$1" 2>/dev/null; }
+k41() { # k41 <umask>: a gate run (revoke, then write) under <umask>; prints "<run-mode> <marker-mode>"
+  local run
+  rm -f "$KMARK" "$KCOMMON/forgeward-gate-runs/$KH"
+  run="$(cd "$KR" && umask "$1" && "$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$KR" && umask "$1" && "$WRITE" main privacy "$KB" "$KH" "$run" ) >/dev/null 2>&1 || return 1
+  printf '%s %s\n' "$(kmode "$KCOMMON/forgeward-gate-runs/$KH")" "$(kmode "$KMARK")"
+}
+k41_022="$(k41 022)"; k41_077="$(k41 077)"
+[ "$k41_022" = "0644 0644" ] && [ "$k41_077" = "0600 0600" ] \
+  && ok "K41: a run file's mode equals its marker's: 0644 under umask 022, 0600 under 077" \
+  || nok "K41: a run file's mode differs from its marker's" "022: ${k41_022:-write failed}; 077: ${k41_077:-write failed} (run marker)"
 
 # =============================================================================
 # F1..F10 -- both hooks accept a PASS only while the gate run that wrote it is still the

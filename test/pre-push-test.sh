@@ -751,6 +751,31 @@ rm -f "$XRUNS/$XSLV"
 [ "$p42_absent" = 0 ] && [ "$p42_link" = 1 ] && xblocked sl "$XSLV" \
   && ok "P42: a dangling symlink at the pushed commit's run-file path -> BLOCKED; with the path absent -> ALLOWED" \
   || nok "P42: a dangling run-file symlink was not counted" "absent=$p42_absent link=$p42_link out=$OUT"
+
+# P43: the writer and this hook read a run file the same way -- its FIRST line. Leg A, a
+# run file holding the run id and then another line: both accept (PRE-FIX control:
+# e9ab0e0's writer read the whole file with `cat` and refused while the hook accepted).
+# Leg B, the run id on the SECOND line: both refuse (WRONG-FIX control for reading the
+# last line or matching the id on any line; green on e9ab0e0). Leg B's marker is a valid
+# PASS written before the run file is rewritten, so only the run file refuses it.
+# Mutation-checked: restoring `cat` in the writer's current_run turns leg A red.
+P43SUP='superseded this one (or no run is recorded for that commit); nothing was written.'
+( cd "$RX" && git checkout -qb tl main && echo 'const tl = 1;' > tl.js && git add -A \
+   && git commit -qm tl ) >/dev/null 2>&1
+XTL="$(git -C "$RX" rev-parse HEAD)"
+XRUN="$(cd "$RX" && "$WRITE" --revoke "$XTL" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+printf '%s\nsecond line\n' "$XRUN" > "$XRUNS/$XTL"
+p43_aw="$(cd "$RX" && "$WRITE" main privacy "$XB" "$XTL" "$XRUN" 2>&1)"; p43_awrc=$?
+xpush tl "$XTL"; p43_arc=$RC; p43_aout=$OUT
+xgate "$XTL"
+printf '%s\n%s\n' "$(printf 'c%.0s' $(seq 40))" "$XRUN" > "$XRUNS/$XTL"
+xpush tl "$XTL"
+p43_bw="$(cd "$RX" && "$WRITE" main privacy "$XB" "$XTL" "$XRUN" 2>&1)"; p43_bwrc=$?
+[ "$p43_awrc" = 0 ] && [ "$p43_arc" = 0 ] && [ "$p43_bwrc" = 1 ] && xblocked tl "$XTL" \
+  && case "$p43_bw" in *"$P43SUP"*) true ;; *) false ;; esac \
+  && ok "P43: run id on the first line -> the writer and the hook both accept; on the second line -> both refuse" \
+  || nok "P43: the writer and the hook disagree on a two-line run file" \
+         "A: write=$p43_awrc push=$p43_arc ($p43_aw / $p43_aout) B: write=$p43_bwrc push=$RC ($p43_bw / $OUT)"
 git -C "$RX" checkout -q main >/dev/null 2>&1
 
 [ "$CAPTURE_LEAK" = 0 ] \

@@ -69,7 +69,10 @@ Revoke's deletions are not hygiene: a branch's marker may certify an earlier com
 the same diff whose run that revoke does not touch, so the deletion is what stops a later
 commit on the branch, with no run file of its own, pushing on it. They are also the only
 revocation an enforcer installed before 0.31.0 sees. The advice to drop the loop as a
-simplification is rejected for that reason.
+simplification is rejected for that reason. The writer reads a run file's first line,
+exactly as `run_is_current` does (it read the whole file, so the two disagreed on a run
+file with a second line), and gives the file the marker's umask-derived mode before the
+rename (mktemp's `0600` survived the rename).
 
 **Rejected:** re-checking a run file's age before deleting it, which still races, and a
 lock, which this design does not take (a stale lock left by a killed run would wedge the
@@ -84,7 +87,8 @@ byte-identical), K40 (a sibling branch's marker survives a write), F11 (both sna
 functions byte-identical), F12 (the reminder, a marker swapped mid-hash);
 `test/pre-push-test.sh` P40 (the enforcer, the same swap), P41 (a follow-up commit after
 a failed run on its branch is refused), P42 (a dangling symlink at the pushed commit's
-run-file path counts as a run file).
+run-file path counts as a run file), P43 (the writer and the hook agree on a two-line run
+file); `test/gate-test.sh` K41 (run-file mode equals marker mode under umask 022 and 077).
 
 ## DECISION — the run file, not revoke's name list, decides whether a PASS still stands
 
