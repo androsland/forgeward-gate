@@ -1068,6 +1068,25 @@ themselves so that none of them requires the commit to be actionable.
   commit. **What would settle it:** tell reviewers to read context with
   `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
   read files from disk). **Priority:** P3
+- **An interrupted gate run's leftovers become the next run's baseline.** (upstream-lenses
+  spec §5.4, hole review of the PR 2 revision, 2026-11-17) The user interrupting a gate
+  skips the workspace check, and a reviewer still running afterwards can write into the
+  repo. The next run snapshots that as its baseline, and a PASS hands it to `/ship`, which
+  stages and commits: the original `C:` incident with an interrupt in the middle. §5.4
+  tells the user to run `git status` before re-running. **What would settle it:** a
+  per-worktree "open run" pointer written by `snapshot` and cleared once the check runs;
+  the next `snapshot` checks against the open run's baseline first and halts once on new
+  paths only, since a halt on every difference would fire after every interrupt and teach
+  people to ignore it. Measure how often a reviewer outlives an interrupt before building
+  it. **Priority:** P2
+- **Codex's live spawn catalog may not offer the pinned reviewer model.** (hole review of
+  the PR 2 revision, 2026-11-17) Step 2 pins every Codex reviewer launch to
+  `model: "gpt-5.6-terra"`. A Codex consult running `gpt-6.1-sol` reported that its
+  session's `spawn_agent` model catalog did not list `gpt-5.6-terra`. That is an interface
+  observation, not a tested launch failure. If it holds, every Codex gate run ends
+  launch-failed, which is fail-closed but unusable. **What would settle it:** one real Codex
+  gate run on a one-line diff, recording whether the pinned launch is accepted.
+  **Priority:** P2
 
 ## Standalone posture (no gstack installed)
 
@@ -2716,9 +2735,9 @@ back deliberately so a four-figure prose diff would not bury a script change, an
 shipped on its own branch instead.
 
 - **A PASS certifies the commits the reviewers were given, and every run withdraws the
-  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. **Not
-  merged when this was written.** Check with `git merge-base --is-ancestor` before
-  reading it as landed.) PR 1 of the seven-PR upstream-lenses stack
+  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. Merged as
+  #71 on 2026-11-17, merge commit `50aa301`, checked with `git merge-base --is-ancestor
+  50aa301 origin/master`.) PR 1 of the seven-PR upstream-lenses stack
   (`docs/upstream-lenses-design.md`). Step 0 freezes both commits; the writer takes them,
   refuses on a moved `HEAD` or a diff-changing base move, and hashes the frozen pair;
   `--revoke` runs before Step 2 and on every later outcome that ends without a marker.

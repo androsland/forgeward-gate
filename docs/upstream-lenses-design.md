@@ -1,6 +1,8 @@
 # Upstream lenses — design
 
-**Status:** approved 2026-11-16, after two hole reviews · **Date:** 2026-11-14 ·
+**Status:** approved 2026-11-16, after two hole reviews; §5 revised 2026-11-17 for PR 2,
+after two more (§5.6) ·
+**Date:** 2026-11-14 ·
 **Targets:** 0.31.0 – 0.37.0 (a seven-PR stack) · **Upstream pinned:** gstack
 `0ead11c8e20a82e249f36c3abf89599dfe602324`
 
@@ -288,38 +290,126 @@ The rule: a marker certifies exactly the commits the reviewers were given.
 
 ## 5. Step 2 integrity (PR 2)
 
+**Revised 2026-11-17, before PR 2 was planned.** The approved text was written before PR 1
+existed. Reading it against the merged 0.31.0 code and the current runtimes changed it, and two
+hole reviews of the revision changed it again (§5.6). None of this reopens a decision in §2.
+
+- **PR 1 made the per-commit run file the authority** (§4.3). The guard records the run file of
+  the commit Step 0 froze, so a reviewer that runs `--revoke` is reported as a workspace change.
+  Without that record, it would surface later as a writer refusal that blames "a later gate run".
+- **The marker record covers every name revoke withdraws,** not only "this branch". PR 1's
+  revoke deletes the marker of every local branch at the reviewed commit, under both spellings.
+- **Hashing as first written would have wedged the gate on ordinary repo shapes.** Measured on
+  git 2.34.1:
+  - `git hash-object` follows a symlink, so a link into a file outside the repo read as
+    changed whenever that file changed;
+  - it exits 128 on a dangling symlink;
+  - it exits 128 on a directory, which is how git lists a dirty submodule (` M sm`);
+  - it exits 128 on an untracked nested repository, which git lists as one `nested/` entry even
+    under `--untracked-files=all`;
+  - it blocks forever on a FIFO standing where a tracked file was, which git lists as ` M a`.
+- **`git status` refreshes and rewrites the index when it can take the lock.** The guard runs it
+  with `--no-optional-locks`.
+- **The Claude Code Agent tool on this build has no foreground option.** Every reviewer launch
+  returns at once with an agent id, and the result arrives later as a completion notice. §5.3 is
+  written for that, and for Codex's `wait_agent`, which can return on a timeout before any agent
+  finishes.
+- **§5.3 and §5.4 contradicted each other.** One said a reviewer that "times out" is stopped; the
+  other said the gate imposes no deadline. The deadline stays out. "Timed out" now means only a
+  timeout the runtime reports.
+
+The maintainer chose the shape of §5.3 on 2026-11-17: a **single funnel**. Every path through
+Step 2 that gets past the snapshot, and is not interrupted, ends at one guard check, and Step 3
+decides on its result.
+
 ### 5.1 Workspace guard v2
 
-`forgeward-workspace-guard.sh snapshot` prints a versioned manifest. `check <file>` rebuilds it
-and reports every difference, **in both directions**. Recorded:
+**Interface.**
 
-- `HEAD`;
-- the index, as a hash of `git ls-files -s -z`;
-- `refs/stash`;
-- every dirty, deleted or untracked path from
-  `git status --porcelain -z --no-renames --untracked-files=all`, with a content hash per file;
-- the effective `core.hooksPath` value, and the content of the `pre-push` hook it resolves to;
-- this branch's marker file, by content.
+- `forgeward-workspace-guard.sh snapshot <HEAD_SHA>` prints a manifest on stdout.
+- `forgeward-workspace-guard.sh check <snapshot-file>` rebuilds the manifest and compares the two
+  **in both directions**.
 
-Content hashes come from `git hash-object --no-filters` without `-w`, so nothing is written to
-the object store, and git stays the only dependency. Paths are keyed in a line-safe form, so a
-path holding a newline cannot forge a record. That is the existing guard's `quotepath` reasoning,
-carried over.
+`<HEAD_SHA>` is the commit Step 0 froze. It follows the marker writer's rule: a full commit id
+that resolves to itself, or exit 64. If the live `HEAD` is not that commit, `snapshot` exits 2
+and says `HEAD` moved since Step 0. Reviewing would cost minutes, and the writer would refuse at
+the end anyway. The run file and markers the guard records are those of `<HEAD_SHA>`, which the
+manifest carries, so `check` needs no second argument.
 
-`check` reports each difference in plain words:
+**Every collection runs from the worktree root** (`git rev-parse --show-toplevel`), whatever the
+caller's directory. From a subdirectory, `git status --porcelain` still prints root-relative
+paths, while `git ls-files` covers only that subtree and prints paths relative to it (measured).
 
-- a new path;
-- a path that left the dirty set (a commit, a checkout, a stash or a delete took it);
-- changed content;
-- `HEAD` moved;
-- the index changed;
-- the stash changed;
-- the pre-push hook changed;
-- `core.hooksPath` changed;
-- this branch's marker appeared or changed.
+**The manifest.** The first line is `forgeward-workspace-guard v2 <HEAD_SHA>`. The last line is
+`end <n>`, where `n` counts the records between them. One record per line:
 
-The "new path" message keeps today's advice. Do not delete anything yourself, and give the user
-the `rm -rf -- "./C:"` form.
+- **`HEAD`**: the commit, and the branch `HEAD` is on, or `detached`. A switch to a sibling
+  branch at the same commit is a change.
+- **The index**: a hash of `git ls-files -s -v -z`. It carries each entry's tag letter, so
+  setting `skip-worktree` or `assume-unchanged` is seen. Measured: after either flag is set, an
+  edit to the file is invisible to `git status`, and the `ls-files -s` output is unchanged. The
+  output carries no stat data, so an editor's background `git status` refreshing timestamps is
+  not a change.
+- **The stash**: `refs/stash`, resolved through git rather than read as a file, so a
+  `pack-refs` in between changes nothing.
+- **Every entry `git status` reports**, from
+  `git --no-optional-locks status --porcelain -z --no-renames --untracked-files=all --ignore-submodules=none`.
+  Each entry is keyed by its path in a line-safe form, so a path holding a newline or a tab
+  cannot forge or hide a record. It carries its two status letters and a value set by its kind.
+  The kind is decided with `[ -L ]`, `[ -d ]` and `[ -f ]` before anything is opened:
+
+  | Kind | Value |
+  |---|---|
+  | regular file | `git hash-object --no-filters` content hash, without `-w`, so nothing reaches the object store |
+  | symlink | the hash of its target text, which is the blob git itself stores for a link. The link is never followed. |
+  | gone (deleted, or vanished before it was classified) | `absent` |
+  | FIFO, socket or device | `special`. Never opened. |
+  | submodule, or untracked nested repository | its checked-out commit; `no-commit` when it has none; `unreadable` when git cannot open it as a repository |
+  | other directory entry | `dir` |
+  | a file that exists but cannot be read | `unreadable` |
+
+- **The hooks**: `core.hooksPath` as git resolves it for this worktree, and **every file in the
+  effective hooks directory**, by name and content. Where gstack's wrapper owns `pre-push`,
+  forgeward's enforcer is `pre-push.local` beside it (`forgeward-install-pre-push.sh`), so
+  recording `pre-push` alone would miss the hook that does the work.
+- **The opt-in switch**: the value of `forgeward.gate`, or `absent`. The pre-push hook exits 0
+  unless it reads `enabled`, so unsetting it turns enforcement off just as deleting the hook does.
+- **This commit's run file**, `<common-dir>/forgeward-gate-runs/<HEAD_SHA>`, by content, or
+  `absent`.
+- **The markers revoke withdraws for `<HEAD_SHA>`**: every local branch at that commit, under
+  both spellings, plus the literal `HEAD` key when detached. Each is recorded by content, and
+  only when the file exists.
+  - The guard must enumerate the same names `--revoke` does. Both take them from one
+    implementation, kept byte-identical in both scripts the way `run_is_current` and
+    `marker_get` are.
+  - The writer runs with `set -e` and the guard without it, so identical text is not identical
+    behaviour. The test therefore derives one list from the other on a fixture (§5.5), and
+    does not rely only on comparing the bytes.
+
+`snapshot` also prints a **coverage note** on stderr naming every entry it recorded without
+content (`special`, `unreadable`), so the blind spot in §5.4 is shown on the run it applies to.
+
+**`check <file>`** reports every difference, one plain line each:
+
+| Difference | Line |
+|---|---|
+| a record only in the rebuilt manifest | a new path, hook file or marker |
+| a record only in the snapshot | a path left the dirty set (a commit, checkout, stash, reset or delete took it), or a hook file or marker went away |
+| same key, different value | changed content, or kind, or status letters |
+| `HEAD` | moved, or switched branch |
+| index, stash, `core.hooksPath`, `forgeward.gate` | that it changed, named |
+| run file, marker | that it changed. The gate revokes next. |
+
+Each line says the change came from "a reviewer, or someone working in this checkout". The guard
+cannot tell which (§5.4).
+
+The advice under the lines carries over from today and grows by one:
+
+- **A new path:** never delete it yourself, because only the user can confirm where an untracked
+  file came from. Give the `rm -rf -- "./C:"` form; a bare `C:` resolves to the drive root under
+  Git Bash.
+- **Changed content in a file that was already dirty:** the user's uncommitted work may have been
+  edited, `git diff` shows what is there now, and the gate cannot restore the earlier content.
 
 **Exit codes, distinct on purpose:**
 
@@ -327,78 +417,436 @@ the `rm -rf -- "./C:"` form.
 |---|---|
 | 0 | unchanged |
 | 1 | changed |
-| 2 | **could not check**: the snapshot file is missing or unreadable, its version header is wrong or absent (a v1 path list included), or git failed while rebuilding the manifest |
-| 64 | usage error |
+| 2 | **could not check**. Any of: the snapshot is missing or unreadable; its header is wrong or absent (a v1 path list included); its `end` line is missing or its count is wrong (a truncated snapshot); `snapshot` found `HEAD` moved from `<HEAD_SHA>`; git failed while the manifest was being built; the directory is not a git repository |
+| 64 | usage error, including a `<HEAD_SHA>` that is not a full commit id resolving to itself |
 
-The gate treats 1 and 2 alike, as a halt with no marker. Today an unreadable snapshot reads as
-clean, because `comm … || true` swallows the failure and empty output means exit 0. That is a
-false PASS on the integrity check, and it is gone.
+`snapshot` exits 2 when it cannot build the manifest, and then prints nothing on stdout.
 
-`snapshot` exits 2 when it cannot build the manifest. The gate then stops before spawning
-anything.
+Today's guard has two holes here, and both close:
+
+- It exits 0 outside a repository.
+- It reads an unreadable snapshot as clean. `comm … || true` swallows the failure, and empty
+  output means exit 0. That is a false PASS on the integrity check.
+
+**How it is built.** These constraints bind the implementation:
+
+- **Tools.** git, and bash 3.2. That rules out associative arrays, `mapfile` and `${x,,}`; the
+  repo targets bash 3.2, and a bash-4 expansion is a syntax error there. Beyond those, only
+  `sort`, `comm`, `awk` and plain `readlink`, called without GNU-only flags (`sort -z`,
+  `readlink -f`, `stat -c`), and never `od`.
+- **Comparison.** Both manifests are sorted under `LC_ALL=C` and compared with every failure
+  checked. `git status` prints tracked and untracked entries as separate groups, not in one path
+  order (measured).
+- **Reading entries.** NUL-delimited output is read with `read -r -d ''`, never captured into a
+  variable, which would drop the NULs.
+- **Hashing.** Content is hashed by git and never captured with `$(…)`, which strips trailing
+  newlines. Paths without a newline go through one `git hash-object --no-filters --stdin-paths`
+  batch; that option has no `-z`, so each remaining path costs one process.
+- **No writes.** Nothing goes to the object store (no `-w`) or to the index
+  (`--no-optional-locks`). `LC_ALL=C` is set as in every shipped script.
+- **Exits.** No function that can `exit` is called inside a command substitution (the CLAUDE.md
+  swallowed-exit bullet).
+- **Pinned.** A test runs the guard with `PATH` restricted to that tool set (§5.5).
 
 ### 5.2 The run directory
 
-Step 2 creates one directory per run, `RUN_DIR="$(mktemp -d "$ART/run.XXXXXX")"`, inside the
-artifact directory and outside the repo. It prints `RUN_DIR` for literal reuse. A failed `mktemp`
-stops the gate; it never falls back to an empty prefix (the CLAUDE.md `mktemp` bullet). The
-snapshot lives there, and PR 5's matrix file does too. A per-run directory means no file from an
-earlier run can be read as this run's.
+Step 2 creates one directory per run and prints its path in the same command:
 
-### 5.3 Reviewer lifecycle, and the guard on every exit
+```bash
+ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")" || exit 1
+RUN_DIR="$(mktemp -d "$ART/run.XXXXXX")" || exit 1
+printf 'RUN_DIR=%s\n' "$RUN_DIR"
+```
 
-- **Await every reviewer.** On Claude Code, spawn with `run_in_background: false` where the Agent
-  tool offers it. A launch receipt means the agent went to the background, and its completion
-  notice must be awaited: a receipt is never a result. On Codex, await each subagent's final
-  message.
-- **A reviewer that errors or times out is stopped, and confirmed stopped,** before the gate
-  goes on: Claude Code's task-stop facility, or Codex's own cancel or close call. That matches
-  upstream's dispatcher ("confirm it stopped and record its review as incomplete"). It is
-  reported as **incomplete**, which is separate from findings, and no marker is written. An
-  incomplete blocking axis cannot return PASS.
-- **The guard check runs on every exit from Step 2**: PASS, FAIL, incomplete, spawn failure, or
-  an unknown runtime. It runs after every reviewer is accounted for, meaning returned or
-  confirmed stopped. Today the stop paths skip it. Contamination left by a reviewer that then
-  crashed went unreported, and the next run's snapshot baselined it, so it could never be
-  reported again.
-- **If a reviewer cannot be confirmed stopped,** the guard still runs and its result is printed,
-  with: `a reviewer may still be running; anything it writes from now on is unchecked.`
-- **Order of exits on any non-PASS outcome:** guard check, then `--revoke` (§4.3), then the
-  report.
+Every later command writes the printed path literally. **Today's Step 2 depends on a shell
+variable surviving between commands.**
 
-### 5.4 What the guard still cannot see
+- It snapshots to `$ART/tree-before.txt` in one command and checks that path in a later one,
+  where `$ART` is no longer set.
+- That contradicts the skill's own Runtime section: "do not assume a shell export will persist
+  across tool calls".
+- Running `forgeward-artifact-dir.sh` again does not recover the path, because it hands each
+  process a different directory (`$$`).
 
-These go into the guard's header list, which stays the only maintained copy.
+**Outside the repo, physically.** `forgeward-artifact-dir.sh` today rejects a root inside the
+checkout by comparing text. A symlink alias, or a `..` in `FORGEWARD_ARTIFACT_ROOT` or `TMPDIR`,
+passes that comparison and lands inside the tree. Its own snapshot file would then read as a
+changed path on every run. The helper now resolves both sides with `cd … && pwd -P` before it
+compares, keeping its existing fallback to `/tmp`.
+
+- **The snapshot** is `<RUN_DIR>/snapshot`.
+- **No reviewer is ever given `<RUN_DIR>`.** The baseline lives there, and a reviewer holding
+  Bash that was handed the directory could rewrite the baseline after contaminating the tree.
+  PR 5's matrix file therefore gets its own directory (§9.2).
+- **A failed `mktemp` stops the gate**, with the stop line in §5.3. It never falls back to an
+  empty prefix (the CLAUDE.md `mktemp` bullet).
+- **One directory per run** means no file from an earlier run, including one under a reused
+  process id, can be read as this run's.
+- **Run directories are not deleted.** Each holds one manifest, and cleanup is left to the temp
+  directory's own (§5.4).
+
+### 5.3 The funnel: reviewer lifecycle, and one guard check
+
+Step 2 becomes four parts. Step 3 decides on what they produce.
+
+**2a, start the run.** In this order:
+
+1. `--revoke "<HEAD_SHA>"`, which is PR 1's and unchanged.
+2. The run directory (§5.2).
+3. `snapshot "<HEAD_SHA>" > "<RUN_DIR>/snapshot"`.
+
+Each of the three can fail, and each failure stops the gate before anything is launched:
+
+| Fails | Stop line |
+|---|---|
+| revoke | PR 1's, unchanged |
+| run directory | `forgeward gate: could not create this run's directory outside the repo (the reason is above). Nothing was reviewed; the earlier PASS for this commit was already withdrawn.` |
+| snapshot | `forgeward gate: could not record the workspace before review (the reason is above). Nothing was reviewed; the earlier PASS for this commit was already withdrawn.` |
+
+These are the only ways out of Step 2 that skip the check, apart from an interrupt (§5.4).
+Nothing has been launched, so there is nothing to check for, and no baseline to check against.
+
+**2b, launch.** Launch every fired reviewer, with the same context and runtime pins as today.
+Record every agent id the runtime returns.
+
+- **Claude Code** launches the whole batch in one message, so every launch in it has already run.
+  Record the id from each receipt.
+- **Codex** spawns one at a time. After a failed spawn, spawn no more. The reviewers left
+  unlaunched are **not-started**.
+
+**A launch fails**, or the runtime is neither Claude Code nor Codex: stop every reviewer that
+did start (2c), mark the run **launch-failed**, and go to 2c.
+
+**2c, account for every reviewer.** Each fired reviewer ends in exactly one state:
+
+| State | Meaning |
+|---|---|
+| **returned** | its final output arrived |
+| **errored** | the runtime reported that it failed, or that it timed out and has ended |
+| **stopped** | the gate stopped it, and the runtime confirmed the stop |
+| **unconfirmed** | the gate asked for a stop, and the runtime did not confirm it |
+| **not-started** | Codex only: never launched, because an earlier launch failed |
+
+The gate goes on to 2d once every fired reviewer is in one of these states.
+
+**Only output from an agent id recorded in 2b counts.** A completion notice from any other id is
+ignored, and the report names it. An earlier gate run that was interrupted can leave its
+reviewers running, and their verdict lines carry no run identity. Without this rule, run N's
+`SECURITY VERDICT: PASS` arriving during run N+1 would be counted as N+1's.
+
+**The gate stops reviewers on two paths only:**
+
+- **launch-failed**, as above;
+- **cancelled**: the user asks the gate to stop while reviewers are pending.
+
+On either path it stops every pending reviewer and goes to 2d.
+
+**While reviewers are pending,** any other user message gets one line saying the gate is waiting
+for reviewers and can be cancelled. It never changes the outcome.
+
+**No deadline.** The gate never starts a stop on its own clock. A reviewer that hangs holds the
+gate until the user cancels or interrupts it.
+
+**Per runtime:**
+
+- **Claude Code.** A launch reply that carries an agent id instead of the reviewer's output is a
+  launch receipt. **A receipt is never a result.** Wait for that agent's completion notice; its
+  output is the reviewer's output. Never infer, predict or summarise a pending reviewer's result.
+  - To stop one, call TaskStop with its agent id. The stop is confirmed only when TaskStop
+    reports success.
+  - TaskStop may be a deferred tool that must be loaded first (ToolSearch,
+    `select:TaskStop`). Both go into the gate's `allowed-tools`.
+- **Codex.** Wait with `wait_agent` on the recorded ids until each has a final status.
+  - A return with `timed_out: true` carries no final status, so wait again. Observed:
+    `{"message":"Wait timed out.","timed_out":true}`.
+  - To stop one, use `close_agent` where the runtime exposes it, otherwise `interrupt_agent`.
+    The stop is confirmed when `list_agents` or `wait_agent` no longer reports it running.
+  - Which of these a session exposes is a runtime property. Codex CLI 0.160.0 carries all
+    five, but one live session exposed `wait_agent`, `interrupt_agent` and `list_agents` and no
+    `close_agent`. So the skill describes the capability and names the calls only as examples.
+
+**2d, check the workspace.** Run `check "<RUN_DIR>/snapshot"` once every reviewer is accounted
+for. It runs exactly once on every path that got past 2a's snapshot and was not interrupted.
+Record its exit status and print its output.
+
+If any reviewer is **unconfirmed**, print right after the check:
+
+`forgeward gate: a reviewer may still be running; anything it writes from now on is unchecked.`
+
+**A valid verdict** is exactly one line `<AXIS> VERDICT: PASS` or `<AXIS> VERDICT: FAIL` naming
+the reviewer's own axis. Anything else is **incomplete**:
+
+- no such line;
+- two such lines;
+- another axis, or another word;
+- an errored, stopped, unconfirmed or not-started reviewer.
+
+So every fired reviewer is exactly one of PASS, FAIL or incomplete.
+
+**Step 3 decides in this order.** The first match wins:
+
+| # | Condition | Outcome |
+|---|---|---|
+| 1 | guard exit 1 | **halt: the workspace changed** |
+| 2 | guard exit 2, or any other non-zero | **halt: the workspace could not be checked**. Never read as clean. |
+| 3 | launch-failed or cancelled | **no marker: the review did not run to completion** |
+| 4 | any blocking reviewer FAIL | **FAIL**. Any incomplete axes are listed too. |
+| 5 | any blocking reviewer incomplete | **no marker: incomplete** |
+| 6 | every blocking reviewer PASS | write the marker (PR 1's call, unchanged) |
+
+Rows 4–6 cover every combination, because each reviewer is exactly one of the three. Today every
+reviewer blocks; PR 6 adds the advisory exclusion (§10.2).
+
+**FAIL comes before incomplete** so that a measured Critical is reported with FAIL's stop line,
+which asks for a fix, not a re-run.
+
+**Rows 1–5 each revoke**, exactly as PR 1's no-marker outcomes do. Because the check ran in 2d,
+the order guard → revoke → report holds by construction.
+
+**Incomplete is reported apart from findings.** The report names each incomplete axis and why.
+An incomplete blocking axis cannot return PASS, which is today's rule. The change is that it is
+no longer *labelled* FAIL when nothing was measured.
+
+**The verdicts of reviewers that did return are printed under every row.** Contamination, or an
+incomplete sibling, does not invalidate a security finding.
+
+**Not taken: a new run id after 2d on every outcome.** One review proposed revoking again on the
+PASS row and writing with the new id, so that any marker written during review reads stale under
+any name. Revoke replaces the run file unconditionally. A slow run doing that could therefore
+replace the id of a newer run that started on the same commit, and its own write would then
+succeed where PR 1 requires it to be refused. Keeping "only the latest run's outcome can stand"
+outweighs closing a residual that needs a hand-forged marker (§5.4).
+
+### 5.4 What the guard and the funnel still cannot see
+
+The guard's entries go into its header list, which stays the only maintained copy.
+
+**Shapes the guard cannot see:**
 
 - **Writes to gitignored paths.** Snapshotting ignored trees such as `node_modules` costs too
   much to do on every run.
-- **Writes outside the repo,** including the installed plugin's own files and the
-  `PreToolUse` hook script.
-- **Writes under `.git/`** other than the index, `refs/stash`, the pre-push hook,
-  `core.hooksPath` and this branch's marker. That includes other hooks, other config keys and
-  other branches' markers. These are scoped on purpose. Another session in another worktree
-  legitimately writes config (`git push -u`), and its gate run writes other branches' markers.
-- **Who wrote it.** **Editing the repo during a gate run now halts the run**, because a user's
-  edit to an already-dirty file is indistinguishable from a reviewer's. The halt is the cost of
-  seeing reviewer edits. A `git stash` in **another worktree** also halts it, because the stash
-  ref is repo-wide. Both fail closed.
-- **A reviewer still running after the user interrupts the gate.** The marker was already
-  withdrawn (§4.3), so no PASS survives. Whatever the reviewer writes afterwards is unchecked,
-  and the next run's snapshot baselines it.
-- **No gate-imposed deadline.** A reviewer that hangs hangs the gate until the user interrupts
-  it, and that path is safe for the marker.
+- **An ignore rule added outside the tree.** A pattern added to `.git/info/exclude`, or to the
+  file `core.excludesFile` names, hides every later write it matches. A change to a tracked
+  `.gitignore` is itself a dirty entry, so it is seen.
+- **Writes outside the repo,** including the installed plugin's own files, the `PreToolUse`
+  hook script and the run directory.
+- **A symlink's target.** A link is recorded as its text, so a change to the file it points at
+  is not seen. That is deliberate, since the link may point outside the repo.
+- **Inside a submodule or a nested repository,** only the checked-out commit is recorded. An
+  edit inside one that is already dirty is not seen; one that makes a clean one dirty is.
+- **The content of `special` and `unreadable` entries.** It is accepted as unverified, and the
+  coverage note names those entries on every run. "Unreadable" does not mean unwritable: a
+  write-only file can change unseen, and its owner can change its mode.
+- **Writes under `.git/`** other than those listed in §5.1. That includes:
+  - every ref except `HEAD` and `refs/stash`: `git branch -f`, `git tag` and `git update-ref`
+    on another branch go unseen, and a moved branch changes what a later push publishes;
+  - other hooks' directories, and other config keys;
+  - other commits' markers and run files.
+
+  These are scoped on purpose. Another session in another worktree legitimately writes config
+  (`git push -u`) and its own gate run's files.
+- **A marker under a name revoke does not withdraw.** The pre-push hook also accepts a marker
+  under the destination branch name. A reviewer could write one naming this run's id, read from
+  the run file, but it would have to hand-write the marker JSON with a correct diff hash, and
+  forging markers by hand is outside the threat model (§4.4).
+- **A change undone before the check.** `check` compares two endpoints. An edit restored before
+  2d, or a write that races the snapshot itself, is not seen. The guard is not a write audit.
+- **Mode or timestamp changes with identical content.** Git reports a mode change on a tracked
+  file only when `core.fileMode` is on.
+
+**Changes the guard cannot attribute:**
+
+- **Editing the repo during a gate run halts the run,** because a user's edit to an already-dirty
+  file is indistinguishable from a reviewer's. The halt is the cost of seeing reviewer edits.
+- Two more cases also halt, and both fail closed:
+  - a `git stash` in **another worktree**, because the stash ref is repo-wide;
+  - a gate run started on the same commit from another worktree, because it rewrites the run
+    file. PR 1's writer would refuse this run's write anyway.
+
+**Limits of the funnel:**
+
+- **The gate's bookkeeping.** Which reviewers are accounted for in 2c, and which agent ids count,
+  is the orchestrating model's bookkeeping. Nothing deterministic checks it, because a read-only
+  reviewer has nowhere to record that it finished.
+- **An interrupted run.** The user interrupting the gate skips 2d, the revokes after it and the
+  report.
+  - No PASS from an **earlier** run survives, because 2a withdrew it.
+  - **A marker written during this run does.** A reviewer that runs the marker writer itself,
+    with the run id it can read from the run file, leaves a PASS that can authorize a push. The
+    guard is the only thing that sees it, and an interrupted run never reaches the guard. The
+    next gate run on that commit withdraws it in its own 2a.
+  - Whatever a still-running reviewer writes after the interrupt becomes the next run's
+    baseline. A PASS on that next run hands it to `/ship`, which stages and commits. **After
+    interrupting a gate, run `git status` before re-running it.** A check against the
+    interrupted run's snapshot is filed in `TODOS.md`.
+- **No gate-imposed deadline.** A reviewer that hangs holds the gate until the user cancels or
+  interrupts it.
+
+**Cost.** `snapshot` and `check` each read every dirty and untracked file once, and spend one
+process per path containing a newline. A checkout with large files that are untracked but not
+ignored pays for them on every run; ignoring them removes the cost. On Git Bash, process creation
+dominates the run time.
 
 ### 5.5 Tests
 
-- **Detection.** Each recorded field gets a fixture that changes only that field, and each
-  must report its own message: a new path, a path leaving the dirty set, content of an
-  already-dirty file, an untracked file's content, `HEAD`, the index, the stash, the hook,
-  `core.hooksPath`, the marker.
-- **Exit 2.** Exit 2 for a missing snapshot, a v1 path-list snapshot, and a truncated one.
-- **Mutation control.** Restore `|| true` on the comparison and confirm the truncated-snapshot
-  assertion reddens.
-- **Must-NOT-fire control.** A config write to `branch.<name>.remote` is not reported.
-- **Paths.** A path with a newline and one with a tab round-trip without forging a record.
+**`test/gate-test.sh`, the guard.**
+
+- **Detection.** Each recorded field gets a fixture that changes only that field. Each must exit
+  1 and print its own line:
+  - a new path;
+  - a path leaving the dirty set;
+  - changed content in an already-dirty tracked file;
+  - changed content in an untracked file;
+  - `HEAD` moving;
+  - a switch to a sibling branch at the same commit;
+  - the index, via `git add` of an already-dirty file;
+  - `skip-worktree` set on a clean tracked file;
+  - `assume-unchanged` set on a clean tracked file;
+  - the stash;
+  - `core.hooksPath`;
+  - the `pre-push` hook's content;
+  - `pre-push.local` appearing or changing;
+  - `forgeward.gate` unset;
+  - the run file;
+  - this branch's marker appearing;
+  - a sibling branch's marker, at the same commit, appearing.
+- **Must-NOT-fire controls.** Each must exit 0:
+  - a config write to `branch.<name>.remote`;
+  - a marker written for a branch at another commit, which is another worktree's gate run;
+  - `touch` on a clean tracked file;
+  - a change to the file an in-repo symlink points at, outside the repo.
+- **Where it runs.** `snapshot` taken from a subdirectory and `check` run from the root, and the
+  reverse, both exit 0 on an unchanged tree and detect an edit in a sibling directory.
+- **Frozen commit.**
+  - `snapshot` with a `<HEAD_SHA>` that is not the live `HEAD` exits 2 and says so.
+  - A short or symbolic one exits 64.
+- **Wedge controls.** Each shape below is present when the snapshot is taken. On an unchanged
+  tree, `snapshot` and `check` must each exit 0, run under `timeout`, so a hang fails the
+  assertion instead of the suite:
+  - a dangling symlink;
+  - a symlink to a file;
+  - a FIFO replacing a tracked file;
+  - a dirty submodule;
+  - an untracked nested repository;
+  - a nested repository with a broken gitfile, recorded as `unreadable`;
+  - an unreadable file. This one is skipped when running as root, where nothing is
+    unreadable, and the skip is printed.
+- **The guard writes nothing.** `.git/index` is byte-identical before and after `snapshot` and
+  `check`, on a tree where a tracked file's stat data is stale.
+- **Exit 2.** Each must exit 2, and the message must name the cause:
+  - a missing snapshot;
+  - a v1 path-list snapshot;
+  - a snapshot with its `end` line removed;
+  - a snapshot with a record removed;
+  - a run outside a repository;
+  - `git` failing, via a stub on `PATH`.
+- **Paths.** These round-trip without forging or hiding a record:
+  - a path with a newline;
+  - a path with a tab;
+  - a path that is a prefix of another.
+- **Agreement.** The guard's marker-name list and `--revoke`'s are derived from each other on a
+  fixture with a same-named tag and a detached `HEAD`, never copied. The byte-identity of the
+  shared implementation is pinned the way F1 pins `run_is_current`, with a floor so that an
+  empty extraction cannot pass.
+- **Tools.** The guard passes the detection and exit-2 fixtures with `PATH` holding only git,
+  bash, `sort`, `comm`, `awk` and `readlink`, the way R8 restricts the drift script.
+- **Artifact directory.** With `FORGEWARD_ARTIFACT_ROOT` set to a symlink into the repo, the
+  helper hands back a directory outside it.
+- **Mutation controls.** Each one must redden its named assertion:
+  - restore `|| true` on the comparison: the truncated-snapshot assertion;
+  - drop the `end` check: the same assertion;
+  - follow symlinks when hashing: the symlink-target control;
+  - drop `--no-optional-locks`: the index byte-identity assertion;
+  - drop `-v` from the index record: the skip-worktree assertion;
+  - drop the run-file record: the run-file assertion;
+  - record `pre-push` only: the `pre-push.local` assertion;
+  - collect from the caller's directory: the subdirectory assertion.
+- **Measured, not asserted.** The plan records the time `snapshot` and `check` take on 5,000
+  untracked files and on one 200 MB untracked file. A timing assertion would be flaky.
+
+**`test/dual-client-test.sh`, the skill text.**
+
+- Step 2 prints `RUN_DIR=` in the same block that creates it. The snapshot and the check both
+  name `<RUN_DIR>/snapshot`, and the snapshot passes `"<HEAD_SHA>"`. **No `$ART` survives in a
+  later command**, which pins the violating form.
+- Each of 2a's three stop lines is present, cut out between its own anchors.
+- The check command appears **exactly once** in the skill, in 2d. Between the launch in 2b and
+  the check in 2d, no line ends the run: every early exit in 2b says to go to 2c. PR 4 adds guard
+  check 1 between the stages (§8.1), and re-scopes this assertion to "once per stage, the last
+  after every reviewer of every stage is accounted for".
+- 2c carries:
+  - the recorded-id rule;
+  - the cancelled path;
+  - both runtimes' rules: the receipt sentence and TaskStop for Claude Code, and `wait_agent`'s
+    timeout sentence and both stop calls for Codex.
+- `allowed-tools` lists TaskStop and ToolSearch.
+- Step 3's rows appear in the §5.3 order, with FAIL before incomplete, and the existing
+  per-outcome revoke assertions (halt, refused, FAIL) keep passing. The incomplete and
+  launch-failed rows each carry their own revoke, cut out between their own anchors.
+
+**`live-test/LIVE-TEST.md`** gains one manual step that no suite can exercise. On a Claude Code
+gate run where the reviewers come back as receipts:
+
+- the run must wait for every completion notice before 2d;
+- a file the tester edits while reviewers run must halt the run;
+- typing "stop" while reviewers are pending must stop them, run 2d and report row 3.
+
+**Cross-cutting for this PR** (§12 is the general list):
+
+- **CLAUDE.md.** The swallowed-exit bullet cites the guard's `snap` at a line number and as an
+  EOF case. The rewrite falsifies both, so the bullet is amended in the same commit, keeping its
+  "state the property, not the count" rule.
+- **Docs that describe the guard.** README and the Rules section of `skills/gate/SKILL.md` are
+  re-read and amended.
+- **`TODOS.md`** gains two entries:
+  - a check against an interrupted run's snapshot (§5.4);
+  - the Codex runtime pin. One hole review reported that its live session's spawn catalog did
+    not list `gpt-5.6-terra`, which Step 2 pins. That is an interface observation, not a tested
+    launch failure.
+- **Release.** A `DECISIONS.md` entry, a CHANGELOG `### Fixed` entry, and the four version
+  files move to 0.32.0 together.
+
+### 5.6 What the hole reviews of this revision changed
+
+Two reviews walked this section against the merged code and the cases in §13. A fresh agent
+returned 20 findings and READY WITH FIXES. A Codex consult returned 16 and NOT READY. Most
+overlapped. The changes:
+
+- **Guard coverage.** The guard now also records:
+  - the index's `skip-worktree` and `assume-unchanged` flags;
+  - every hook file, so gstack's `pre-push.local` is seen;
+  - the `forgeward.gate` switch;
+  - the frozen commit, not the live `HEAD`.
+- **Guard robustness.** It now:
+  - collects from the worktree root;
+  - has a `special` kind for FIFOs;
+  - records a nested repository git cannot open as `unreadable`;
+  - follows a named tool set for bash 3.2, pinned by a restricted-`PATH` test.
+- **The run directory.** Containment is checked physically, and no reviewer is ever handed the
+  directory.
+- **The funnel.**
+  - The `not-started` state.
+  - The recorded-id rule.
+  - The cancelled path.
+  - TaskStop and ToolSearch in `allowed-tools`.
+  - Codex stop calls named by capability.
+  - All three pre-snapshot exits given stop lines.
+  - An exhaustive verdict rule.
+  - FAIL decided before incomplete.
+- **Claims withdrawn:**
+  - "no PASS survives" an interrupt;
+  - "the only way out that skips the check";
+  - "reviewers cannot read it either";
+  - "git and bash builtins, and nothing else".
+- **Elsewhere in the spec:** §8.1, §9.2, §10.2 and §13 were amended to match.
+
+**Not taken:**
+
+- **A new run id after 2d,** for the reason in §5.3.
+- **A run id in every verdict line.** It would change all eleven reviewer rubrics, and the
+  recorded-id rule covers the same case.
+- **A pointer that checks an interrupted run's leftovers** is filed in `TODOS.md` rather than
+  grown into this PR.
 
 ---
 
@@ -555,8 +1003,8 @@ them, and a duplicate is a confirmation, not noise.
    snapshot (§4.3, §5.2).
 2. **Stage 1:** the parallel batch, now including `targeted`, `state-machines` and
    `simplification` when fired.
-3. **Account for every stage-1 reviewer** (§5.3): each one returned a verdict line, or was
-   confirmed stopped and recorded as incomplete.
+3. **Account for every stage-1 reviewer** (§5.3, 2c): each ends in one of the five states. If
+   stage 1 was launch-failed or cancelled, skip steps 4–7 and go to step 8.
 4. When `state-machines` fired, run its matrix check (§9.2).
 5. **Guard check 1.** On exit 1 or 2, skip stage 2 and go to Step 3's halt. The outcome is
    already decided, and red-team would be reading a contaminated tree.
@@ -564,7 +1012,9 @@ them, and a duplicate is a confirmation, not noise.
    decision.
 7. **Stage 2:** if triggered, spawn `red-team-reviewer` alone, with the stage-1 findings (§8.4).
    The spawn has its own paragraph in SKILL.md, which restates the runtime literals (§8.6).
-8. **Guard check 2,** against the same snapshot, on every exit.
+8. **Guard check 2,** against the same snapshot, once red-team is accounted for under §5.3's
+   2c rules. It runs on every path that got past the snapshot and was not interrupted, stage 2's
+   own launch failure and a cancel included.
 9. **Step 3.**
 
 ### 8.2 The trigger
@@ -750,7 +1200,8 @@ the full diff itself.
 Red-team gets its own paragraph in Step 2, after stage 1. It is never in the stage-1 batch. The
 paragraph restates:
 
-- the Claude Code `subagent_type` and foreground/await rule;
+- the Claude Code `subagent_type`, and the rule that a launch receipt is never a result
+  (§5.3);
 - the three Codex literals: `model: "gpt-5.6-terra"`, `reasoning_effort: "medium"` and
   `fork_turns: "none"`;
 - Codex's await-the-final-message rule.
@@ -820,8 +1271,10 @@ independent control. forgeward has no parent JSON parser, so it gains a determin
 equivalent, `scripts/forgeward-state-matrix-check.sh <matrix-file> <head-sha>`.
 
 **The reviewer writes the matrix** to `<RUN_DIR>/state-matrix.tsv`. The gate passes that literal
-path in state-machines' launch context. It is outside the repo, in the run directory, so no file
-from another run can be read as this one. One tab-separated record per line:
+path in state-machines' launch context. It lives outside the repo in its own per-run directory
+(`<MATRIX_DIR>`, a separate `mktemp -d` beside `<RUN_DIR>`), so no file from another run can be
+read as this one. It is never inside `<RUN_DIR>`, because the guard's baseline lives there and no
+reviewer is handed that directory (§5.2). One tab-separated record per line:
 
 ```
 machine	<name>	<path>
@@ -965,13 +1418,14 @@ amended in the same commit.
 Its verdict line is `SIMPLIFICATION VERDICT: ADVISORY`, never PASS or FAIL. It is outside the
 verdict set Step 3 judges.
 
-- **If it errors, times out or returns no verdict line:** it is confirmed stopped like any
-  reviewer (§5.3), the guard still runs, and Step 3 prints
+- **If it errors, times out or returns no verdict line:** it is accounted for like any reviewer
+  (§5.3, 2c), the guard still runs, and Step 3 prints
   `Advisory (simplification): did not complete — no advice this run.` That is a disclosure, not
   a stop.
-- **Why the integrity duties still apply:** an advisory reviewer still holds Bash, so the guard
-  and stop confirmation apply to it in full. A simplification reviewer that cannot be confirmed
-  stopped halts the run **on integrity grounds**, never on its advice.
+- **Why the integrity duties still apply:** an advisory reviewer still holds Bash, so the guard,
+  the recorded-id rule and the stop rules apply to it in full. The advisory exclusion covers its
+  verdict, never its integrity. A simplification reviewer left **unconfirmed** after a stop
+  leaves the run without a marker **on integrity grounds**, never on its advice.
 - **Not in the writer's cross-check** (§8.2), because its absence blocks nothing.
 
 ### 10.3 The advisory relay in Step 3
@@ -1246,8 +1700,8 @@ Each PR updates, in the same commit as the behaviour:
 | 500-line diff, no security findings | The count is over 200 (an error would count as over). `simplification` runs in stage 1. Red-team fires on size, with the folded stage-1 findings. On all-PASS the writer re-counts and refuses if `red-team` is missing from `fired`. |
 | Security Critical on a 20-line diff | Stage 1 FAILs. Red-team fires anyway, because the trigger is the FAIL. The gate reports both, the guard runs, and the branch's marker is revoked. The re-run after the fix has no trigger (§8.7, accepted asymmetry). |
 | No gstack on the machine | Every reviewer is a port, and no classification or check needs a gstack binary: the matrix checker and line counter are forgeward's. The drift check is silent, the existing non-goal. |
-| Codex runtime | Stage 2 is its own paragraph with the three literals, asserted inside that sub-range. A Codex subagent's final message is awaited, and a failed one is cancelled and confirmed closed. |
-| A reviewer writes into the repo | Guard v2 reports a new path, a path leaving the dirty set, an already-dirty file's content, `HEAD`, the index, the stash, the pre-push hook, `core.hooksPath`, or this branch's marker. It runs on every exit, a crash included, and an error is exit 2, not clean. A forged marker is reported and then revoked. **Not seen:** gitignored writes, writes outside the repo, and other `.git/` writes (§5.4). |
+| Codex runtime | Stage 2 is its own paragraph with the three literals, asserted inside that sub-range. Each Codex subagent is awaited with `wait_agent` until it has a final status, and a timed-out wait is waited again. A reviewer is stopped only on a launch failure or a cancel, with whichever of `close_agent` and `interrupt_agent` the session exposes, and the stop is confirmed through `list_agents` (§5.3). |
+| A reviewer writes into the repo | Guard v2 reports a new path, a path leaving the dirty set, an already-dirty or untracked file's content, `HEAD` or its branch, the index and its `skip-worktree`/`assume-unchanged` flags, the stash, any hook file (`pre-push.local` included), `core.hooksPath`, `forgeward.gate`, the frozen commit's run file, or a marker under a name revoke withdraws. Every path that gets past the snapshot and is not interrupted ends at one check, a crashed or stopped reviewer included, and an error is exit 2, not clean. A marker under a name revoke withdraws is reported and then revoked. **Not seen:** gitignored writes, writes outside the repo, other refs and other `.git/` writes, a symlink's target, a change undone before the check, a hand-written marker under the destination name, and anything after an interrupt (§5.4). |
 | Upstream adds a specialist the day after release | The first gate run whose selected root holds it prints it, worded for installers and naming the root. A machine with no gstack, or whose selected root is older, prints nothing (§11.5 non-goal 8). |
 
 ## 14. Decided at spec review
