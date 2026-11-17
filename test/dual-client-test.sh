@@ -5,6 +5,16 @@ set -uo pipefail
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$PLUGIN/scripts/forgeward-gate-check.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits and the gate run's id since 0.31.0. Every caller
+# here gates the commit it just made, so both are resolved in the caller's cwd at call
+# time, and the run is minted the way Step 2 mints it: a `--revoke` of that commit, whose
+# `RUN_ID=` line is taken and whose other output is kept off this helper's stdout.
+write_marker() { # write_marker <base-ref> <fired-csv>
+  local head run
+  head="$(git rev-parse HEAD)"
+  run="$("$WRITE" --revoke "$head" | sed -n 's/^RUN_ID=//p')"
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$head" "$run"
+}
 HASH="$PLUGIN/scripts/forgeward-diff-hash.sh"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
 
@@ -103,10 +113,73 @@ EOF
   || nok "Gate reviewer dispatch coverage"
 
 case "$gate_step2" in
-  *'complete applicable'*'absolute repository root'*'`<base>` exactly'*'`HEAD` plus `$HEAD_SHA`'*'<base>...HEAD'*'required verdict format'*'Do not pass'*'the parent conversation'*)
+  *'complete applicable'*'absolute repository root'*'`<base>` exactly'*'`<BASE_SHA>` and `<HEAD_SHA>`'*'<BASE_SHA>...<HEAD_SHA>'*'required verdict format'*'Do not pass'*'the parent conversation'*)
     ok "reviewer launch context keeps the complete rubric and required repository/diff instructions" ;;
   *) nok "reviewer launch context contract" ;;
 esac
+
+# 0.31.0: the gate freezes its review subject in Step 0 and certifies exactly that.
+gate_step0="$(sed -n '/^## Step 0 — /,/^## Step 1 — /p' "$PLUGIN/skills/gate/SKILL.md")"
+gate_step3="$(sed -n '/^## Step 3 — Decide/,/^## Rules/p' "$PLUGIN/skills/gate/SKILL.md")"
+case "$gate_step0" in
+  *'BASE_SHA="$(git rev-parse --verify --quiet "<base>^{commit}")"'*'HEAD_SHA="$(git rev-parse --verify --quiet "HEAD^{commit}")"'*'full names exactly as printed'*)
+    ok "Step 0 freezes the review subject to two commit names before anything is scoped" ;;
+  *) nok "Step 0 frozen review subject" ;;
+esac
+# Pin the VIOLATING form, with a floor on the right one: the symbolic range may survive
+# only in the one sentence that translates rubrics written against it.
+symbolic_ranges="$(grep -o '<base>\.\.\.HEAD' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+frozen_ranges="$(grep -o '<BASE_SHA>\.\.\.<HEAD_SHA>' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+[ "$symbolic_ranges" -eq 1 ] && [ "$frozen_ranges" -ge 5 ] \
+  && ok "the gate reviews <BASE_SHA>...<HEAD_SHA> throughout; the symbolic range survives only where rubrics are translated" \
+  || nok "frozen review range" "symbolic=$symbolic_ranges frozen=$frozen_ranges"
+revoke_at="$(awk '/forgeward-write-marker\.sh" --revoke/{print NR; exit}' <<<"$gate_step2")"
+snapshot_at="$(awk '/forgeward-workspace-guard\.sh" snapshot/{print NR; exit}' <<<"$gate_step2")"
+[ -n "$revoke_at" ] && [ -n "$snapshot_at" ] && [ "$revoke_at" -lt "$snapshot_at" ] \
+  && ok "Step 2 withdraws any earlier PASS before it snapshots or spawns anything" \
+  || nok "Step 2 revoke ordering" "revoke=$revoke_at snapshot=$snapshot_at"
+case "$gate_step3" in
+  *'forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>" "<RUN_ID>"'*)
+    ok "Step 3 hands the marker writer the commits Step 0 froze and this run's id" ;;
+  *) nok "Step 3 writer arguments" ;;
+esac
+# Every --revoke in the skill must name the commit Step 0 froze: a bare one is a usage
+# error since the pre-landing review of 0.31.0, and before that it followed live HEAD.
+# Pin the VIOLATING form (bare occurrences == 0) with a floor on the right one (>= 5:
+# Step 2's revoke and its launch fallback, and Step 3's halt, refused write and FAIL).
+# `grep -o | wc -l` counts occurrences, not lines.
+revoke_all="$(grep -o 'forgeward-write-marker\.sh" --revoke' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+revoke_frozen="$(grep -o 'forgeward-write-marker\.sh" --revoke "<HEAD_SHA>"' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
+[ "$((revoke_all - revoke_frozen))" -eq 0 ] && [ "$revoke_frozen" -ge 5 ] \
+  && ok "every --revoke in the gate skill names the frozen <HEAD_SHA>" \
+  || nok "bare --revoke in the gate skill" "all=$revoke_all frozen=$revoke_frozen"
+# Each of Step 3's three no-marker outcomes must carry its OWN revoke. A count over the
+# whole step (it was `>= 3`) stays green when one outcome loses its revoke and another
+# gains a second, so each outcome's text is cut out between its own two anchors and
+# checked alone. If EITHER anchor stops matching, the section is empty and the check
+# fails -- a missing end anchor must not let a section run on into the next outcome's
+# revoke and pass vacuously.
+between() { # between <text> <start> <end>: the text between the two, or nothing
+  local t="$1"
+  case "$t" in *"$2"*) ;; *) return 0 ;; esac
+  t="${t#*"$2"}"
+  case "$t" in *"$3"*) printf '%s' "${t%%"$3"*}" ;; esac
+}
+for outcome in halt refused fail; do
+  case "$outcome" in
+    halt) label="the workspace-guard halt"
+      section="$(between "$gate_step3" 'If the workspace guard reported new paths' 'If every fired reviewer returned')" ;;
+    refused) label="a refused marker write"
+      section="$(between "$gate_step3" 'If the writer exits non-zero' 'Then hand off')" ;;
+    fail) label="FAIL"
+      section="$(between "$gate_step3" 'If any fired reviewer returned' '## Rules')" ;;
+  esac
+  case "$section" in
+    *'forgeward-write-marker.sh" --revoke'*)
+      ok "Step 3 withdraws the marker on $label" ;;
+    *) nok "Step 3 revoke on $label" "section-bytes=${#section}" ;;
+  esac
+done
 
 audit_policy="$(sed -n '/^## Runtime compatibility/,/^<!-- PORTED AUDIT PHASES/p' "$PLUGIN/skills/audit/SKILL.md"; sed -n '/^\*\*Parallel verification\.\*\*/,/^\*\*Give the verifier/p' "$PLUGIN/skills/audit/SKILL.md")"
 case "$audit_policy" in
@@ -341,7 +414,7 @@ out="$(printf '%s' "$codex_ship" | PLUGIN_ROOT="$PLUGIN" bash -c "$codex_cmd" 2>
   || nok "Codex plugin root" "st=$st out=$out"
 
 # A fresh marker allows every lifecycle path.
-( cd "$R" && "$WRITE" main dual-client >/dev/null )
+( cd "$R" && write_marker main dual-client >/dev/null )
 run_hook expansion "$claude_expansion"
 [ "$st" -eq 0 ] && [ -z "$out" ] \
   && ok "fresh marker allows Claude UserPromptExpansion" \
@@ -358,7 +431,7 @@ run_hook pretooluse "$codex_pre"
 # Version agreement across every version-bearing manifest. The Codex marketplace has
 # no version field in the current schema and points to the local plugin manifest.
 versions="$(jq -r '.version' "$PLUGIN/package.json" "$PLUGIN/.claude-plugin/plugin.json" "$PLUGIN/.codex-plugin/plugin.json"; jq -r '.plugins[0].version' "$PLUGIN/.claude-plugin/marketplace.json")"
-if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.30.0 ] \
+if [ "$(printf '%s\n' "$versions" | sort -u)" = 0.31.0 ] \
   && [ "$(jq -r '.plugins[0].source.path' "$PLUGIN/.agents/plugins/marketplace.json")" = './' ] \
   && [ "$(jq -r '.plugins[0].name' "$PLUGIN/.agents/plugins/marketplace.json")" = forgeward ]; then
   ok "all four version-bearing manifests agree and Codex marketplace resolves locally"

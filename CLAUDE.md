@@ -124,6 +124,60 @@ commit that was fixing it — a line number cannot survive its own fix.
 - **The marker is written on all-PASS, before the conditional `/ship` handoff.** A
   missing gstack costs two commands, never a re-review, and an unconditional Skill call
   on a machine without gstack produces a false success report.
+- **A marker certifies the commits Step 0 froze, never a live ref.** The gate resolves
+  `<BASE_SHA>` and `<HEAD_SHA>` once in Step 0 and every later step reviews that range;
+  `forgeward-write-marker.sh` takes both as FULL commit ids that must RESOLVE TO
+  THEMSELVES (a symbolic name, a short hex, a branch named with 64 hex characters in a
+  SHA-1 repo, or a tag's id all let its checks compare a live ref with itself), refuses
+  when `HEAD` moved, refuses a pair with no merge base, refuses when the frozen pair's
+  hash differs from the hash the push hook will recompute from the base ref, and stores
+  the frozen pair's hash and the gate run's `run_id`. Until 0.31.0 it read
+  `HEAD` and hashed the live range at write time, so a commit landing while reviewers
+  ran was certified by a marker nobody reviewed. **A fetch that only advances the base is
+  not refused** — both hashes stay equal, and K9 pins that the obvious wrong fix
+  (refusing on any base-SHA change) is not taken. Both hooks accept a marker only while
+  the run file for its `reviewed_head` still holds its `run_id`, and never for a pushed
+  commit that has a run file of its own and is not its `reviewed_head`
+  (`run_is_current`, byte-identical in both hooks; F1 pins it). Each hook reads every
+  marker field from ONE private copy of the marker (`is_fresh` and `snapshot_is_fresh`,
+  byte-identical in both; F11 pins it): read from the path, a marker replaced mid-check
+  lent another PASS's current run to a stale PASS's matching hash (F12, P40). **No
+  script deletes a run file.** A delete by path cannot be made safe against revoke's
+  atomic replace without a lock, and a deleted fresh run file lets a same-diff PASS on
+  another commit authorize that commit (K39). **Non-goal:** run files are kept forever,
+  one small file per commit ever gated; deleting `forgeward-gate-runs` by hand makes every
+  marker read stale (one re-gate) and drops those commits' refusal of a same-diff PASS on
+  another commit.
+- **Every run that reaches review starts a new run on the FROZEN commit first, and
+  revokes again on every outcome after that which ends without a marker**
+  (`forgeward-write-marker.sh --revoke <HEAD_SHA>`, never live `HEAD`: a checkout change
+  after Step 0 would aim it at the wrong commit). Revoke records a new run id for the
+  commit BEFORE it deletes anything, and **the run file is the authority, not the
+  deletions**: once it is recorded, every marker for that commit, under any name, names a
+  stale run to both hooks. Revoke's name list was wrong twice — a same-named tag, then the
+  `heads/<name>` spelling a marker had already been written under — so the run file
+  replaced it as the authority rather than it being patched a third time (DECISIONS.md).
+  **The deletions are not hygiene, and dropping them is not a simplification:** a
+  branch's marker may certify an EARLIER commit with the same diff, whose run this revoke
+  does not touch, so without the deletion a later commit on that branch with no run file
+  of its own pushes on it (P41); they are also the only revocation a pre-push hook
+  installed before 0.31.0 sees. It still deletes every local branch's marker at the
+  commit under both spellings, a failed branch listing still exits 1, and a marker that
+  cannot be removed still stops the gate. "Write no marker" was not
+  enough: a re-run that FAILs on an already-passed diff left the old PASS authorizing
+  that same diff. Revoking at the start means an interrupted run needs no exit path to
+  remember anything. The writer refuses unless the run file still holds its own id, read
+  once before the write and once after, so a superseded run never reports a PASS. No
+  lock, deliberately. **Must not fire on:** the `/ship` flow, a VERSION-only commit after
+  the PASS with no gate run of its own (F6, P38), or a sibling branch at the reviewed
+  commit (P39). **Cannot see, deliberately:** acceptance is per diff and revocation per
+  commit, so a PASS on C1 and a FAIL on C2 with the same diff do not stop a push of a
+  third commit C3 with that diff that no gate run ever started on, through any marker the
+  deletions did not reach. A write stalled across a whole newer
+  run can overwrite that run's marker and then remove it — fail-closed, one re-gate. A
+  run that stops in
+  Step 0 (nothing to gate, or an unresolvable ref) reviews nothing and revokes nothing, so
+  an earlier marker survives it, still bound to its own diff hash and run.
 - **`gc_markers` runs on the marker-write path only.** It is not a scheduled sweep and
   must not become one.
 - **Version-field neutralization in `normalize_manifest` is per-manifest-path, never
@@ -142,15 +196,16 @@ commit that was fixing it — a line number cannot survive its own fix.
   left operand is exempt. Not dash: `set -uo pipefail` is fatal there, so the script never
   runs and its non-zero status is `Illegal option`, not a halt — **a non-zero exit is not
   evidence of the mechanism you are testing for.** `|| exit 1` wins on scope and locality,
-  not correctness, and the scope is **one line**: the unguarded
-  `diff_part="$(git diff …)"` assignment is the only statement whose behaviour changes
-  under `-e`. That is measured twice over, because it is a universal quantifier and this
-  bullet has already been wrong three times. `grep` over the file finds exactly one
-  unguarded assignment-from-substitution; the other four carry `|| exit 1` or `|| out=""`,
-  and every bare command sits behind a guard or is the final pipeline. An eight-case
-  failure battery (bad base, bad tip, dash-led base, non-repo cwd, no jq, no python3,
-  empty base, baseline) agrees: every divergent case halts at that one statement, and the
-  four non-divergent ones are byte-identical with and without `-e`. An earlier draft said
+  not correctness, and the scope was **one line**: the then-unguarded
+  `diff_part="$(git diff …)"` assignment was the only statement whose behaviour changed
+  under `-e`, and it now carries its own guard. That was measured twice over, because it
+  is a universal quantifier and this bullet has already been wrong three times. `grep`
+  over the file found exactly one unguarded assignment-from-substitution; the other four
+  carried `|| exit 1` or `|| out=""`, and every bare command sat behind a guard or was the
+  final pipeline. An eight-case failure battery (bad base, bad tip, dash-led base,
+  non-repo cwd, no jq, no python3, empty base, baseline) agreed: every divergent case
+  halted at that one statement, and the four non-divergent ones were byte-identical with
+  and without `-e`. An earlier draft said
   "every other command in the file" — the same universal-ahead-of-evidence shape the
   bullet below it exists to warn about, committed inside the correction to it.
   Swept `scripts/*.sh` and `ci/*.sh` when this was found — `hooks/` holds no shell, only
@@ -290,8 +345,9 @@ commit that was fixing it — a line number cannot survive its own fix.
   independent verifiers use the same runtime selections. A new reviewer must join both
   enumerations in `test/dual-client-test.sh`, and a new subagent launch in any Forgeward
   skill must make the same runtime choice explicitly. Gate launch prompts carry only the
-  complete rubric, absolute repository/plugin roots, exact base and resolved HEAD context,
-  read-only instruction and verdict format. Do not pass the parent conversation or a
+  complete rubric, absolute repository/plugin roots, the exact base ref with the base and
+  head commits Step 0 froze, the site posture when privacy fires on a `private-shareable`
+  group, read-only instruction and verdict format. Do not pass the parent conversation or a
   suspected finding: inheritance raises both cost and anchoring risk. An unknown runtime
   keeps the existing fail-closed Gate fallback; Audit keeps its labeled self-verification
   fallback.

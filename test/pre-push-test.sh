@@ -10,6 +10,17 @@ PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREPUSH="$PLUGIN/scripts/forgeward-pre-push.sh"
 INSTALL="$PLUGIN/scripts/forgeward-install-pre-push.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits and the gate run's id since 0.31.0. Every caller
+# here gates the commit it just made, so both are resolved in the caller's cwd at call
+# time, and the run is minted the way Step 2 mints it: a `--revoke` of that commit, whose
+# `RUN_ID=` line is taken and whose other output is kept off this helper's stdout. That
+# revoke withdraws the marker of every branch at the commit (see P29).
+write_marker() { # write_marker <base-ref> <fired-csv>
+  local head run
+  head="$(git rev-parse HEAD)"
+  run="$("$WRITE" --revoke "$head" | sed -n 's/^RUN_ID=//p')"
+  "$WRITE" "$1" "$2" "$(git rev-parse "$1")" "$head" "$run"
+}
 ZERO='0000000000000000000000000000000000000000'
 RSHA='1111111111111111111111111111111111111111'   # arbitrary "remote" sha (hook ignores it)
 ORIGINAL_PATH="$PATH"
@@ -83,9 +94,9 @@ echo ok > src.js; git add -A; git commit -qm base; git branch -M main
 git update-ref refs/remotes/origin/main "$(git rev-parse main)"
 git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
-git checkout -qb g   main; echo g > g.js;  git add -A; git commit -qm g;  "$WRITE" main "privacy" >/dev/null
+git checkout -qb g   main; echo g > g.js;  git add -A; git commit -qm g;  write_marker main "privacy" >/dev/null
 SHA_G="$(git rev-parse refs/heads/g)"
-git checkout -qb g2  main; echo g2 > g2.js; git add -A; git commit -qm g2; "$WRITE" main "privacy" >/dev/null
+git checkout -qb g2  main; echo g2 > g2.js; git add -A; git commit -qm g2; write_marker main "privacy" >/dev/null
 SHA_G2="$(git rev-parse refs/heads/g2)"
 git checkout -qb bad main; echo b > b.js;  git add -A; git commit -qm bad          # no marker
 SHA_BAD="$(git rev-parse refs/heads/bad)"
@@ -138,7 +149,7 @@ pp "$R" "refs/tags/v1 $SHA_BAD refs/tags/v1 $RSHA"$'\n'
 # no parsing — git hands the exact ref+sha on stdin and the marker is found under the
 # shared common git dir.
 WT="$TMP/wt"; git -C "$R" worktree add -q -b wt "$WT" main >/dev/null 2>&1
-( cd "$WT"; echo w > w.js; git add -A; git commit -qm wt; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WT"; echo w > w.js; git add -A; git commit -qm wt; write_marker main "privacy" ) >/dev/null
 SHA_WT="$(git -C "$R" rev-parse refs/heads/wt)"
 pp "$R" "refs/heads/wt $SHA_WT refs/heads/wt $RSHA"$'\n'
 [ "$RC" = 0 ] && ok "worktree: marker from a linked worktree honored from the main checkout (exact ref on stdin)" \
@@ -162,6 +173,25 @@ pp "$R" "HEAD $SHA_G refs/heads/main $RSHA"$'\n'
 [ "$RC" = 0 ] && ok "HEAD source of a gated commit -> ALLOWED" || nok "HEAD-source gated allowed" "rc=$RC out=$OUT"
 pp "$R" "HEAD $SHA_BAD refs/heads/main $RSHA"$'\n'
 [ "$RC" = 1 ] && ok "HEAD source of an ungated commit -> BLOCKED" || nok "HEAD-source ungated blocked" "rc=$RC out=$OUT"
+
+# P29 (PRE-FIX control, end to end): this hook accepts the marker of ANY local branch at
+# the pushed commit, so the writer's --revoke must withdraw a sibling branch's marker
+# too. Against `git show 283c205:scripts/forgeward-write-marker.sh` the sibling's PASS
+# survived the revoke and its push was still ALLOWED. The first leg is the control that
+# the sibling's marker really authorized the push before the revoke. Since the run id,
+# write_marker's own revoke on rv2 already withdraws rv1's marker (rv1 is at the same
+# commit); that is the behaviour under test, and nothing below reads rv1's marker. The
+# revoke is run from rv1 and names the frozen commit, as Step 2 does.
+git checkout -qb rv1 main; echo rv > rv.js; git add -A; git commit -qm rv; write_marker main "privacy" >/dev/null
+git checkout -qb rv2; write_marker main "privacy" >/dev/null
+SHA_RV="$(git rev-parse refs/heads/rv2)"
+pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'; P29_BEFORE="$RC"
+git checkout -q rv1; "$WRITE" --revoke "$SHA_RV" >/dev/null
+pp "$R" "refs/heads/rv2 $SHA_RV refs/heads/rv2 $RSHA"$'\n'
+git checkout -q main
+{ [ "$P29_BEFORE" = 0 ] && [ "$RC" = 1 ] && case "$OUT" in *"rv2"*) true ;; *) false ;; esac; } \
+  && ok "revoke from one branch withdraws a sibling's PASS at the same commit -> the sibling's push is BLOCKED" \
+  || nok "sibling PASS survives revoke" "before=$P29_BEFORE rc=$RC out=$OUT"
 
 # P14: marker_get must trust jq's EXIT STATUS, not just its output.
 #
@@ -191,7 +221,7 @@ R3="$TMP/repo-markerget"; git init -q "$R3"
   echo base > a.txt; git add -A; git commit -qm base; git branch -M main
   git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
   git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
-  "$WRITE" main "privacy" ) >/dev/null 2>&1
+  write_marker main "privacy" ) >/dev/null 2>&1
 SHA_MG="$(git -C "$R3" rev-parse refs/heads/gated)"
 SHA_MGU="$(git -C "$R3" rev-parse refs/heads/ungated)"
 
@@ -245,7 +275,7 @@ git -C "$R" checkout -qb secret-new main
 mkdir -p "$R/src"; printf '%s\n' "$PAT" > "$R/src/token.txt"
 git -C "$R" add src/token.txt; git -C "$R" commit -qm "secret new branch"
 SHA_SECRET_NEW="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/secret-new $SHA_SECRET_NEW refs/heads/secret-new $ZERO"$'\n'
 { [ "$RC" = 1 ] \
   && { case "$OUT" in *github-pat*src/token.txt:1*'preview=[REDACTED]'*) true ;; *) false ;; esac; } \
@@ -264,7 +294,7 @@ pp "$R" "refs/heads/secret-new $SHA_SECRET_NEW refs/heads/secret-new $RSHA"$'\n'
 # P17: TODOS.md is omitted from the marker hash. Write the marker first, then add the
 # credential there: the marker stays fresh, so a block proves the independent scan ran.
 git -C "$R" checkout -qb secret-todo main
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 printf '%s\n' "$PAT" > "$R/TODOS.md"
 git -C "$R" add TODOS.md; git -C "$R" commit -qm "deferred secret fixture"
 SHA_SECRET_TODO="$(git -C "$R" rev-parse HEAD)"
@@ -281,7 +311,7 @@ mkdir -p "$R/src"; printf '%s\n' "$PAT" > "$R/src/token.txt"
 git -C "$R" add src/token.txt; git -C "$R" commit -qm "add transient credential"
 git -C "$R" rm -q src/token.txt; git -C "$R" commit -qm "remove transient credential"
 SHA_SECRET_REMOVED="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/secret-removed $SHA_SECRET_REMOVED refs/heads/secret-removed $(git -C "$R" rev-parse main)"$'\n'
 { [ "$RC" = 1 ] \
   && { case "$OUT" in *github-pat*) true ;; *) false ;; esac; } \
@@ -304,7 +334,7 @@ git -C "$R" checkout -qb benign-fixtures main
 printf 'API_KEY=\nSECRET_KEY=\n' > "$R/.env.example"
 git -C "$R" add benign.txt .env.example; git -C "$R" commit -qm "benign scanner fixtures"
 SHA_BENIGN="$(git -C "$R" rev-parse HEAD)"
-( cd "$R" && "$WRITE" main testing >/dev/null )
+( cd "$R" && write_marker main testing >/dev/null )
 pp "$R" "refs/heads/benign-fixtures $SHA_BENIGN refs/heads/benign-fixtures $(git -C "$R" rev-parse main)"$'\n'
 [ "$RC" = 0 ] && [ -z "$OUT" ] \
   && ok "PII-shaped values, AWS example, empty .env.example and REDACTED placeholder -> ALLOWED silently" \
@@ -453,7 +483,7 @@ if [ -n "$REAL_GITLEAKS" ]; then
   printf '%s:src/token.txt:github-pat:1\n' "$SUPPRESSED_COMMIT" > "$R/.gitleaksignore"
   git -C "$R" add .gitleaksignore; git -C "$R" commit -qm "repository scanner suppression"
   SHA_SUPPRESSION="$(git -C "$R" rev-parse HEAD)"
-  ( cd "$R" && "$WRITE" main testing >/dev/null )
+  ( cd "$R" && write_marker main testing >/dev/null )
   RAW_SUPPRESSION="$(cd "$R" && "$REAL_GITLEAKS" git \
     --log-opts="main..$SHA_SUPPRESSION" --no-banner --redact \
     --report-format=json --report-path=- . 2>&1)"; RAW_SUPPRESSION_RC=$?
@@ -468,6 +498,285 @@ else
   ok "real Gitleaks benign fixtures SKIPPED (optional scanner not installed; mock integration assertions ran)"
   ok "real Gitleaks repository-ignore control SKIPPED (optional scanner not installed; explicit ignore argv still asserted by mock)"
 fi
+
+# P30..P39 -- a PASS is accepted only while the gate run that wrote it is still the latest
+# on the commit it reviewed, and never for a pushed commit that a gate run has started on
+# unless it is that commit (`run_is_current`, 0.31.0). The same cases as F2-F10 in
+# test/gate-test.sh, driven through this, the enforced hook. Every refusal is built with
+# the marker still ON DISK and its diff hash still matching, so what refuses it is the
+# run file. P31-P37 are PRE-FIX controls: 6e11899's hook allows each push. P30, P38 and
+# P39 are positive controls, and P38/P39 the WRONG-FIX controls for refusing any pushed
+# commit other than the reviewed one. Mutation-checked: with run_is_current made to
+# always succeed, P31-P37 go red while P30, P38 and P39 stay green.
+RX="$TMP/repo-run"; git init -q "$RX"
+( cd "$RX"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  git config forgeward.gate enabled
+  echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb x; echo 'const x = 1;' > x.js; git add -A; git commit -qm x ) >/dev/null 2>&1
+XB="$(git -C "$RX" rev-parse main)"; XC="$(git -C "$RX" rev-parse refs/heads/x)"
+XCOMMON="$(git -C "$RX" rev-parse --path-format=absolute --git-common-dir)"
+XMD="$XCOMMON/forgeward-gate-markers"; XRUNS="$XCOMMON/forgeward-gate-runs"
+# xgate <commit>: a gate run on <commit> from the current checkout that PASSes -- revoke
+# (which mints the run; XRUN keeps its id), then the write with that id.
+xgate() {
+  XRUN="$(cd "$RX" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$RX" && "$WRITE" main privacy "$XB" "$1" "$XRUN" ) >/dev/null 2>&1
+}
+xrevoke() { ( cd "$RX" && "$WRITE" --revoke "$1" ) >/dev/null 2>&1; }
+xpush() { pp "$RX" "refs/heads/$1 $2 refs/heads/$1 $RSHA"$'\n'; }   # xpush <remote-branch> <sha>
+xblocked() { # xblocked <remote-branch> <sha>: refused as ungated, naming the ref
+  [ "$RC" = 1 ] && case "$OUT" in *"have not passed /forgeward:gate"*"  - $1 @ ${2:0:12}"*) true ;; *) false ;; esac
+}
+xset() { # xset <marker> <key> [<json-value>]: rewrite one field of a fixture marker; no value deletes it
+  python3 -I -c 'import json,sys
+p,k=sys.argv[1],sys.argv[2]; d=json.load(open(p))
+if len(sys.argv)>3: d[k]=json.loads(sys.argv[3])
+else: d.pop(k,None)
+open(p,"w").write(json.dumps(d,indent=2)+"\n")' "$@"
+}
+
+# P30 (positive control, case j): a plain PASS from the latest run on the pushed commit.
+xgate "$XC"; xpush x "$XC"
+[ "$RC" = 0 ] && [ -f "$XMD/x.json" ] \
+  && ok "P30: a PASS from the latest gate run on the pushed commit -> ALLOWED" \
+  || nok "P30: a current PASS was refused" "rc=$RC out=$OUT"
+
+# P31 (PRE-FIX control, case a): a killed writer's marker restored after a newer run's
+# revoke deleted it -- the same bytes, so the same diff hash.
+cp "$XMD/x.json" "$TMP/p31.json"; xrevoke "$XC"
+p31_deleted=0; [ -e "$XMD/x.json" ] || p31_deleted=1
+cp "$TMP/p31.json" "$XMD/x.json"; xpush x "$XC"
+[ "$p31_deleted" = 1 ] && xblocked x "$XC" \
+  && ok "P31: a marker restored after a newer run started on its commit -> BLOCKED" \
+  || nok "P31: a superseded run's marker authorized the push" "deleted=$p31_deleted rc=$RC out=$OUT"
+
+# P35 (PRE-FIX control, case e): a schema-4 marker has no run_id; refused even while the
+# run that wrote it is current -- the upgrade path costs one re-gate.
+xgate "$XC"; xset "$XMD/x.json" run_id; xset "$XMD/x.json" schema 4; xpush x "$XC"
+[ "$(cat "$XRUNS/$XC" 2>/dev/null)" = "$XRUN" ] && xblocked x "$XC" \
+  && ok "P35: a schema-4 marker (no run_id) -> BLOCKED" \
+  || nok "P35: a marker without run_id authorized the push" "rc=$RC out=$OUT"
+
+# P36 (PRE-FIX control, case f): the run file is gone, as after a by-hand delete.
+xgate "$XC"; rm -f "$XRUNS/$XC"; xpush x "$XC"
+[ -f "$XMD/x.json" ] && xblocked x "$XC" \
+  && ok "P36: a marker whose run file is missing -> BLOCKED" \
+  || nok "P36: a marker with no run file authorized the push" "rc=$RC out=$OUT"
+
+# P38 (positive and WRONG-FIX control, case h): the /ship flow. A VERSION-only commit
+# after the PASS has the same diff and no gate run of its own, so the PASS still holds.
+xgate "$XC"
+( cd "$RX" && echo 1.0.1 > VERSION && git add VERSION && git commit -qm "chore: bump version" ) >/dev/null 2>&1
+XV="$(git -C "$RX" rev-parse HEAD)"; xpush x "$XV"
+[ "$XV" != "$XC" ] && [ ! -e "$XRUNS/$XV" ] && [ "$RC" = 0 ] \
+  && ok "P38: a VERSION-only commit after the PASS, with no gate run of its own -> ALLOWED (the /ship flow)" \
+  || nok "P38: the /ship version bump was refused" "rc=$RC out=$OUT"
+
+# P37 (PRE-FIX control, case g): a malformed run_id or reviewed_head is refused, and no
+# file outside forgeward-gate-runs/ is read. Each case PLANTS the file the bad value
+# would name, holding the id it would need, so only the shape check stands between it
+# and an accept; `../planted` names a file one level up. The tip is P38's VERSION commit,
+# which has no run file, so nothing else can refuse it. The unmodified marker is the
+# control.
+cp "$XMD/x.json" "$TMP/p37.json"
+xpush x "$XV"; p37_ctl=$RC
+XUP="$(printf '%s' "$XC" | tr 'a-f' 'A-F')"; XRUP="$(printf '%s' "$XRUN" | tr 'a-f' 'A-F')"
+p37_fail=""
+p37() { # p37 <label> <key> <value> <plant-path> <plant-line>
+  cp "$TMP/p37.json" "$XMD/x.json"; xset "$XMD/x.json" "$2" "\"$3\""
+  printf '%s\n' "$5" > "$4"
+  xpush x "$XV"; xblocked x "$XV" || p37_fail="$p37_fail $1"
+  rm -f "$4"; printf '%s\n' "$XRUN" > "$XRUNS/$XC"
+}
+p37 head-dotdot reviewed_head ../planted "$XCOMMON/planted" "$XRUN"
+p37 head-upper reviewed_head "$XUP" "$XRUNS/$XUP" "$XRUN"
+p37 head-short reviewed_head "${XC:0:12}" "$XRUNS/${XC:0:12}" "$XRUN"
+p37 run-upper run_id "$XRUP" "$XRUNS/$XC" "$XRUP"
+p37 run-short run_id "${XRUN:0:12}" "$XRUNS/$XC" "${XRUN:0:12}"
+cp "$TMP/p37.json" "$XMD/x.json"
+[ "$p37_ctl" = 0 ] && [ -z "$p37_fail" ] \
+  && ok "P37: a run_id or reviewed_head that is not a full lowercase id -> BLOCKED, even with the file it names planted" \
+  || nok "P37: a malformed run_id or reviewed_head authorized the push" "control=$p37_ctl accepted:$p37_fail"
+
+# P33 (PRE-FIX control, case c): the same diff on another commit. PASS on x at C1; C2 is
+# C1 with a reworded message. Pushed to remote `x`, C2 is first authorized by x's marker
+# through the destination-name lookup (the control); a gate run then starts on C2 (and
+# FAILs) while x is still at C1, which never visits x.json; then x moves to C2.
+( cd "$RX" && git checkout -q main && git branch -f x "$XC" && git checkout -q x ) >/dev/null 2>&1
+xgate "$XC"
+( cd "$RX" && git checkout -qb x2 && git commit -q --amend -m "x (reworded)" ) >/dev/null 2>&1
+XC2="$(git -C "$RX" rev-parse refs/heads/x2)"
+xpush x "$XC2"; p33_before=$RC
+xrevoke "$XC2"; xpush x "$XC2"; p33_dest=$RC; p33_dest_out=$OUT
+git -C "$RX" branch -f x "$XC2" >/dev/null 2>&1; xpush x "$XC2"
+[ "$XC2" != "$XC" ] && [ "$p33_before" = 0 ] && [ "$p33_dest" = 1 ] && [ -f "$XMD/x.json" ] \
+  && case "$p33_dest_out" in *"  - x @ ${XC2:0:12}"*) true ;; *) false ;; esac \
+  && xblocked x "$XC2" \
+  && ok "P33: a PASS for one commit no longer authorizes another with the same diff once a gate run started there, by either name" \
+  || nok "P33: a PASS crossed onto a commit with its own gate run" "before=$p33_before dest=$p33_dest rc=$RC out=$OUT"
+
+# P34 (PRE-FIX control, case d): a PASS written on a detached HEAD (key `HEAD`), which
+# this hook reads for a push to a branch named `HEAD`; then a newer run on that commit
+# started from a branch checkout, which never visits that key.
+( cd "$RX" && git checkout -qb dx main && echo d > d.js && git add -A && git commit -qm d \
+   && git checkout -q --detach ) >/dev/null 2>&1
+XDC="$(git -C "$RX" rev-parse HEAD)"
+xgate "$XDC"; xpush HEAD "$XDC"; p34_before=$RC
+( cd "$RX" && git checkout -q dx ) >/dev/null 2>&1
+xrevoke "$XDC"; xpush HEAD "$XDC"
+[ "$p34_before" = 0 ] && [ -f "$XMD/HEAD.json" ] && xblocked HEAD "$XDC" \
+  && ok "P34: a detached-HEAD PASS is BLOCKED once a newer run starts on its commit, with HEAD.json still on disk" \
+  || nok "P34: a detached-HEAD PASS outlived a newer run" "before=$p34_before rc=$RC out=$OUT"
+
+# P32 (PRE-FIX control, case b): a branch and a same-named tag, so the PASS lands at
+# heads/<name>.json, the spelling this hook enumerates; the tag is deleted, a newer run's
+# revoke looks only under the bare name, and the tag comes back.
+( cd "$RX" && git checkout -qb feature main && echo f > f.js && git add -A && git commit -qm feature \
+   && git tag feature ) >/dev/null 2>&1
+XFC="$(git -C "$RX" rev-parse refs/heads/feature)"
+xgate "$XFC"; xpush feature "$XFC"; p32_before=$RC
+p32_written=0; [ -f "$XMD/heads/feature.json" ] && p32_written=1
+git -C "$RX" tag -d feature >/dev/null 2>&1; xrevoke "$XFC"; git -C "$RX" tag feature "$XFC" >/dev/null 2>&1
+xpush feature "$XFC"
+[ "$p32_written" = 1 ] && [ "$p32_before" = 0 ] && [ -f "$XMD/heads/feature.json" ] && xblocked feature "$XFC" \
+  && ok "P32: a PASS under the heads/<name> spelling is BLOCKED once a newer run starts on its commit" \
+  || nok "P32: the stale heads/<name> PASS authorized the push" "written=$p32_written before=$p32_before rc=$RC out=$OUT"
+
+# P39 (positive and WRONG-FIX control, case i): a sibling branch at the same commit as a
+# current PASS, with no marker of its own.
+( cd "$RX" && git checkout -qb s1 main && echo s > s.js && git add -A && git commit -qm s ) >/dev/null 2>&1
+XSC="$(git -C "$RX" rev-parse refs/heads/s1)"
+xgate "$XSC"; git -C "$RX" branch s2 "$XSC" >/dev/null 2>&1; xpush s2 "$XSC"
+[ "$RC" = 0 ] && [ ! -e "$XMD/s2.json" ] \
+  && ok "P39: a sibling branch at the same commit as a current PASS -> ALLOWED" \
+  || nok "P39: a sibling of a current PASS was refused" "rc=$RC out=$OUT"
+git -C "$RX" checkout -q main >/dev/null 2>&1
+
+# P40: the enforced hook reads a marker ONCE (F12 in test/gate-test.sh drives the
+# reminder through the same fixture). A scratch copy of scripts/ whose
+# forgeward-diff-hash.sh FIRST moves a prepared marker over a named one, THEN execs the
+# real helper, so the swap lands between the reads of .diff_hash and .run_id with no
+# sleep. PASS on ship at C (M1); a VERSION-only C2 on top, same diff; a second run on C
+# makes M1's run stale; M2 is a current PASS for a DIFFERENT diff (D, on d). Leg 1 (M1
+# alone) and leg 2 (M2 in place before the push) are controls; leg 3 (M1 in place, M2
+# swapped in mid-check) is the PRE-FIX control -- e9ab0e0's hook takes M1's hash and M2's
+# run and ALLOWS the push; leg 4 is the positive control, a current PASS swapped for an
+# identical copy of itself. A `.fired` file proves each swap really ran. Mutation-checked:
+# handing run_is_current the marker PATH instead of the copy turns leg 3 red.
+SW="$TMP/swap"; mkdir -p "$SW/scripts"
+cp -p "$PLUGIN"/scripts/*.sh "$SW/scripts/"
+mv "$SW/scripts/forgeward-diff-hash.sh" "$SW/scripts/real-diff-hash.sh"
+cat > "$SW/scripts/forgeward-diff-hash.sh" <<'SWEOF'
+#!/usr/bin/env bash
+if [ -n "${FORGEWARD_SWAP_FROM:-}" ] && [ -f "$FORGEWARD_SWAP_FROM" ]; then
+  mv -f "$FORGEWARD_SWAP_FROM" "$FORGEWARD_SWAP_TO" && : > "$FORGEWARD_SWAP_FROM.fired"
+fi
+exec "$(dirname "$0")/real-diff-hash.sh" "$@"
+SWEOF
+chmod +x "$SW/scripts/forgeward-diff-hash.sh"
+SR="$TMP/swaprepo"; git init -q "$SR"
+( cd "$SR"; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  git config forgeward.gate enabled
+  echo 0.1.0 > VERSION; echo base > a.txt; git add -A; git commit -qm base; git branch -M main
+  git checkout -qb ship; echo 'const s = 1;' > s.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
+SB="$(git -C "$SR" rev-parse main)"; SC="$(git -C "$SR" rev-parse HEAD)"
+SMD="$(git -C "$SR" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+sgate() { # sgate <commit>: a passing gate run on <commit> from the current checkout
+  local run
+  run="$(cd "$SR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$SR" && "$WRITE" main privacy "$SB" "$1" "$run" ) >/dev/null 2>&1
+}
+sgate "$SC"
+( cd "$SR" && echo 0.2.0 > VERSION && git commit -qam 'chore: bump version' ) >/dev/null 2>&1
+SC2="$(git -C "$SR" rev-parse HEAD)"
+cp "$SMD/ship.json" "$TMP/p40.m1"
+( cd "$SR" && "$WRITE" --revoke "$SC" ) >/dev/null 2>&1
+( cd "$SR" && git checkout -qb d main && echo 'const d = 1;' > d.js && git add -A && git commit -qm d ) >/dev/null 2>&1
+SD="$(git -C "$SR" rev-parse HEAD)"; sgate "$SD"; cp "$SMD/d.json" "$TMP/p40.m2"
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+spush() { # spush <branch> <sha> <swap-from> <swap-to>: the copied enforcer; sets RC and OUT
+  OUT="$(cd "$SR" && printf 'refs/heads/%s %s refs/heads/%s %s\n' "$1" "$2" "$1" "$RSHA" \
+    | FORGEWARD_SECRET_SCAN=skip FORGEWARD_SWAP_FROM="$3" FORGEWARD_SWAP_TO="$4" \
+      "$SW/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1)"; RC=$?
+}
+cp "$TMP/p40.m1" "$SMD/ship.json"; spush ship "$SC2" "" ""; p40_1=$RC; p40_1o=$OUT
+cp "$TMP/p40.m2" "$SMD/ship.json"; spush ship "$SC2" "" ""; p40_2=$RC
+cp "$TMP/p40.m1" "$SMD/ship.json"; cp "$TMP/p40.m2" "$TMP/p40.swap"
+spush ship "$SC2" "$TMP/p40.swap" "$SMD/ship.json"; p40_3=$RC; p40_3o=$OUT
+p40_3f=0; [ -e "$TMP/p40.swap.fired" ] && p40_3f=1
+cp "$SMD/d.json" "$TMP/p40.same"
+spush d "$SD" "$TMP/p40.same" "$SMD/d.json"; p40_4=$RC
+p40_4f=0; [ -e "$TMP/p40.same.fired" ] && p40_4f=1
+[ "$p40_1" = 1 ] && case "$p40_1o" in *"  - ship @ ${SC2:0:12}"*) true ;; *) false ;; esac \
+  && [ "$p40_2" = 1 ] && [ "$p40_3f" = 1 ] && [ "$p40_3" = 1 ] \
+  && case "$p40_3o" in *"have not passed /forgeward:gate"*"  - ship @ ${SC2:0:12}"*) true ;; *) false ;; esac \
+  && [ "$p40_4f" = 1 ] && [ "$p40_4" = 0 ] \
+  && ok "P40: a marker swapped in while the enforcer hashes cannot lend its run to the stale PASS it replaced -> BLOCKED" \
+  || nok "P40: the enforcer combined two markers' fields" \
+         "m1-alone=$p40_1 m2-alone=$p40_2 swap=$p40_3f:$p40_3 same=$p40_4f:$p40_4 out=$p40_3o"
+
+# P41 (WRONG-FIX control for dropping revoke's deletion loop; green on e9ab0e0 by
+# construction): the deletions narrow the per-diff residual for the branch's own
+# follow-up commits. PASS on C1 on branch b; C2 on b changes only VERSION (same diff);
+# a gate run starts on C2 and FAILs -- its revoke deletes b's marker, because b is at C2,
+# while C1's run stays current; then C3 on b changes only CHANGELOG.md, with no run file.
+# Had the deletion been skipped, C3 would push on C1's PASS. The first leg is the control
+# that the PASS covered C2's diff before the revoke. Mutation-checked: skipping the
+# deletions turns this red.
+( cd "$RX" && git checkout -qb rb main && echo 'const rb = 1;' > rb.js && git add -A \
+   && git commit -qm rb ) >/dev/null 2>&1
+XR1="$(git -C "$RX" rev-parse HEAD)"; xgate "$XR1"
+( cd "$RX" && echo 2.0.0 > VERSION && git add VERSION && git commit -qm 'chore: bump version' ) >/dev/null 2>&1
+XR2="$(git -C "$RX" rev-parse HEAD)"; xpush rb "$XR2"; p41_before=$RC
+xrevoke "$XR2"
+( cd "$RX" && echo '# log' > CHANGELOG.md && git add CHANGELOG.md && git commit -qm 'docs: changelog' ) >/dev/null 2>&1
+XR3="$(git -C "$RX" rev-parse HEAD)"; xpush rb "$XR3"
+[ "$p41_before" = 0 ] && [ ! -e "$XMD/rb.json" ] && [ ! -e "$XRUNS/$XR3" ] && xblocked rb "$XR3" \
+  && ok "P41: after a FAIL on a same-diff follow-up commit, a later commit on that branch with no run file -> BLOCKED" \
+  || nok "P41: a follow-up commit pushed on the PASS a failed run withdrew" "before=$p41_before rc=$RC out=$OUT"
+
+# P42 (contract pin of run_is_current's -L arm; green on e9ab0e0): a DANGLING SYMLINK at
+# the pushed commit's run-file path counts as a run file of its own (`[ -e ]` alone is
+# false for it). The positive control is the same push with that path absent. A VERSION-
+# only commit after a PASS is the shape that is otherwise accepted (P38). Mutation-
+# checked: dropping `|| [ -L ... ]` turns this red.
+( cd "$RX" && git checkout -qb sl main && echo 'const sl = 1;' > sl.js && git add -A \
+   && git commit -qm sl ) >/dev/null 2>&1
+XSL="$(git -C "$RX" rev-parse HEAD)"; xgate "$XSL"
+( cd "$RX" && echo 3.0.0 > VERSION && git add VERSION && git commit -qm 'chore: bump version' ) >/dev/null 2>&1
+XSLV="$(git -C "$RX" rev-parse HEAD)"; xpush sl "$XSLV"; p42_absent=$RC
+ln -s "$XRUNS/no-such-target" "$XRUNS/$XSLV"
+xpush sl "$XSLV"; p42_link=$RC
+rm -f "$XRUNS/$XSLV"
+[ "$p42_absent" = 0 ] && [ "$p42_link" = 1 ] && xblocked sl "$XSLV" \
+  && ok "P42: a dangling symlink at the pushed commit's run-file path -> BLOCKED; with the path absent -> ALLOWED" \
+  || nok "P42: a dangling run-file symlink was not counted" "absent=$p42_absent link=$p42_link out=$OUT"
+
+# P43: the writer and this hook read a run file the same way -- its FIRST line. Leg A, a
+# run file holding the run id and then another line: both accept (PRE-FIX control:
+# e9ab0e0's writer read the whole file with `cat` and refused while the hook accepted).
+# Leg B, the run id on the SECOND line: both refuse (WRONG-FIX control for reading the
+# last line or matching the id on any line; green on e9ab0e0). Leg B's marker is a valid
+# PASS written before the run file is rewritten, so only the run file refuses it.
+# Mutation-checked: restoring `cat` in the writer's current_run turns leg A red.
+P43SUP='superseded this one (or no run is recorded for that commit); nothing was written.'
+( cd "$RX" && git checkout -qb tl main && echo 'const tl = 1;' > tl.js && git add -A \
+   && git commit -qm tl ) >/dev/null 2>&1
+XTL="$(git -C "$RX" rev-parse HEAD)"
+XRUN="$(cd "$RX" && "$WRITE" --revoke "$XTL" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+printf '%s\nsecond line\n' "$XRUN" > "$XRUNS/$XTL"
+p43_aw="$(cd "$RX" && "$WRITE" main privacy "$XB" "$XTL" "$XRUN" 2>&1)"; p43_awrc=$?
+xpush tl "$XTL"; p43_arc=$RC; p43_aout=$OUT
+xgate "$XTL"
+printf '%s\n%s\n' "$(printf 'c%.0s' $(seq 40))" "$XRUN" > "$XRUNS/$XTL"
+xpush tl "$XTL"
+p43_bw="$(cd "$RX" && "$WRITE" main privacy "$XB" "$XTL" "$XRUN" 2>&1)"; p43_bwrc=$?
+[ "$p43_awrc" = 0 ] && [ "$p43_arc" = 0 ] && [ "$p43_bwrc" = 1 ] && xblocked tl "$XTL" \
+  && case "$p43_bw" in *"$P43SUP"*) true ;; *) false ;; esac \
+  && ok "P43: run id on the first line -> the writer and the hook both accept; on the second line -> both refuse" \
+  || nok "P43: the writer and the hook disagree on a two-line run file" \
+         "A: write=$p43_awrc push=$p43_arc ($p43_aw / $p43_aout) B: write=$p43_bwrc push=$RC ($p43_bw / $OUT)"
+git -C "$RX" checkout -q main >/dev/null 2>&1
 
 [ "$CAPTURE_LEAK" = 0 ] \
   && ok "all captured hook stdout/stderr and the bypass log omit the planted credential value" \

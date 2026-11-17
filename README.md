@@ -21,9 +21,10 @@ reviewer spawn pins `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
 `fork_turns: none`. Audit's independent finding verifiers use the same selections.
 
 The isolation is deliberate: a Gate reviewer receives its complete authoritative rubric,
-the absolute repository and Forgeward roots, the exact base ref, `HEAD` and its resolved
-commit, the `<base>...HEAD` range, and the read-only/verdict instructions—nothing from the
-parent conversation. In concrete terms, a Claude agent definition contains:
+the absolute repository and Forgeward roots, the exact base ref, the base and head commits
+the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, and the
+read-only/verdict instructions—nothing from the parent conversation. In concrete terms, a
+Claude agent definition contains:
 
 ```yaml
 model: sonnet
@@ -307,13 +308,29 @@ Lifecycle hooks are intentionally fast feedback, not a complete policy boundary:
 expose every hosted tool through `PreToolUse`, and neither client can reliably infer resolved Git
 refs from shell command text.
 
-The marker pins a hash of the **reviewed code and dependencies** (`base...HEAD`), excluding
+The marker pins a hash of the **reviewed code and dependencies** (the frozen
+`<BASE_SHA>...<HEAD_SHA>` range the gate resolved once, in its Step 0), excluding
 only gstack's cosmetic post-gate writes (`VERSION`, `CHANGELOG*`, `TODOS.md`) and exact
 version-field-only bumps in the four version-bearing package/client manifests. Any other
 manifest change, and any change to source **or dependencies** after the gate flips the hash and
 forces a re-gate — a dependency added between gate and push does **not** sail through. The
+hash covers the whole repository wherever the gate or a hook runs, binary files by full blob
+id, and it does not follow diff config: an external differ, a textconv driver, submodule
+ignores, context, renames and the other settings `test/gate-test.sh` V17 checks leave it
+unchanged. `diff.orderFile` still moves it,
+which reads a marker stale and never passes one. The
 push-time credential scan is separate from that hash and still reads commits touching every one
-of those excluded paths.
+of those excluded paths. The marker also names the gate run that wrote it, and both hooks
+accept it only while that run is still the latest on the commit it reviewed: a re-run records
+a new run on that commit before it reviews anything, which stales every earlier PASS for the
+commit under any branch name, and a later run supersedes an earlier one still in flight (that
+run's write is refused), so only the latest run's outcome counts. A PASS is never accepted for
+a pushed commit that a gate run has started on unless it is the commit that run reviewed. It
+is accepted for a later commit with the same reviewed diff that no gate run has started on —
+that is what lets `/ship`'s version bump push — so acceptance is per diff and revocation per
+commit. Run files are kept, one small file per commit ever gated; deleting
+`forgeward-gate-runs` by hand makes every marker read stale (one re-gate) and drops those
+commits' refusal of a same-diff PASS on another commit.
 
 ## Turn on enforcement (one command per repo)
 

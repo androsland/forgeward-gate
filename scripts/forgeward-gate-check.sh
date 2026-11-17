@@ -34,6 +34,7 @@ set -uo pipefail
 export LC_ALL=C
 mode="${1:-pretooluse}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIFF_HASH="$here/forgeward-diff-hash.sh"
 input="$(cat)"
 
 _HAVE_JQ=0; _JQ_BIN=""; _probe=""
@@ -174,16 +175,60 @@ marker_path() {
 
 current_branch() { git rev-parse --abbrev-ref HEAD 2>/dev/null; }
 
-# fresh == a marker for <branch> exists AND the substantive-diff hash of <tip> vs
-# the marker's recorded base still matches what was reviewed
+# The gate run that wrote <marker> must still be the latest on the commit it reviewed, and
+# no gate run may have started on <tip> itself unless <tip> is that commit (see the header
+# of forgeward-write-marker.sh). Both values name a file, so each is checked to be a full
+# lowercase id BEFORE it reaches a path. Every read or parse failure returns 1: on the
+# gating path a failure re-gates, never passes. Byte-identical in forgeward-gate-check.sh
+# and forgeward-pre-push.sh; F1 in test/gate-test.sh fails when the copies drift.
+run_is_current() {
+  local run head tipc runs v line=""
+  run="$(marker_get "$1" '.run_id')" || return 1
+  head="$(marker_get "$1" '.reviewed_head')" || return 1
+  tipc="$(git rev-parse --verify --quiet "$2^{commit}" 2>/dev/null)" || return 1
+  for v in "$run" "$head" "$tipc"; do
+    case "${#v}:$v" in
+      40:*[!0-9a-f]*|64:*[!0-9a-f]*) return 1 ;;
+      40:*|64:*) ;;
+      *) return 1 ;;
+    esac
+  done
+  runs="$(common_git_dir)" || return 1
+  runs="$runs/forgeward-gate-runs"
+  [ -f "$runs/$head" ] || return 1
+  { IFS= read -r line || [ -n "$line" ]; } 2>/dev/null < "$runs/$head" || return 1
+  [ "$line" = "$run" ] || return 1
+  if [ "$tipc" != "$head" ] && { [ -e "$runs/$tipc" ] || [ -L "$runs/$tipc" ]; }; then
+    return 1
+  fi
+  return 0
+}
+
+# fresh == a marker for <branch> exists, the substantive-diff hash of <tip> vs the
+# marker's recorded base still matches what was reviewed (version-bump-invariant), and the
+# run that wrote it is still current (run_is_current). Every field is read from ONE private
+# copy of the marker: read from the path, a marker replaced mid-check combined one PASS's
+# diff hash with another PASS's run. A failed copy returns 1, the re-gate direction.
+# is_fresh and snapshot_is_fresh are byte-identical in forgeward-gate-check.sh and
+# forgeward-pre-push.sh; F11 in test/gate-test.sh fails when the copies drift.
 is_fresh() { # is_fresh <branch> <tip>
-  local branch="$1" tip="$2" marker base stored cur
-  marker="$(marker_path "$branch")" || return 1
+  local marker snap rc
+  marker="$(marker_path "$1")" || return 1
   [ -f "$marker" ] || return 1
-  base="$(marker_get "$marker" '.base')";        [ -n "$base" ]   || return 1
-  stored="$(marker_get "$marker" '.diff_hash')"; [ -n "$stored" ] || return 1
-  cur="$("$here/forgeward-diff-hash.sh" "$base" "$tip" 2>/dev/null)" || return 1
-  [ -n "$cur" ] && [ "$cur" = "$stored" ]
+  snap="$(mktemp "${TMPDIR:-/tmp}/forgeward-marker.XXXXXX" 2>/dev/null)" || return 1
+  [ -n "$snap" ] || return 1
+  cat -- "$marker" > "$snap" 2>/dev/null && snapshot_is_fresh "$snap" "$2"
+  rc=$?
+  rm -f -- "$snap" 2>/dev/null
+  return "$rc"
+}
+snapshot_is_fresh() { # snapshot_is_fresh <marker-copy> <tip>
+  local base stored cur
+  base="$(marker_get "$1" '.base')";        [ -n "$base" ]   || return 1
+  stored="$(marker_get "$1" '.diff_hash')"; [ -n "$stored" ] || return 1
+  cur="$("$DIFF_HASH" "$base" "$2" 2>/dev/null)" || return 1
+  [ -n "$cur" ] && [ "$cur" = "$stored" ] || return 1
+  run_is_current "$1" "$2"
 }
 
 # emit a deny decision (exit 0 + JSON) and exit; JSON-escape the reason

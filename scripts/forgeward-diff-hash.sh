@@ -173,16 +173,60 @@ snapshot_manifest() { # snapshot_manifest <path> <mode>
 # Part 1 — diff of everything reviewable except the version-bearing manifests and
 # the cosmetic bookkeeping files. These pathspecs have no wildcard, so they match
 # those exact paths only: lockfiles, source, and a NESTED package.json all stay in.
-diff_part="$(git diff "${base}...${tip}" -- . \
-  ':(exclude)VERSION' \
-  ':(exclude)CHANGELOG.md' \
-  ':(exclude)CHANGELOG' \
-  ':(exclude)TODOS.md' \
-  ':(exclude)package.json' \
-  ':(exclude).claude-plugin/plugin.json' \
-  ':(exclude).claude-plugin/marketplace.json' \
-  ':(exclude).codex-plugin/plugin.json' \
-  2>/dev/null)"
+#
+# ROOT-RELATIVE, WHEREVER IT IS CALLED FROM. Every pathspec carries `top` magic. A bare
+# `.` is the caller's cwd, so a gate run from a subdirectory stored a hash of that
+# subtree, and gate-check (which `cd`s to the payload's cwd) compared two subtree hashes:
+# a change outside the subtree after the PASS still read fresh there (V15). Part 2 was
+# already root-relative (`<rev>:<path>`).
+#
+# THE INVOCATION IS PINNED, because porcelain `git diff` reads user and repo config and
+# the environment, and some of that moves the hashed bytes toward a false PASS: an
+# external differ (`diff.external`, `GIT_EXTERNAL_DIFF`, a `diff.<driver>.command`)
+# replaces git's output, `index` line included, so with one that prints the same text
+# for two contents a binary replaced after the PASS hashed the same (V18);
+# `diff.ignoreSubmodules` or `submodule.<name>.ignore` can hide a gitlink change;
+# `diff.relative` scopes the diff to the cwd. The rest (prefixes, context, algorithm,
+# renames, colour, abbreviation, hunk merging, textconv, quoting) was measured to make a
+# marker read stale for no reason (V17 has one assertion per setting). Each option below
+# overrides its config key; the `-c` overrides cover keys with no option (a git too old
+# to know a key ignores the override). `GIT_DIFF_OPTS` is applied AFTER the command line
+# -- measured, it beats `-U3` -- so it is cleared for this one command. `--full-index`
+# writes full blob ids on every `index` line, binary files included, so a binary change
+# never rests on an abbreviated prefix. Pinning changed the hashed bytes once, in 0.31.0,
+# the release that already reads every earlier marker as stale.
+#
+# NON-GOALS, so the pinning is not read as coverage. Each one fails CLOSED -- a marker
+# reads stale, never a false PASS:
+#   - `diff.orderFile` still reorders the file sections. `-O/dev/null` would neutralize
+#     it, but how `/dev/null` reaches git.exe through Git Bash's path conversion is
+#     unverified, so it is left alone.
+#   - the function text in hunk headers, which a `diff.<driver>.xfuncname` in user config
+#     supplies for a driver the branch's `.gitattributes` selects.
+#   - output that differs between git versions (a gate and a push on different gits).
+diff_part="$(GIT_DIFF_OPTS='' git \
+  -c diff.relative=false -c diff.noprefix=false -c diff.mnemonicPrefix=false \
+  -c diff.suppressBlankEmpty=false -c diff.interHunkContext=0 \
+  -c diff.indentHeuristic=false -c core.quotePath=true \
+  diff --no-ext-diff --no-textconv --full-index --no-color --no-renames -U3 \
+  --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/ \
+  --ignore-submodules=none --submodule=short \
+  "${base}...${tip}" -- ':(top)' \
+  ':(top,exclude)VERSION' \
+  ':(top,exclude)CHANGELOG.md' \
+  ':(top,exclude)CHANGELOG' \
+  ':(top,exclude)TODOS.md' \
+  ':(top,exclude)package.json' \
+  ':(top,exclude).claude-plugin/plugin.json' \
+  ':(top,exclude).claude-plugin/marketplace.json' \
+  ':(top,exclude).codex-plugin/plugin.json' \
+  2>/dev/null)" || {
+  # A failed diff (no merge base, a bad ref, a missing blob) would otherwise leave this
+  # part empty and hash as the EMPTY diff, which any later code on the pair matches.
+  printf 'forgeward-diff-hash: git diff %s...%s failed; refusing to hash an empty diff\n' \
+    "$base" "$tip" >&2
+  exit 1
+}
 
 # Part 2 — canonical snapshots at <tip>, version neutralized per manifest.
 #
@@ -211,26 +255,11 @@ diff_part="$(git diff "${base}...${tip}" -- . \
 # the `set` line, not a halt at the guard. A non-zero exit is not evidence of the
 # mechanism you are testing for -- check WHY it is non-zero.
 #
-# The actual reason is scope and locality, and the scope is ONE line, not the file.
-# The only statement whose behaviour changes under `-e` is the unguarded
-# `diff_part="$(git diff ...)"` assignment in Part 1 -- with a bad base ref it is rc=0
-# and a printed hash today, rc=128 and no output under `-e`. Everything else either
-# already exits regardless (`base="${1:?...}"`), cannot fail, or is `-e`-exempt behind
-# a guard.
-#
-# That is a universal quantifier in a comment already wrong three times, so it is
-# measured twice rather than reasoned once. (1) Enumeration: exactly ONE unguarded
-# assignment-from-substitution exists in this file; the other four carry `|| exit 1`
-# or `|| out=""`. (2) A differential battery -- the whole script re-run with `-e`
-# under bad base ref, bad tip ref, dash-led base, non-repo cwd, missing jq, missing
-# python3, empty base, and the happy path. Four diverge, and all four halt at this
-# same statement; the other four are byte-identical with and without `-e`.
-#
-# One silently-changed statement is still a reason not to flip a file-wide option to
-# fix a three-line problem, but it is a much smaller reason than "every other command
-# in the file", which is what this said before.
-# `|| exit 1` checks the status where it is produced, is visible at the call site
-# rather than 130 lines up in a `set` line, and holds regardless of shell options.
+# The actual reason is scope and locality. The one statement whose behaviour `-e` was
+# measured to change, the `diff_part="$(git diff ...)"` assignment in Part 1, now
+# carries its own guard. `|| exit 1` checks the status where it is produced, is visible
+# at the call site rather than 130 lines up in a `set` line, and holds regardless of
+# shell options.
 pkg_part="$(snapshot_manifest package.json top)" || exit 1
 plugin_part="$(snapshot_manifest .claude-plugin/plugin.json top)" || exit 1
 market_part="$(snapshot_manifest .claude-plugin/marketplace.json plugins)" || exit 1

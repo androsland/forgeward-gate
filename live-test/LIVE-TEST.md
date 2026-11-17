@@ -258,7 +258,8 @@ Expected:
   ```bash
   # one file per branch; there is no single `.git/forgeward-gate-marker.json`
   cat "$(git rev-parse --git-common-dir)"/forgeward-gate-markers/"$(git branch --show-current)".json
-  # shows passed:true, base, diff_hash, reviewed_head
+  # shows passed:true, base, reviewed_head, run_id, diff_hash; the push is allowed only
+  # while forgeward-gate-runs/<reviewed_head> beside it still holds that run_id
   ```
   Ask Claude to push → it now **succeeds**; `git ls-remote --heads origin` shows `feature/signup`.
 
@@ -702,26 +703,44 @@ EOF
 git add -A && git commit -qm "feat: currency column"
 ```
 
-Run **`/forgeward:gate`** again.
+Before the gate runs, record whether Run A's marker exists. An absence afterwards means
+something only if there was a marker to withdraw:
+
+```bash
+M="$(git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+if [ -e "$M" ]; then echo "before: present"; else echo "before: absent"; fi
+```
+
+`before: absent` voids the withdrawal check below — Run A wrote no marker, which is
+itself a Run A finding. Run **`/forgeward:gate`** again.
 
 - `data-migration` must **FAIL**, and at **High**: lock-taking DDL with no `CONCURRENTLY`
   on a table whose size it cannot see. Its own rubric says table size is the fact it
   usually cannot establish, and that the answer there is High rather than Critical — so a
   Critical verdict here is a floor violation in the other direction and is equally a
   finding.
-- The gate must report the FAIL and **write no marker for this commit**. The check is
-  emphatically NOT "no marker file exists": Run A already wrote one for this branch, a
-  failed gate does not delete it, and the marker is per-branch rather than per-commit. An
-  absence test here passes whatever happens and proves nothing. Confirm instead that the
-  marker still pins **Run A's** commit:
+- The gate must report the FAIL, **write no marker for this commit, and withdraw Run A's**.
+  Since 0.31.0 every run withdraws the branch's earlier PASS before it reviews anything
+  (the gate prints `withdrew the earlier PASS marker`), so a failed re-run leaves no
+  marker at all; the hooks would refuse Run A's marker for Run B's commit even if it
+  survived, because a gate run has started on that commit and Run A's did not review it.
+  Until then Run A's marker survived a failed Run B and still authorized
+  pushing Run A's diff, and this check read "the marker still pins Run A's commit". An
+  absence test means something here only because Run A wrote a marker first, so set
+  `BEFORE` to the word the block above printed:
 
   ```bash
-  M="$(git rev-parse --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
-  grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"   # must still be Run A's HEAD
-  git rev-parse HEAD                              # must NOT equal it
+  BEFORE=present   # or absent: what the block above printed after "before:"
+  M="$(git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+  if [ -e "$M" ]; then grep -o '"reviewed_head": *"[0-9a-f]*"' "$M"
+  elif [ "$BEFORE" = present ]; then echo withdrawn
+  else echo "no marker before or after: the withdrawal was not observed"; fi
+  git rev-parse HEAD
   ```
 
-  If `reviewed_head` has advanced to Run B's commit, the gate wrote a marker for a run it
+  `withdrawn` is the pass, and it prints only when the marker existed before Run B and is
+  gone after it. A `reviewed_head` equal to Run A's commit means the withdrawal
+  did not run. One equal to Run B's commit means the gate wrote a marker for a run it
   failed, and that is the most serious finding this section can produce.
 - The other four must be unaffected. If `performance` or `api-contract` also turns red on
   the migration commit, that is a scope leak worth recording.
@@ -790,6 +809,10 @@ The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push
 | Everything allowed regardless of marker | `jq` **and** `python3` both missing → fail-open | `command -v jq python3`; install one. |
 | `/forgeward:gate` not found | Skill not loaded | `claude plugin list`; ensure `forgeward` enabled; `/reload-plugins`. |
 | Marker written but push still denied | git-dir mismatch (worktree) or hash recompute differs | Run the manual check; compare the `diff_hash` in `"$(git rev-parse --git-common-dir)"/forgeward-gate-markers/<branch>.json` with `scripts/forgeward-diff-hash.sh <base>`. |
+| Marker written but push still denied | A later gate run on the reviewed commit superseded the marker's run | Compare the first line of `"$(git rev-parse --git-common-dir)"/forgeward-gate-runs/<reviewed_head>` with the marker's `run_id`; if they differ, re-run `/forgeward:gate`. |
+| Marker written but push still denied | The pushed commit has a run file of its own (a gate run started on it) and is not the marker's `reviewed_head` | Look for `"$(git rev-parse --git-common-dir)"/forgeward-gate-runs/<pushed commit>`; if it exists, gate that commit. |
+| Marker written but push still denied | The run file was deleted by hand | `forgeward-gate-runs/<reviewed_head>` is missing; every marker for that commit reads stale until it is gated again. |
+| Marker written but push still denied | The installed pre-push hook's enforcer path no longer exists (the hook exits 127), or the enforcer there predates 0.31.0 and hashes the diff the old way | Read the enforcer path in `"$(git rev-parse --git-path hooks/pre-push)"` (or `pre-push.local` beside it under gstack); if it is not the current plugin's `scripts/forgeward-pre-push.sh`, re-run `scripts/forgeward-install-pre-push.sh`. |
 
 **The key isolation test — separates "plugin didn't dispatch" from "script logic broke":**
 ```bash

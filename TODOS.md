@@ -421,6 +421,30 @@ preferring to delete a weightless detail rather than correct it.
 
 ## Gate — base detection and freshness
 
+- **A PASS is accepted per diff, but withdrawn per commit.** Since 0.31.0 both hooks accept
+  a marker only while `forgeward-gate-runs/<reviewed_head>` still holds its `run_id`, and
+  refuse it for a pushed commit that has a run file of its own (`run_is_current`). A
+  commit no gate run ever started on has no run file, so a PASS on C1 and a FAIL on C2
+  with the same diff do not stop a push of a third commit C3 with that diff, through any
+  marker revoke's deletions did not reach (they do reach the branch that was at C2, P41).
+  Run files are kept forever; deleting `forgeward-gate-runs` by hand reopens this for
+  every commit it held. The same property is what lets `/ship`'s
+  version-bump commit push on the PASS before it, so binding the marker to one commit is
+  not the fix. Also not covered: a write stalled across a whole newer run on the same
+  commit can overwrite that run's marker and then remove it, which costs one re-gate.
+  **What would settle it:** decide whether a FAIL should record its diff hash so that any
+  later commit with that diff is refused, and what that does to a legitimate re-gate.
+  (source: pre-landing review fix of PR 1, 2026-11-16) **Priority:** P3
+- **Nothing tells a user their installed pre-push hook runs an old enforcer.** The
+  installer writes the enforcer's absolute path into the hook, so after a plugin update
+  the enforced hook keeps running the copy it was installed from (and, from 0.31.0 on,
+  an older one does not check the gate run), or fails every push with a bare exit 127
+  once that path is gone. The 0.31.0 CHANGELOG tells users to re-run the installer; nothing
+  checks. **What would settle it:** the gate (or gate-check) warns when the installed
+  hook's enforcer path is not the current plugin root, and the installed hook prints a
+  message naming the installer instead of exit 127 when its enforcer no longer exists.
+  (source: pre-landing review of PR 1, 2026-11-16) **Priority:** P3
+
 - **The drive-letter arm in `remote_is_networked()` approximates git's third
   locality clause and diverges on DOS reserved device names.** git's real predicate is
   `!colon || (slash && slash < colon) || (has_dos_drive_prefix() && is_valid_path())`.
@@ -1036,6 +1060,14 @@ themselves so that none of them requires the commit to be actionable.
   with its own blast radius, and it should not ride along in a rubric re-port. **What would
   settle it:** delete the `npm audit` sentence, leave osv-scanner and trivy as the only CVE
   sources, and keep "states the gap" for a machine with neither. **Priority:** P2
+- **Reviewers read surrounding context from the working tree, which can differ from the
+  reviewed commit.** (upstream-lenses spec §4.4, 2026-11-16) Since 0.31.0 every reviewer
+  reviews the frozen `<BASE_SHA>...<HEAD_SHA>` diff, but a rubric that says "read the
+  surrounding file" reads the checked-out file, which carries any uncommitted edits. On a
+  dirty tree, the context a finding rests on can be code that is not in the reviewed
+  commit. **What would settle it:** tell reviewers to read context with
+  `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
+  read files from disk). **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -1115,7 +1147,12 @@ did *not* close.
   and they cannot protect a future reader from an old marker. If a marker format change ever
   *does* need to be enforced, the version field has to start being read first — and the
   fail-safe direction is already available for free (an unrecognised schema should read as
-  stale, which costs one re-gate). (0.8.0, restated 0.9.0 2026-08-06) **Priority:** P3
+  stale, which costs one re-gate). **Upgrade compatibility is the concrete case**
+  (upstream-lenses spec §4.4, 2026-11-16), and 0.31.0 closed it through another field
+  rather than this one: the hooks require `run_id`, which no older marker carries, so
+  every pre-0.31.0 marker reads as not passed (F4, P35). `schema` itself still gates
+  nothing. (0.8.0, restated 0.9.0 2026-08-06; amended 0.31.0, 2026-11-16)
+  **Priority:** P3
 - **The probe and the marker writer are now coupled, and the coupling is a standing
   maintenance obligation.** `forgeward-write-marker.sh` validates the probe's output against
   its *complete literal shape*, anchored at both ends — chosen over a jq/python3 structural
@@ -2023,6 +2060,17 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   contract and every `SKIPPED` call site, which is a bigger diff than the three assertions
   that prompted it. (gate testing-reviewer, 2026-08-27) **Priority:** P2
 
+- **`test/gate-test.sh`'s header says it needs `jq-or-python3`, and it needs `python3`.**
+  S6's version bump, S7's dependency mutation and the `UserPromptExpansion` matcher read
+  each call `python3 -c` with no `command -v` guard. All three were already on `master`
+  before 0.31.0, and V19's blob-collision search adds a fourth. On a machine with `jq` and
+  no `python3` those assertions go red rather than skip. That is the safe direction, but
+  the header is the suite's statement of its own footprint, and it is wrong. Those four are
+  the sites checked, not a census. Either correct the header to name `python3` as
+  required (smallest, and true today), or give each site the loud `SKIPPED` arm the A20/A21
+  block already uses. The second interacts with the `ok()`-counts-skips entry above.
+  (gate testing-reviewer, 2026-11-17) **Priority:** P3
+
 - **The layer-3 containment assertion is copy-pasted between P8l and P8m leg C.** Both
   spend three lines on the same shape — precondition (the file really was written), `rc = 3`,
   and the written path named in the report — differing only in variable names
@@ -2667,6 +2715,59 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **A PASS certifies the commits the reviewers were given, and every run withdraws the
+  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. **Not
+  merged when this was written.** Check with `git merge-base --is-ancestor` before
+  reading it as landed.) PR 1 of the seven-PR upstream-lenses stack
+  (`docs/upstream-lenses-design.md`). Step 0 freezes both commits; the writer takes them,
+  refuses on a moved `HEAD` or a diff-changing base move, and hashes the frozen pair;
+  `--revoke` runs before Step 2 and on every later outcome that ends without a marker.
+  The final review then required full commit ids, widened `--revoke` to every local
+  branch's marker at the reviewed commit, and made the writer refuse a pair with no merge
+  base. The pre-landing review (gstack `/review` with Codex) then closed five more ways a
+  failed or superseded re-review could leave a push authorized: reviewed ids must resolve
+  to themselves (a 64-hex branch name passed the shape check), revoke withdraws both
+  spellings of each branch (a same-named tag hid one), fails loudly on an unlistable
+  branch set, takes the frozen commit instead of live `HEAD`, and records a run id that
+  makes a superseded run's write refuse, K28–K38. K27–K33 were each observed reproducing
+  their bug against `72e9c2e`'s writer run under its own contract (four arguments, bare
+  `--revoke`); of sixteen writer mutations, fifteen reddened their named assertion, and
+  the sixteenth (arity alone) stayed green because the empty-argument check refuses the
+  same call, so K35 is pinned by the two together.
+  `test/gate-test.sh` gains K1–K38 (255 → 293 assertions). K7, K8, K10 and K12
+  were observed failing against the 0.30.0 writer, and three mutations (HEAD check, base
+  comparison, revoke's existence check) each reddened their assertion; the final
+  review's K14–K27 name their own control kind, each pre-fix control was observed
+  failing against the writer at `283c205`, and seven more mutations reddened exactly
+  their assertions. `test/pre-push-test.sh` gains one end-to-end sibling assertion
+  (observed failing against `283c205`). `test/dual-client-test.sh` gains eight
+  assertions: five, plus two from checking a revoke inside each of Step 3's three
+  outcomes separately, plus one pinning that every `--revoke` in the skill names
+  `"<HEAD_SHA>"`; its revoke-ordering assertion reddened when the revoke was moved
+  below the snapshot, the FAIL-outcome one when the FAIL block's revoke was deleted, and
+  the `"<HEAD_SHA>"` and `"<RUN_ID>"` pins each when one occurrence was removed.
+  `live-test/LIVE-TEST.md` Run B now expects Run A's marker withdrawn, and prints
+  `withdrawn` only when the marker existed before Run B.
+  A second pre-landing review (Codex twice, an adversarial pass, a red team) then
+  reproduced four ways an old or never-reviewed PASS still authorized a push, because the
+  hooks checked only `.base` and `.diff_hash` and revoke's name list missed spellings. The
+  marker now records its `run_id` (schema 5) and both hooks accept it only through
+  `run_is_current`, so the run file is the authority, not the deletions;
+  `forgeward-diff-hash.sh` exits 1 when `git diff` fails. That closed three entries from
+  `## Gate — base detection and freshness`: the destination-branch marker revoke could
+  not withdraw, the detached-`HEAD` PASS outliving a newer run, and the helper hashing a
+  failed diff as the empty diff. What the run id cannot see is filed there in their place.
+  `test/gate-test.sh` gains F1–F10, V11–V13, K33b and K39; `test/pre-push-test.sh` gains
+  P30–P39. A third pass made run files permanent (a delete-by-path prune raced revoke's
+  atomic replace) and each hook read the marker once (a marker swapped mid-check lent its
+  run to a stale PASS): K39 now pins that no write deletes a run file, plus K40, F11,
+  F12 and P40–P42. It also made the diff hash root-relative and pinned its invocation
+  against diff config (V14–V19), which closed `## Gate — base detection and freshness`'s
+  "UNVERIFIED: the diff hash may not cover a binary file's content": it was reproduced
+  (V19, a binary amended to one sharing its 7-hex blob id, the first pruned, hashed the
+  same against `e9ab0e0`'s helper) and fixed with `--full-index`. The writer now reads a
+  run file's first line as the hooks do (P43) and gives it the marker's mode (K41); K33b
+  was rebuilt around a stand-in environment probe because the `cat` it hooked is gone.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
   `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
   was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)

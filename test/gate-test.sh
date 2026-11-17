@@ -13,6 +13,19 @@ set -uo pipefail
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$PLUGIN/scripts/forgeward-gate-check.sh"
 WRITE="$PLUGIN/scripts/forgeward-write-marker.sh"
+# The writer takes the reviewed commits and the gate run's id since 0.31.0. Every caller
+# here gates the commit it just made, so both are resolved in the caller's cwd at call
+# time, and the run is minted the way Step 2 mints it: a `--revoke` of that commit, whose
+# `RUN_ID=` line is taken and whose other output is kept off this helper's stdout. That
+# revoke withdraws the marker of every branch at the commit, so a fixture that wants two
+# branches' markers at ONE commit cannot get them from two calls of this helper.
+write_marker_with() { # write_marker_with <writer> <base-ref> <fired-csv>
+  local head run
+  head="$(git rev-parse HEAD)"
+  run="$("$1" --revoke "$head" | sed -n 's/^RUN_ID=//p')"
+  "$1" "$2" "$3" "$(git rev-parse "$2")" "$head" "$run"
+}
+write_marker() { write_marker_with "$WRITE" "$@"; } # write_marker <base-ref> <fired-csv>
 HASH="$PLUGIN/scripts/forgeward-diff-hash.sh"
 
 PASS=0; FAIL=0
@@ -690,7 +703,7 @@ git init -q "$_MG"
   echo base > a.txt; git add -A; git commit -qm base; git branch -M main
   git checkout -qb ungated; echo u > u.txt; git add -A; git commit -qm ungated
   git checkout -qb gated main; echo w > w.txt; git add -A; git commit -qm work
-  "$WRITE" main "privacy" ) >/dev/null 2>&1
+  write_marker main "privacy" ) >/dev/null 2>&1
 
 _mg_push() { # _mg_push <path-prefix|empty> <branch> -> hook stdout
   git -C "$_MG" checkout -q "$2"
@@ -849,7 +862,7 @@ else
 fi
 
 # S5: PASS marker written -> publish allowed
-"$WRITE" main "privacy" >/dev/null
+write_marker main "privacy" >/dev/null
 out="$(pretool "$R" "git push -u origin feature")"
 [ -z "$out" ] && ok "PASS marker -> git push ALLOWED" || nok "PASS marker -> git push ALLOWED" "got: $out"
 [ "$(expansion "$R")" = "0" ] && ok "PASS marker -> /ship expansion ALLOWED (exit 0)" || nok "/ship expansion allowed"
@@ -996,7 +1009,7 @@ out="$(pretool "$TMP" "git push")"   # $TMP is not a git repo
 # R stays on `feature`; worktrees are added without moving R's HEAD. ---
 WT="$TMP/wt"
 git -C "$R" worktree add -q -b wtfeat "$WT" main >/dev/null 2>&1
-( cd "$WT"; printf 'const w = 1;\n' > wt.js; git add -A; git commit -qm "feat: worktree"; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WT"; printf 'const w = 1;\n' > wt.js; git add -A; git commit -qm "feat: worktree"; write_marker main "privacy" ) >/dev/null
 
 # W1: `cd <worktree> && git push` -> honor cd -> the worktree's GATED branch -> ALLOWED
 # (marker written inside the worktree is found via the common git dir).
@@ -1015,7 +1028,7 @@ denies "$(pretool "$R" "cd $WTB && git push")" \
 # W3: single-quoted cd with a spaced path resolves too (gated) -> ALLOWED.
 WTS="$TMP/wt spaced"
 git -C "$R" worktree add -q -b wtspace "$WTS" main >/dev/null 2>&1
-( cd "$WTS"; echo x > s.js; git add -A; git commit -qm "feat: spaced"; "$WRITE" main "privacy" ) >/dev/null
+( cd "$WTS"; echo x > s.js; git add -A; git commit -qm "feat: spaced"; write_marker main "privacy" ) >/dev/null
 out="$(pretool "$R" "cd '$WTS' && git push")"
 [ -z "$out" ] && ok "worktree: single-quoted 'cd <spaced worktree> && git push' (gated) -> ALLOWED" \
   || nok "worktree single-quoted cd allow" "got: $out"
@@ -2363,13 +2376,13 @@ fi
 MARKDIR="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
 
 # G1: a marker is written for a branch that is about to be deleted.
-( cd "$R" && git checkout -qb gcdead && echo g > gc.txt && git add -A && git commit -qm gc && "$WRITE" main "privacy" ) >/dev/null 2>&1
+( cd "$R" && git checkout -qb gcdead && echo g > gc.txt && git add -A && git commit -qm gc && write_marker main "privacy" ) >/dev/null 2>&1
 [ -f "$MARKDIR/gcdead.json" ] && ok "marker GC: precondition — a marker exists for branch 'gcdead'" \
   || nok "marker GC precondition" "no $MARKDIR/gcdead.json"
 
 # G2: delete the branch, gate again -> the orphaned marker is pruned.
 ( cd "$R" && git checkout -q feature && git branch -D gcdead ) >/dev/null 2>&1
-( cd "$R" && "$WRITE" main "privacy" ) >/dev/null 2>&1
+( cd "$R" && write_marker main "privacy" ) >/dev/null 2>&1
 [ ! -f "$MARKDIR/gcdead.json" ] && ok "marker GC: a marker whose branch no longer exists is pruned on the next write" \
   || nok "marker GC prunes orphan" "$MARKDIR/gcdead.json still present"
 
@@ -2456,7 +2469,10 @@ v_src="$(cd "$RV" && "$HASH" main)"
 # byte-alignment rewrote the canonical bytes INSIDE the package.json section, so every
 # repo re-gates once at that version. The independent rebuild below therefore tracks
 # the CURRENT canonicalization (`jq -S -c -a`) — if you change it there, you change it
-# here, and the one-time re-gate is the accepted cost stated in the script header.
+# here, and the one-time re-gate is the accepted cost stated in the script header. The
+# diff part is rebuilt with the CURRENT pinned invocation too (root-relative pathspecs,
+# config-independent options): the suite runs under the invoker's own git config, so a
+# bare `git diff` here would track that config while the helper does not.
 RL="$TMP/repo-legacy"
 mkrepo "$RL"
 ( cd "$RL"
@@ -2464,8 +2480,13 @@ mkrepo "$RL"
   echo ok > src.js; git add -A; git commit -qm base; git branch -M main
   git checkout -q -b feature; echo more > f.js; git add -A; git commit -qm feat ) >/dev/null 2>&1
 legacy="$( cd "$RL"
-  dp="$(git diff "main...HEAD" -- . ':(exclude)VERSION' ':(exclude)CHANGELOG.md' \
-        ':(exclude)CHANGELOG' ':(exclude)TODOS.md' ':(exclude)package.json' 2>/dev/null)"
+  dp="$(GIT_DIFF_OPTS= git -c diff.relative=false -c diff.noprefix=false -c diff.mnemonicPrefix=false \
+        -c diff.suppressBlankEmpty=false -c diff.interHunkContext=0 -c diff.indentHeuristic=false \
+        -c core.quotePath=true diff --no-ext-diff --no-textconv --full-index --no-color --no-renames \
+        -U3 --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/ --ignore-submodules=none \
+        --submodule=short "main...HEAD" -- ':(top)' ':(top,exclude)VERSION' \
+        ':(top,exclude)CHANGELOG.md' ':(top,exclude)CHANGELOG' ':(top,exclude)TODOS.md' \
+        ':(top,exclude)package.json' 2>/dev/null)"
   raw="$(git show "HEAD:package.json" 2>/dev/null)"
   if command -v jq >/dev/null 2>&1; then pp="$(printf '%s' "$raw" | jq -S -c -a '.version = "<<forgeward-gated>>"')"
   else pp="$(printf '%s' "$raw" | python3 -c 'import json,sys
@@ -2591,6 +2612,249 @@ if grep -q 'bogus-mode' "$BM"; then
 else
   nok "V10 setup failed" "could not inject a bad mode into a copy of $HASH — the call-site text no longer matches, so V10 asserted NOTHING"
 fi
+
+# V11-V13: a `git diff` that FAILS must not hash as the empty diff. The diff part was an
+# unguarded assignment, so a failed diff left it empty with exit 0 and the hash was the
+# empty-diff hash -- which every later commit on that pair also produces, because its
+# diff fails the same way. V11 and V12 are PRE-FIX controls (6e11899's helper printed a
+# hash for both, and its writer certified V11's repo so the later push was allowed);
+# V13 is the positive control. Mutation-checked: removing the guard turns V11 and V12 red.
+VDMSG='failed; refusing to hash an empty diff'
+VD="$TMP/vdiff"; mkrepo "$VD"
+( cd "$VD" && git config forgeward.gate enabled && echo base > a.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb vfeat && echo change >> a.txt && git commit -qam feat ) >/dev/null 2>&1
+VDB="$(git -C "$VD" rev-parse main)"; VDH="$(git -C "$VD" rev-parse vfeat)"
+# V13 (positive control): the intact repo hashes.
+v13_out="$(cd "$VD" && "$HASH" main "$VDH" 2>&1)"; v13_rc=$?
+[ "$v13_rc" -eq 0 ] && [ "${#v13_out}" -eq 64 ] && case "$v13_out" in *[!0-9a-f]*) false ;; *) true ;; esac \
+  && ok "V13: an intact repo still hashes (control for V11/V12)" \
+  || nok "V13: intact repo did not hash" "rc=$v13_rc out=$v13_out"
+# V11: the base-side blob of a.txt is missing (a partial clone or corruption); the merge
+# base is intact, so only the guard can refuse.
+v11_blob="$(git -C "$VD" rev-parse main:a.txt)"
+rm -f "$VD/.git/objects/${v11_blob:0:2}/${v11_blob:2}"
+v11_out="$(cd "$VD" && "$HASH" main "$VDH" 2>"$TMP/v11.err")"; v11_rc=$?
+v11_err="$(cat "$TMP/v11.err")"
+v11_run="$(cd "$VD" && "$WRITE" --revoke "$VDH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+v11_wout="$(cd "$VD" && "$WRITE" main privacy "$VDB" "$VDH" "$v11_run" 2>&1)"; v11_wrc=$?
+( cd "$VD" && echo new > new.txt && git add new.txt && git commit -qm "unreviewed" ) >/dev/null 2>&1
+v11_z="$(git -C "$VD" rev-parse HEAD)"
+v11_push="$(cd "$VD" && printf 'refs/heads/vfeat %s refs/heads/vfeat %s\n' "$v11_z" 0000000000000000000000000000000000000000 \
+  | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1)"; v11_prc=$?
+[ "$v11_rc" -ne 0 ] && [ -z "$v11_out" ] \
+  && case "$v11_err" in *"forgeward-diff-hash: git diff main...$VDH $VDMSG"*) true ;; *) false ;; esac \
+  && [ "$v11_wrc" -eq 1 ] && case "$v11_wout" in *"could not hash the reviewed diff; nothing was written."*) true ;; *) false ;; esac \
+  && [ "$v11_prc" -eq 1 ] && case "$v11_push" in *"have not passed /forgeward:gate"*"vfeat @ ${v11_z:0:12}"*) true ;; *) false ;; esac \
+  && ok "V11: a diff that fails on a missing blob prints no hash and says why; the writer refuses and a later commit cannot be pushed" \
+  || nok "V11: a failed diff still produced a hash or a usable marker" \
+         "rc=$v11_rc out=$v11_out err=$v11_err write=$v11_wrc:$v11_wout push=$v11_prc:$v11_push"
+# V12: a tip with no merge base with the base.
+VN="$TMP/vnomb"; mkrepo "$VN"
+( cd "$VN" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -q --orphan vorph && git rm -rqf . && echo o > o.txt && git add o.txt && git commit -qm o ) >/dev/null 2>&1
+VNO="$(git -C "$VN" rev-parse vorph)"
+v12_out="$(cd "$VN" && "$HASH" main "$VNO" 2>"$TMP/v12.err")"; v12_rc=$?
+v12_err="$(cat "$TMP/v12.err")"
+[ "$v12_rc" -ne 0 ] && [ -z "$v12_out" ] \
+  && case "$v12_err" in *"forgeward-diff-hash: git diff main...$VNO $VDMSG"*) true ;; *) false ;; esac \
+  && ok "V12: a tip with no merge base with the base prints no hash and says why" \
+  || nok "V12: no-merge-base diff still hashed" "rc=$v12_rc out=$v12_out err=$v12_err"
+
+# V14-V19: the diff part is ROOT-RELATIVE and does not follow diff config. V14, V15,
+# V18, V19 and every V17 "leaves the hash unchanged" case are PRE-FIX controls:
+# e9ab0e0's helper (`-- .` and a bare `git diff`) fails each, measured by running this
+# file against it. V16 is the floor that keeps V17 from asserting a property of nothing;
+# the V17 orderFile assertion pins a stated non-goal and is green on e9ab0e0 too.
+# V14: a hash taken in a subdirectory equals the hash taken at the root. Mutation-checked:
+# `-- .` in place of `':(top)'` turns V14 and V15 red.
+VS="$TMP/vsub"; mkrepo "$VS"
+( cd "$VS" && mkdir sub && echo a > sub/in.txt && echo b > out.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb vs && echo a2 >> sub/in.txt && echo b2 >> out.txt \
+   && git commit -qam feat ) >/dev/null 2>&1
+VSB="$(git -C "$VS" rev-parse main)"; VSH="$(git -C "$VS" rev-parse HEAD)"
+v14_root="$(cd "$VS" && "$HASH" main 2>/dev/null)"
+v14_sub="$(cd "$VS/sub" && "$HASH" main 2>/dev/null)"
+[ "${#v14_root}" -eq 64 ] && [ "$v14_sub" = "$v14_root" ] \
+  && ok "V14: the diff hash taken in a subdirectory equals the one taken at the root" \
+  || nok "V14: the diff hash depends on the cwd" "root=$v14_root sub=$v14_sub"
+# V15: the reminder run from a subdirectory. The gate passes from sub/ (its writer runs
+# there), then a commit changes a file OUTSIDE sub/. e9ab0e0 compared two hashes of sub/
+# alone and allowed the push; leg 1 (the reviewed commit itself) is the positive control.
+v15_run="$(cd "$VS/sub" && "$WRITE" --revoke "$VSH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VS/sub" && "$WRITE" main privacy "$VSB" "$VSH" "$v15_run" ) >/dev/null 2>&1
+v15_1="$(pretool "$VS/sub" "git push origin HEAD")"
+( cd "$VS" && echo outside >> out.txt && git commit -qam 'change outside sub' ) >/dev/null 2>&1
+v15_2="$(pretool "$VS/sub" "git push origin HEAD")"
+[ -z "$v15_1" ] && denies "$v15_2" \
+  && case "$v15_2" in *"the current branch (vs @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac \
+  && ok "V15: from a subdirectory, a change outside it after the PASS reads not fresh" \
+  || nok "V15: a subdirectory reminder missed a change outside its subtree" \
+         "reviewed=${v15_1:-allowed} after=$(denies "$v15_2" && echo denied || echo allowed)"
+
+# V16/V17: one assertion per diff setting, each against the default-config hash of the
+# SAME range in the same repo. The fixture carries a shape for each setting to act on:
+# a two-hunk file (context, hunk merging), blank lines (suppressBlankEmpty), a patience
+# example (algorithm), an indent-heuristic example, a rename and a copy, a textconv
+# driver, a subdirectory, a binary, a non-ASCII name (quotePath) and a gitlink with a
+# .gitmodules entry. Every setting is repo-local and unset again after its case.
+VX="$TMP/vcfg"; mkrepo "$VX"
+VEXT="$TMP/vext.sh"; printf '#!/bin/sh\necho constant\n' > "$VEXT"; chmod +x "$VEXT"
+( cd "$VX"
+  seq 1 30 > a.txt
+  printf 'one\n\ntwo\n\nthree\n\nfour\n' > blank.txt
+  seq 101 140 > r.txt
+  seq 201 240 > c.txt
+  printf 'lower case text\n' > t.tc
+  mkdir sub; echo s1 > sub/x.txt
+  printf '\000\001\002bin' > bin.dat
+  printf 'q\n' > "$(printf 'caf\303\251.txt')"
+  printf '#include <stdio.h>\n\n// Frobs foo heartily\nint frobnitz(int foo)\n{\n    int i;\n    for(i = 0; i < 10; i++)\n    {\n        printf("Your answer is: ");\n        printf("%%d\\n", foo);\n    }\n}\n\nint fact(int n)\n{\n    if(n > 1)\n    {\n        return fact(n-1) * n;\n    }\n    return 1;\n}\n\nint main(int argc, char **argv)\n{\n    frobnitz(fact(10));\n}\n' > pat.c
+  printf '1\n2\na\n\nb\n3\n4\n' > ind.c
+  mkdir sm; printf '[submodule "sm"]\n\tpath = sm\n\turl = ./nowhere\n' > .gitmodules
+  git add -A; git update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,sm
+  git commit -qm base; git branch -M main; git checkout -qb vx
+  sed -i -e '5s/.*/five/' -e '15s/.*/fifteen/' a.txt
+  printf 'one\n\ntwo\n\nTHREE\n\nfour\n' > blank.txt
+  git mv r.txt r2.txt
+  cp c.txt c2.txt; sed -i '1s/.*/changed/' c.txt
+  printf 'still lower case\n' > t.tc; printf '*.tc diff=upper\n' > .gitattributes
+  echo s2 > sub/x.txt
+  printf '\000\001\003bin' > bin.dat
+  printf 'q2\n' > "$(printf 'caf\303\251.txt')"
+  printf '#include <stdio.h>\n\nint fib(int n)\n{\n    if(n > 2)\n    {\n        return fib(n-1) + fib(n-2);\n    }\n    return 1;\n}\n\n// Frobs foo heartily\nint frobnitz(int foo)\n{\n    int i;\n    for(i = 0; i < 10; i++)\n    {\n        printf("%%d\\n", foo);\n    }\n}\n\nint main(int argc, char **argv)\n{\n    frobnitz(fib(10));\n}\n' > pat.c
+  printf '1\n2\na\n\nb\na\n\nb\n3\n4\n' > ind.c
+  git add -A; git update-index --cacheinfo 160000,2222222222222222222222222222222222222222,sm
+  git commit -qm feat ) >/dev/null 2>&1
+v17_def="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+v17_n=0
+v17_same() { # v17_same <label> <hash>
+  v17_n=$((v17_n+1))
+  [ -n "$2" ] && [ "$2" = "$v17_def" ] \
+    && ok "V17: $1 leaves the diff hash unchanged" \
+    || nok "V17: $1 changes the diff hash" "default=$v17_def got=${2:-<none>}"
+}
+v17_cfg() { # v17_cfg <label> <key> <value>
+  local got
+  git -C "$VX" config "$2" "$3"
+  got="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+  git -C "$VX" config --unset "$2"
+  v17_same "$1" "$got"
+}
+v17_env() { # v17_env <VAR> <value>
+  local got
+  got="$(cd "$VX" && env "$1=$2" "$HASH" main 2>/dev/null)"
+  v17_same "$1 in the environment" "$got"
+}
+v17_cfg "diff.external" diff.external "$VEXT"
+v17_env GIT_EXTERNAL_DIFF "$VEXT"
+v17_cfg "a diff driver's command (diff.<driver>.command)" diff.upper.command "$VEXT"
+v17_cfg "a textconv driver" diff.upper.textconv 'tr a-z A-Z'
+v17_cfg "diff.noprefix" diff.noprefix true
+v17_cfg "diff.algorithm=patience" diff.algorithm patience
+v17_cfg "diff.context=10" diff.context 10
+v17_env GIT_DIFF_OPTS --unified=10
+v17_cfg "diff.renames=copies" diff.renames copies
+v17_cfg "diff.renames=false" diff.renames false
+v17_cfg "color.diff=always" color.diff always
+v17_cfg "core.abbrev=12" core.abbrev 12
+v17_cfg "diff.interHunkContext=5" diff.interHunkContext 5
+v17_cfg "diff.suppressBlankEmpty" diff.suppressBlankEmpty true
+v17_cfg "diff.indentHeuristic=false" diff.indentHeuristic false
+v17_cfg "core.quotePath=false" core.quotePath false
+v17_cfg "diff.ignoreSubmodules=all" diff.ignoreSubmodules all
+v17_cfg "submodule.<name>.ignore=all" submodule.sm.ignore all
+v17_cfg "diff.submodule=log" diff.submodule log
+# diff.relative=true, hashed from a subdirectory (B1's third case: top magic alone does
+# not override it; the -c override does).
+git -C "$VX" config diff.relative true
+v17_rel="$(cd "$VX/sub" && "$HASH" main 2>/dev/null)"
+git -C "$VX" config --unset diff.relative
+v17_same "diff.relative=true, hashed from a subdirectory," "$v17_rel"
+# V16: the floor. A default hash that is empty would make every case above vacuous.
+[ "${#v17_def}" -eq 64 ] && [ "$v17_n" -ge 10 ] \
+  && ok "V16: the diff-config battery ran $v17_n cases against a real default hash" \
+  || nok "V16: the diff-config battery asserted nothing" "default=${v17_def:-<none>} cases=$v17_n"
+# V17 (documented non-goal, pinned so it is corrected the day it closes): diff.orderFile
+# still reorders the file sections, so a marker reads stale -- never a false PASS.
+printf 'sub/*\n*\n' > "$TMP/vorder"
+git -C "$VX" config diff.orderFile "$TMP/vorder"
+v17_ord="$(cd "$VX" && "$HASH" main 2>/dev/null)"
+git -C "$VX" config --unset diff.orderFile
+[ "${#v17_ord}" -eq 64 ] && [ "$v17_ord" != "$v17_def" ] \
+  && ok "V17: diff.orderFile still changes the hash (the header's stated non-goal; fails closed)" \
+  || nok "V17: diff.orderFile no longer changes the hash -- correct the helper's non-goal" \
+         "default=$v17_def got=${v17_ord:-<none>}"
+
+# V18: end to end, the shape the pinning exists for. With an external differ that prints
+# the same text for two contents, a binary replaced AFTER the PASS hashed the same and
+# e9ab0e0 allowed the push. Leg 1 (the reviewed commit itself) is the positive control.
+# Mutation-checked: dropping --no-ext-diff from the helper turns V18 red.
+VE="$TMP/vextrepo"; mkrepo "$VE"
+( cd "$VE" && git config forgeward.gate enabled && git config diff.external "$VEXT" \
+   && printf '\000\001\002bin' > bin.dat && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb ve && printf '\000\001\003bin' > bin.dat && git commit -qam feat ) >/dev/null 2>&1
+VEB="$(git -C "$VE" rev-parse main)"; VEH="$(git -C "$VE" rev-parse HEAD)"
+v18_run="$(cd "$VE" && "$WRITE" --revoke "$VEH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VE" && "$WRITE" main privacy "$VEB" "$VEH" "$v18_run" ) >/dev/null 2>&1
+v18_push() { # v18_push <sha>: the real enforcer on a push of ve at <sha>
+  ( cd "$VE" && printf 'refs/heads/ve %s refs/heads/ve %s\n' "$1" 0000000000000000000000000000000000000000 \
+    | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1 )
+}
+v18_1="$(v18_push "$VEH")"; v18_1rc=$?
+( cd "$VE" && printf '\000\001\004bin' > bin.dat && git commit -qam 'replace the binary' ) >/dev/null 2>&1
+VEZ="$(git -C "$VE" rev-parse HEAD)"
+v18_2="$(v18_push "$VEZ")"; v18_2rc=$?
+[ "$v18_1rc" -eq 0 ] && [ "$v18_2rc" -eq 1 ] \
+  && case "$v18_2" in *"have not passed /forgeward:gate"*"ve @ ${VEZ:0:12}"*) true ;; *) false ;; esac \
+  && ok "V18: with diff.external set, a binary replaced after the PASS is refused at push" \
+  || nok "V18: an external differ hid a binary change after the PASS" \
+         "reviewed=$v18_1rc:$v18_1 replaced=$v18_2rc:$v18_2"
+
+# V19: a binary file is `Binary files ... differ` plus its `index` line, and without
+# --full-index that line carries ABBREVIATED blob ids. Two blobs sharing a 7-hex prefix
+# take ~13k tries to find, deterministically (fixed search order). The gate passes on X1;
+# the commit is amended to X2 and X1 is pruned, so git no longer lengthens the prefix to
+# tell them apart -- e9ab0e0 hashed both the same and allowed the push (PRE-FIX control,
+# also red with only --full-index removed). Leg 1 (the reviewed commit) is the positive
+# control; the prefix check proves the fixture really collides.
+VB="$TMP/vbinrepo"; mkrepo "$VB"
+python3 -I - "$TMP/vbin" <<'PY'
+import hashlib, sys
+seen = {}
+i = 0
+while True:
+    c = b"\x00forgeward-bin-" + str(i).encode()
+    k = hashlib.sha1(b"blob %d\x00" % len(c) + c).hexdigest()[:7]
+    if k in seen:
+        open(sys.argv[1] + ".x1", "wb").write(seen[k])
+        open(sys.argv[1] + ".x2", "wb").write(c)
+        break
+    seen[k] = c
+    i += 1
+PY
+( cd "$VB" && git config forgeward.gate enabled && printf '\000base' > bin.dat && git add -A \
+   && git commit -qm base && git branch -M main && git checkout -qb vb && cp "$TMP/vbin.x1" bin.dat \
+   && git commit -qam x1 ) >/dev/null 2>&1
+VBB="$(git -C "$VB" rev-parse main)"; VBH="$(git -C "$VB" rev-parse HEAD)"
+v19_run="$(cd "$VB" && "$WRITE" --revoke "$VBH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+( cd "$VB" && "$WRITE" main privacy "$VBB" "$VBH" "$v19_run" ) >/dev/null 2>&1
+v19_push() { # v19_push <sha>: the real enforcer on a push of vb at <sha>
+  ( cd "$VB" && printf 'refs/heads/vb %s refs/heads/vb %s\n' "$1" 0000000000000000000000000000000000000000 \
+    | FORGEWARD_SECRET_SCAN=skip "$PLUGIN/scripts/forgeward-pre-push.sh" origin /nonexistent.git 2>&1 )
+}
+v19_1="$(v19_push "$VBH")"; v19_1rc=$?
+v19_x1="$(git -C "$VB" rev-parse "$VBH:bin.dat")"
+( cd "$VB" && cp "$TMP/vbin.x2" bin.dat && git commit -q --amend -am x2 && git reflog expire --expire=now --all \
+   && git gc -q --prune=now ) >/dev/null 2>&1
+VBZ="$(git -C "$VB" rev-parse HEAD)"; v19_x2="$(git -C "$VB" rev-parse "$VBZ:bin.dat")"
+v19_gone=1; git -C "$VB" cat-file -e "$v19_x1" 2>/dev/null && v19_gone=0
+v19_2="$(v19_push "$VBZ")"; v19_2rc=$?
+[ "${v19_x1:0:7}" = "${v19_x2:0:7}" ] && [ "$v19_x1" != "$v19_x2" ] && [ "$v19_gone" = 1 ] \
+  && [ "$v19_1rc" -eq 0 ] && [ "$v19_2rc" -eq 1 ] \
+  && case "$v19_2" in *"have not passed /forgeward:gate"*"vb @ ${VBZ:0:12}"*) true ;; *) false ;; esac \
+  && ok "V19: a binary replaced after the PASS by one with the same abbreviated blob id is refused at push" \
+  || nok "V19: an abbreviated index line hid a binary change after the PASS" \
+         "x1=$v19_x1 x2=$v19_x2 x1-pruned=$v19_gone reviewed=$v19_1rc:$v19_1 replaced=$v19_2rc:$v19_2"
 
 # M1 (manifest hooks guard): the standard hooks/hooks.json is auto-loaded by Claude
 # Code, so .claude-plugin/plugin.json must NOT also reference it via the "hooks" key —
@@ -2979,11 +3243,11 @@ E9J="$(envprobe "$EMPTY_CFG")"
 EM="$TMP/envmarker"; mkrepo "$EM"
 ( cd "$EM" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-   && "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+   && write_marker_with "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
 EMJ="$(cd "$EM" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EMJ" ] \
-  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==4 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
-  && ok "env: the pass marker is schema 4 and carries a readable environment object" \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["schema"]==5 and isinstance(d["environment"],dict) and "gstack_ship" in d["environment"] and "gstack_cso" in d["environment"] and "seo_posture" in d["environment"] else 1)' "$EMJ" \
+  && ok "env: the pass marker is schema 5 and carries a readable environment object" \
   || nok "env E10" "marker '$EMJ'"
 
 # E11: the probe must never cost a PASS. If it is missing or broken, the marker is still
@@ -2996,7 +3260,7 @@ printf '#!/usr/bin/env bash\necho "NOT JSON {oops"\nexit 3\n' > "$FAKE_PLUGIN/fo
 chmod +x "$FAKE_PLUGIN"/*.sh
 ( cd "$EB" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-   && "$FAKE_PLUGIN/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+   && write_marker_with "$FAKE_PLUGIN/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
 EBJ="$(cd "$EB" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$EBJ" ] \
   && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["passed"] is True and d["environment"]=={"probe":"unavailable"} else 1)' "$EBJ" \
@@ -3094,7 +3358,7 @@ fakeprobe() { # fakeprobe <name> <line-it-prints> -> path to the resulting marke
   mkrepo "$r"
   ( cd "$r" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
      && echo b > b.txt && git add -A && git commit -qm work && git checkout -q -b feat \
-     && "$d/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
+     && write_marker_with "$d/forgeward-write-marker.sh" master "security" ) >/dev/null 2>&1
   printf '%s/forgeward-gate-markers/feat.json' \
     "$(cd "$r" && git rev-parse --path-format=absolute --git-common-dir)"
 }
@@ -3468,7 +3732,7 @@ mkdir -p "$E37R/.forgeward"
 printf '%s\n' 'standalone:' '  substitues:' '    - quality' > "$E37R/.forgeward/config.yml"
 ( cd "$E37R" && echo a > a.txt && git add -A && git commit -qm base && git branch -M master \
    && git checkout -q -b feat && echo b > b.txt && git add -A && git commit -qm work \
-   && CLAUDE_CONFIG_DIR="$EMPTY_CFG" "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" \
+   && CLAUDE_CONFIG_DIR="$EMPTY_CFG" write_marker_with "$PLUGIN/scripts/forgeward-write-marker.sh" master "security" \
 ) >/dev/null 2>&1
 E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/feat.json"
 [ -f "$E37J" ] \
@@ -4955,6 +5219,840 @@ else
         "path:${_a31_path:-MISSING} commit:${_a31_commit:-MISSING} sha256:$_a31_shastate"
   fi
 fi
+
+# =============================================================================
+# K1..K41 — a PASS certifies the commits the reviewers were given, and only the latest
+# gate run on that commit may write it (0.31.0). K33b, K39 and K41 pin the run id's marker
+# field, that no write deletes a run file, and the run file's mode; F1-F12 below pin what
+# the hooks do with them.
+#
+# The writer used to read HEAD and hash the live `<base>...HEAD` at write time, so a
+# commit landing while reviewers ran was pinned to a marker nobody reviewed, and a
+# failed re-run left an earlier PASS usable for the same diff. It now takes the full
+# commit ids Step 0 froze -- each must resolve to itself -- and the id of the gate run
+# that is writing; refuses when HEAD moved, when a pair shares no merge base, when the
+# frozen pair's hash differs from the one the push hook will recompute from the base
+# ref, or when a later run on that commit superseded this one; hashes the frozen pair;
+# and has a `--revoke <reviewed-head>` mode the gate runs when a review starts and on
+# every non-PASS. That mode records a new run id FIRST, then withdraws the marker of
+# every local branch at the FROZEN commit under both spellings of its name, and on
+# success prints `RUN_ID=<id>` as its last line.
+#
+# KIND OF CONTROL, per CLAUDE.md. K7, K8, K10 and K12 are PRE-FIX controls: against
+# `git show 57c7192:scripts/forgeward-write-marker.sh` (0.30.0) they fail (it ignores the
+# third and fourth arguments and has no --revoke). K9 is a WRONG-FIX control: green
+# against that writer by construction, it pins that a fetch-style base advance still
+# writes, which the plausible wrong fix -- refusing whenever the base ref's SHA changed
+# -- would refuse. K1-K5, K11 and K13 pin the new contract, and because the contract
+# itself is new they ALSO fail against 0.30.0 -- they are not bug-neutral. K6 is the
+# one contract pin that is green against 0.30.0. K14-K27 came from the final review and
+# each names its own kind, measured against 283c205. K28-K38 came from the pre-landing
+# review and are measured against 72e9c2e. That review changed the contract itself (a
+# fifth argument, and a commit for --revoke), so each K28-K33 PRE-FIX control was
+# measured by running 72e9c2e's writer under ITS OWN contract (four arguments, bare
+# --revoke) through the same fixture steps and watching the bug reproduce. K34 is a
+# WRONG-FIX control; K35-K38 pin the new contract and have no pre-fix form. The guard
+# each of K28-K38 names was also disabled in a scratch copy of the writer, and that
+# assertion went red -- with one measured exception: relaxing the arity to accept four
+# arguments alone leaves K35 green, because the empty-argument check refuses a missing
+# run id with the same usage line; K35 reddens only when both are disabled.
+#
+# What the pre-landing review changed in the older assertions, which keep their numbers:
+# every write now needs a run id minted by `--revoke` of the reviewed head (`krun`), and
+# every revoke takes that commit. K10 and K11 pin that the last line of a successful
+# revoke is `RUN_ID=<id>` (K11: the ONLY line when there is nothing to withdraw); K12
+# that a failed revoke prints none; K13 that --revoke without a commit, or with more
+# than one argument, is a usage error; K26 and K27 that the frozen commit, not live HEAD,
+# decides what is withdrawn on a detached and on an unborn HEAD.
+# =============================================================================
+KR="$TMP/bind"; mkrepo "$KR"
+( cd "$KR" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb kfeat && echo b > b.js && git add -A && git commit -qm work ) >/dev/null 2>&1
+KB="$(git -C "$KR" rev-parse main)"; KH="$(git -C "$KR" rev-parse HEAD)"
+KCOMMON="$(git -C "$KR" rev-parse --path-format=absolute --git-common-dir)"
+KMARK="$KCOMMON/forgeward-gate-markers/kfeat.json"
+kw() { kout="$(cd "$KR" && "$WRITE" "$@" 2>&1)"; kst=$?; }
+kfield() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$KMARK" "$1" 2>/dev/null; }
+KUSAGE='usage: forgeward-write-marker.sh <base-ref> <fired-csv> <reviewed-base> <reviewed-head> <run-id>'
+# krun <commit>: mint a gate run for <commit> the way Step 2 does, into KRUN. It is a real
+# revoke, so it also withdraws every marker at that commit.
+krun() { KRUN="$(cd "$KR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"; }
+khex() { # khex <value>: 40 or 64 lowercase hex
+  case "${#1}:$1" in 40:*[!0-9a-f]*|64:*[!0-9a-f]*) return 1 ;; 40:*|64:*) return 0 ;; esac
+  return 1
+}
+klastrun() { local l="${kout##*$'\n'}"; case "$l" in RUN_ID=*) khex "${l#RUN_ID=}" ;; *) return 1 ;; esac; }
+knorun() { case $'\n'"$kout" in *$'\n'RUN_ID=*) return 1 ;; esac; return 0; }
+krun "$KH"
+
+# K1-K5: the reviewed commits are REQUIRED, and anything that is not one is a usage error.
+kw main privacy
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K1: the writer refuses the old two-argument call with exit 64 and its usage line" \
+  || nok "K1: two-argument call" "st=$kst out=$kout"
+kw main privacy "" "$KH" "$KRUN"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K2: an empty reviewed-base is a usage error, not a silent default" \
+  || nok "K2: empty reviewed-base" "st=$kst out=$kout"
+kw main privacy "$KB"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K3: a missing reviewed-head is a usage error" \
+  || nok "K3: missing reviewed-head" "st=$kst out=$kout"
+kw main privacy "$KB" "$(git -C "$KR" rev-parse 'HEAD^{tree}')" "$KRUN"
+[ "$kst" -eq 64 ] && case "$kout" in *"reviewed head"*"is not a commit"*) true ;; *) false ;; esac \
+  && ok "K4: a tree object as reviewed-head is refused as not a commit" \
+  || nok "K4: non-commit reviewed-head" "st=$kst out=$kout"
+kw main privacy "--output=x" "$KH" "$KRUN"
+[ "$kst" -eq 64 ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K5: a dash-led reviewed argument is refused before git can read it as an option" \
+  || nok "K5: dash-led argument" "st=$kst out=$kout"
+
+# K6: the happy path -- the full ids Step 0 printed and the current run's id write a
+# marker recording the reviewed head and the frozen pair's hash. (Abbreviated ids were
+# accepted here until the final review of 0.31.0; K16 now pins that they are refused.)
+rm -f "$KMARK"
+krun "$KH"
+kw main privacy "$KB" "$KH" "$KRUN"
+K6HASH="$(cd "$KR" && "$HASH" main "$KH")"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ "$(kfield reviewed_head)" = "$KH" ] \
+  && [ -n "$K6HASH" ] && [ "$(kfield diff_hash)" = "$K6HASH" ] \
+  && ok "K6: full reviewed ids write a marker recording the reviewed head and the frozen pair's hash" \
+  || nok "K6: happy path" "st=$kst out=$kout head=$(kfield reviewed_head) want=$KH"
+
+# K7 (PRE-FIX control): a commit lands after the review subject was frozen.
+( cd "$KR" && echo c > c.js && git add -A && git commit -qm more ) >/dev/null 2>&1
+K7NEW="$(git -C "$KR" rev-parse HEAD)"
+rm -f "$KMARK"
+kw main privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"HEAD moved during the gate run (${KH:0:12} -> ${K7NEW:0:12}); nothing reviewed ${K7NEW:0:12}"*) true ;; *) false ;; esac \
+  && ok "K7: a commit made after Step 0 froze the subject writes no marker and says HEAD moved" \
+  || nok "K7: moved HEAD" "st=$kst out=$kout"
+KH="$K7NEW"
+
+# K8 (PRE-FIX control): the base moves in a way that CHANGES the reviewed diff.
+git -C "$KR" branch -f main "$KH" >/dev/null 2>&1
+krun "$KH"
+kw main privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"the base 'main' moved during the gate run in a way that changes the reviewed diff"*) true ;; *) false ;; esac \
+  && ok "K8: a base move that changes the merge base writes no marker and says the base moved" \
+  || nok "K8: moved base" "st=$kst out=$kout"
+git -C "$KR" branch -f main "$KB" >/dev/null 2>&1
+
+# K9 (WRONG-FIX control): a fetch-style advance of the base leaves the merge base -- and
+# so the diff -- unchanged, and must still write.
+( cd "$KR" && git checkout -q main && echo m > m.txt && git add -A && git commit -qm upstream \
+   && git checkout -q kfeat ) >/dev/null 2>&1
+kw main privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] \
+  && ok "K9: a base that only advanced (merge base unchanged) still writes the marker" \
+  || nok "K9: fetch-style advance refused" "st=$kst out=$kout"
+
+# K10 (PRE-FIX control): --revoke withdraws an existing marker, and its last line is the
+# new run's id.
+kw --revoke "$KH"
+[ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] && klastrun \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && ok "K10: --revoke removes this branch's marker, says so, and ends with RUN_ID=<id>" \
+  || nok "K10: revoke existing" "st=$kst out=$kout"
+
+# K11: nothing to withdraw prints exactly one line, the new run's id.
+rm -f "$KMARK"
+kw --revoke "$KH"
+[ "$kst" -eq 0 ] && klastrun && case "$kout" in *$'\n'*) false ;; RUN_ID=*) true ;; *) false ;; esac \
+  && ok "K11: --revoke with no marker exits 0 and prints only the RUN_ID=<id> line" \
+  || nok "K11: revoke absent" "st=$kst out=$kout"
+
+# K12 (PRE-FIX control): a marker that cannot be removed is a loud failure, never a
+# silent success -- the gate stops on it because that PASS may still authorize a push --
+# and prints no RUN_ID line, so the run cannot certify anything.
+if [ "$(id -u)" -eq 0 ]; then
+  ok "K12: # SKIP running as root -- a read-only directory does not stop root"
+else
+  krun "$KH"
+  kw main privacy "$KB" "$KH" "$KRUN"
+  chmod a-w "$(dirname "$KMARK")"
+  kw --revoke "$KH"
+  chmod u+w "$(dirname "$KMARK")"
+  [ "$kst" -eq 1 ] && [ -f "$KMARK" ] && knorun \
+    && case "$kout" in *"could not withdraw the earlier PASS for 'kfeat'"*"it may still authorize a push"*) true ;; *) false ;; esac \
+    && ok "K12: an unremovable marker makes --revoke fail loudly with the marker still named, and no RUN_ID line" \
+    || nok "K12: unremovable marker" "st=$kst out=$kout"
+fi
+
+# K13: --revoke takes exactly one argument, the reviewed head.
+kw --revoke; k13_bare_st=$kst; k13_bare_out=$kout
+kw --revoke "$KH" extra
+[ "$k13_bare_st" -eq 64 ] && [ "$kst" -eq 64 ] \
+  && case "$k13_bare_out" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K13: --revoke without the reviewed head, or with an extra argument, is a usage error" \
+  || nok "K13: revoke arity" "bare=$k13_bare_st:$k13_bare_out extra=$kst:$kout"
+
+# K14..K27 -- the final review of 0.31.0. Each says which kind of control it is; the
+# pre-fix writer for these is `git show 283c205:scripts/forgeward-write-marker.sh`.
+KFULLID='must be the full commit id Step 0 printed'
+kfullid() { # kfullid <label> <value>: exit 64 and the message naming the arg
+  [ "$kst" -eq 64 ] && [ ! -e "$KMARK" ] \
+    && case "$kout" in *"forgeward: $1 '$2' $KFULLID"*) true ;; *) false ;; esac
+}
+rm -f "$KMARK"
+krun "$KH"
+
+# K14 (PRE-FIX control): `HEAD` as the reviewed head made the moved-HEAD check compare
+# HEAD with itself; 283c205 wrote a marker for it.
+kw main privacy "$KB" HEAD "$KRUN"
+kfullid "reviewed head" HEAD \
+  && ok "K14: HEAD as the reviewed head is refused with exit 64, naming the arg" \
+  || nok "K14: symbolic reviewed head" "st=$kst out=$kout"
+rm -f "$KMARK"
+
+# K15 (PRE-FIX control): a branch as the reviewed base made the base comparison read
+# one live ref twice; 283c205 wrote a marker for it.
+kw main privacy main "$KH" "$KRUN"
+kfullid "reviewed base" main \
+  && ok "K15: a branch name as the reviewed base is refused with exit 64, naming the arg" \
+  || nok "K15: symbolic reviewed base" "st=$kst out=$kout"
+rm -f "$KMARK"
+
+# K16 (PRE-FIX control): a short hex of a real commit. git resolves a short hex that
+# collides with a branch name to the BRANCH, so length is part of the contract.
+kw main privacy "$KB" "${KH:0:7}" "$KRUN"
+kfullid "reviewed head" "${KH:0:7}" \
+  && ok "K16: a 7-character hex of a real commit is refused with exit 64, naming the arg" \
+  || nok "K16: short reviewed head" "st=$kst out=$kout"
+rm -f "$KMARK"
+
+# K17 (PRE-FIX control): uppercase hex of a real commit -- git accepts it, the contract
+# (the exact id Step 0 printed) does not.
+K17UP="$(printf '%s' "$KH" | tr 'a-f' 'A-F')"
+kw main privacy "$KB" "$K17UP" "$KRUN"
+kfullid "reviewed head" "$K17UP" \
+  && ok "K17: an uppercase full id is refused with exit 64, naming the arg" \
+  || nok "K17: uppercase reviewed head" "st=$kst out=$kout"
+rm -f "$KMARK"
+
+# K18 (WRONG-FIX control): green against 283c205 by construction. <base-ref> is a ref
+# name and stays outside the full-id check, but it keeps its dash-led refusal -- the
+# plausible wrong fix moves the dash check onto the reviewed args only.
+kw --output=x privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 64 ] && [ ! -e "$KMARK" ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K18: a dash-led base ref is refused with exit 64 and the usage line" \
+  || nok "K18: dash-led base ref" "st=$kst out=$kout"
+
+# K19 (PIN of a guard that predates this review; green against 283c205 by construction,
+# its mutation is what gives it an opinion): a base ref that resolves to nothing.
+kw no-such-ref privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"base ref 'no-such-ref' does not resolve to a commit; nothing was written"*) true ;; *) false ;; esac \
+  && ok "K19: a base ref that resolves to nothing writes no marker and says so" \
+  || nok "K19: unresolvable base ref" "st=$kst out=$kout"
+
+# K20/K21: an ORPHAN history shares no merge base with main. forgeward-diff-hash.sh used
+# to hash that as the empty diff with exit 0 (V12 pins its refusal now); the writer
+# refuses first, with the clearer message.
+( cd "$KR" && git checkout -q --orphan korph && git rm -rqf . && echo o1 > o.txt \
+   && git add o.txt && git commit -qm o1 && echo o2 > o.txt && git commit -qam o2 ) >/dev/null 2>&1
+KO1="$(git -C "$KR" rev-parse korph~1)"; KO2="$(git -C "$KR" rev-parse korph)"
+KOMARK="$(dirname "$KMARK")/korph.json"
+# K20 (PRE-FIX control): 283c205 wrote a marker for the unrelated reviewed pair.
+kw main privacy "$KB" "$KO2" "$KRUN"
+[ "$kst" -eq 1 ] && [ ! -e "$KOMARK" ] \
+  && case "$kout" in *"the reviewed base ${KB:0:12} and the reviewed head ${KO2:0:12} share no merge base, so the reviewed diff cannot be hashed; nothing was written"*) true ;; *) false ;; esac \
+  && ok "K20: a reviewed pair with no merge base writes no marker and says why" \
+  || nok "K20: unrelated reviewed pair" "st=$kst out=$kout"
+# K21 (PRE-FIX control, on the message): the reviewed pair is related but the base ref is
+# not. 283c205 refused with the misleading "base moved" message.
+kw main privacy "$KO1" "$KO2" "$KRUN"
+[ "$kst" -eq 1 ] && [ ! -e "$KOMARK" ] \
+  && case "$kout" in *"the base 'main' and the reviewed head ${KO2:0:12} share no merge base, so the reviewed diff cannot be hashed; nothing was written"*) true ;; *) false ;; esac \
+  && ok "K21: a base ref with no merge base with the reviewed head writes no marker and says why" \
+  || nok "K21: unrelated base ref" "st=$kst out=$kout"
+git -C "$KR" checkout -q kfeat >/dev/null 2>&1
+
+# K22/K23: the push hook accepts the marker of ANY local branch at the pushed commit, so
+# --revoke must withdraw every one of them -- and only them.
+KMDIR="$(dirname "$KMARK")"
+git -C "$KR" branch -f ksib "$KH" >/dev/null 2>&1
+git -C "$KR" branch -f kother "$KB" >/dev/null 2>&1
+krun "$KH"
+kw main privacy "$KB" "$KH" "$KRUN"
+cp "$KMARK" "$KMDIR/ksib.json"; cp "$KMARK" "$KMDIR/kother.json"
+kw --revoke "$KH"
+# K22 (PRE-FIX control): 283c205 removed only the current branch's marker.
+[ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] && [ ! -e "$KMDIR/ksib.json" ] \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'ksib'"*) true ;; *) false ;; esac \
+  && ok "K22: --revoke withdraws the marker of every local branch at the reviewed commit, one line each" \
+  || nok "K22: sibling marker survives revoke" "st=$kst out=$kout"
+# K23 (WRONG-FIX control): green against 283c205 by construction. A branch at ANOTHER
+# commit belongs to another run; the plausible wrong fix withdraws every marker.
+[ -f "$KMDIR/kother.json" ] \
+  && case "$kout" in *"'kother'"*) false ;; *) true ;; esac \
+  && ok "K23: --revoke leaves the marker of a branch at a different commit alone" \
+  || nok "K23: revoke reached another commit's marker" "out=$kout"
+rm -f "$KMDIR/kother.json"
+
+# K24 (PRE-FIX control): a directory at the marker path is not a marker -- no hook can
+# read one -- so revoke skips it. 283c205 tried to rm it, failed, and exited 1.
+mkdir "$KMARK"
+kw --revoke "$KH"
+[ "$kst" -eq 0 ] && [ -d "$KMARK" ] \
+  && case "$kout" in *"could not withdraw"*) false ;; *) true ;; esac \
+  && ok "K24: a directory at the marker path is skipped: --revoke exits 0 and leaves it" \
+  || nok "K24: directory at marker path" "st=$kst out=$kout"
+rmdir "$KMARK"
+
+# K25 (WRONG-FIX control): green against 283c205 by construction. A SYMLINK at the
+# marker path is still removed even when it points at a directory; the plausible wrong
+# fix tests -d before -L and skips it.
+mkdir -p "$TMP/k25target"; ln -s "$TMP/k25target" "$KMARK"
+kw --revoke "$KH"
+[ "$kst" -eq 0 ] && [ ! -L "$KMARK" ] && [ -d "$TMP/k25target" ] \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && ok "K25: a symlink at the marker path is removed (the link, not its target)" \
+  || nok "K25: symlink at marker path" "st=$kst out=$kout"
+
+# K26 (PRE-FIX control): on a DETACHED HEAD at the reviewed commit, revoke withdraws the
+# markers of the branches at that commit AND the literal 'HEAD' key the writer uses
+# there; 283c205 looked only for the literal 'HEAD' marker.
+krun "$KH"
+kw main privacy "$KB" "$KH" "$KRUN"
+git -C "$KR" checkout -q --detach >/dev/null 2>&1
+cp "$KMARK" "$KMDIR/HEAD.json"
+kw --revoke "$KH"
+git -C "$KR" checkout -q kfeat >/dev/null 2>&1
+[ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] && [ ! -e "$KMDIR/HEAD.json" ] && klastrun \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'HEAD'"*) true ;; *) false ;; esac \
+  && ok "K26: --revoke on a detached HEAD withdraws the markers of branches at that commit and the 'HEAD' key" \
+  || nok "K26: detached HEAD revoke" "st=$kst out=$kout"
+rm -f "$KMDIR/HEAD.json"
+
+# K27 (PRE-FIX control): an UNBORN HEAD has no commit, so the current branch is never
+# withdrawn, but the branches at the frozen commit still are. 283c205 died in
+# `git rev-parse --abbrev-ref HEAD` under set -e; 72e9c2e, run under its own contract
+# (bare --revoke), exited 0 and withdrew nothing, because it followed live HEAD.
+KUNB="$TMP/kunborn"; mkrepo "$KUNB"
+( cd "$KUNB" && echo u > u.txt && git add -A && git commit -qm u && git branch -M main \
+   && git checkout -q --orphan kun ) >/dev/null 2>&1
+KUC="$(git -C "$KUNB" rev-parse main)"
+KUDIR="$(git -C "$KUNB" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+mkdir -p "$KUDIR"; printf '{}\n' > "$KUDIR/main.json"; printf '{}\n' > "$KUDIR/kun.json"
+kout="$(cd "$KUNB" && "$WRITE" --revoke "$KUC" 2>&1)"; kst=$?
+[ "$kst" -eq 0 ] && [ ! -e "$KUDIR/main.json" ] && [ -f "$KUDIR/kun.json" ] && klastrun \
+  && case "$kout" in "forgeward gate: withdrew the earlier PASS marker for 'main'; it can no longer authorize a push."$'\n'RUN_ID=*) true ;; *) false ;; esac \
+  && ok "K27: --revoke on an unborn HEAD withdraws the branches at the frozen commit and leaves the unborn branch's key" \
+  || nok "K27: unborn HEAD revoke" "st=$kst out=$kout"
+
+# K28..K37 -- the pre-landing review of 0.31.0. PRE-FIX controls are measured against
+# `git show 72e9c2e:scripts/forgeward-write-marker.sh` run under its own contract.
+KSUPER="a later gate run on ${KH:0:12} superseded this one (or no run is recorded for that commit); nothing was written. Re-run /forgeward:gate."
+# After the write the refusal says what is true then: the marker, if still on disk, names
+# a run that is no longer current, so no hook accepts it.
+KSUPERW="a later gate run on ${KH:0:12} superseded this one (or no run is recorded for that commit); nothing it wrote can authorize a push. Re-run /forgeward:gate."
+K28N="$(printf 'a%.0s' $(seq 64))"
+K28MSG='rather than to itself; pass the full commit id Step 0 printed.'
+
+# K28 (PRE-FIX control, D1): the full-id check is shape-only. In this SHA-1 repo a BRANCH
+# named with 64 hex characters passes it and resolves to that branch's live tip, and an
+# annotated tag's 40-hex object id peels to the commit -- so the moved-HEAD check passed
+# vacuously and 72e9c2e wrote a marker for each. Both must resolve to THEMSELVES.
+git -C "$KR" branch -f "$K28N" "$KH" >/dev/null 2>&1
+git -C "$KR" -c tag.gpgsign=false tag -a -m k28 k28tag "$KH" >/dev/null 2>&1
+K28T="$(git -C "$KR" rev-parse k28tag)"
+rm -f "$KMARK"; krun "$KH"
+kw main privacy "$KB" "$K28N" "$KRUN"; k28n_st=$kst; k28n_out=$kout; k28n_mark=0; [ -e "$KMARK" ] && k28n_mark=1
+kw main privacy "$KB" "$K28T" "$KRUN"
+git -C "$KR" tag -d k28tag >/dev/null 2>&1
+[ "$k28n_st" -eq 64 ] && [ "$k28n_mark" = 0 ] && [ "$kst" -eq 64 ] && [ ! -e "$KMARK" ] \
+  && [ "${#K28T}" -eq 40 ] && [ "$K28T" != "$KH" ] \
+  && case "$k28n_out" in *"forgeward: reviewed head '$K28N' resolves to $KH $K28MSG"*) true ;; *) false ;; esac \
+  && case "$kout" in *"forgeward: reviewed head '$K28T' resolves to $KH $K28MSG"*) true ;; *) false ;; esac \
+  && ok "K28: a 64-hex branch name and an annotated tag's id as the reviewed head are refused with exit 64 -- each resolves to a commit other than itself" \
+  || nok "K28: hex-shaped name accepted as the reviewed head" "branch=$k28n_st:$k28n_out tag=$kst:$kout"
+
+# K29 (PRE-FIX control, D2): a tag created after the write and named like the branch
+# makes `--abbrev-ref HEAD` and `%(refname:short)` both print `heads/kfeat`; 72e9c2e then
+# looked only for `heads/kfeat.json`, left `kfeat.json` -- which the push hook still
+# accepts through the destination-name lookup -- and exited 0. The sibling `ksib`, at the
+# same commit but not checked out, is reachable only through the enumeration's canonical
+# spelling, so it pins that half; K30 pins the current branch's.
+krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"; k29_written=$kst
+cp "$KMARK" "$KMDIR/ksib.json"
+git -C "$KR" tag kfeat "$KH" >/dev/null 2>&1; git -C "$KR" tag ksib "$KH" >/dev/null 2>&1
+kw --revoke "$KH"
+git -C "$KR" tag -d kfeat ksib >/dev/null 2>&1
+[ "$k29_written" -eq 0 ] && [ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] && [ ! -e "$KMDIR/ksib.json" ] && klastrun \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat';"*) true ;; *) false ;; esac \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'ksib';"*) true ;; *) false ;; esac \
+  && ok "K29: with tags named like the branches, --revoke still withdraws each bare <branch>.json and says so" \
+  || nok "K29: same-named tag hides a marker from revoke" "written=$k29_written st=$kst out=$kout"
+rm -f "$KMDIR/ksib.json"
+
+# K30 (PRE-FIX control, D3): a branch ref pointing at a missing object makes the
+# `--points-at` enumeration exit non-zero; 72e9c2e swallowed that, withdrew only the
+# current branch and exited 0. Now it is reported, every other path is still tried, and
+# the exit is 1 with no RUN_ID line. A tag named like the branch is present too, so with
+# the enumeration gone the current branch's CANONICAL spelling is the only path left to
+# `kfeat.json` -- this is where that spelling is pinned.
+KBROKEN="$KCOMMON/refs/heads/kbroken"
+krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"; k30_written=$kst
+git -C "$KR" tag kfeat "$KH" >/dev/null 2>&1
+printf '%s\n' 1234567890123456789012345678901234567890 > "$KBROKEN"
+kw --revoke "$KH"
+rm -f "$KBROKEN"
+git -C "$KR" tag -d kfeat >/dev/null 2>&1
+[ "$k30_written" -eq 0 ] && [ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] && knorun \
+  && case "$kout" in *"could not list the local branches at ${KH:0:12}, so an earlier PASS for one of them may still authorize a push. One cause is a branch ref that points at a missing object"*) true ;; *) false ;; esac \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && ok "K30: an unlistable branch set makes --revoke exit 1 and say so, still withdrawing the current branch, with no RUN_ID line" \
+  || nok "K30: failed branch listing swallowed" "written=$k30_written st=$kst out=$kout"
+
+# K31 (PRE-FIX control, D4): the checkout changed after Step 0 froze the commit. 72e9c2e
+# followed live HEAD: it withdrew the checked-out branch's marker and left the reviewed
+# commit's. The WRONG-FIX half -- the checked-out branch, at ANOTHER commit, keeps its
+# marker -- pins that the frozen commit is not merely ADDED to what live HEAD selects.
+krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"; k31_written=$kst
+cp "$KMARK" "$KMDIR/kother.json"
+git -C "$KR" checkout -q kother >/dev/null 2>&1
+k31_head="$(git -C "$KR" rev-parse HEAD)"
+kw --revoke "$KH"
+git -C "$KR" checkout -q kfeat >/dev/null 2>&1
+k31_frozen=0; k31_other=0
+[ "$kst" -eq 0 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) k31_frozen=1 ;; esac
+[ -f "$KMDIR/kother.json" ] && case "$kout" in *"'kother'"*) ;; *) k31_other=1 ;; esac
+[ "$k31_written" -eq 0 ] && [ "$k31_head" = "$KB" ] && [ "$k31_frozen" = 1 ] && [ "$k31_other" = 1 ] \
+  && ok "K31: --revoke <frozen head> withdraws the reviewed commit's markers, not the checked-out branch's at another commit" \
+  || nok "K31: revoke followed live HEAD" "frozen-withdrawn=$k31_frozen other-kept=$k31_other st=$kst out=$kout"
+rm -f "$KMDIR/kother.json"
+
+# K32 (PRE-FIX control, D5): run A starts, then run B on the same commit. A's write must
+# be refused -- B may already have failed -- and B's must succeed. 72e9c2e had no run
+# identity at all: after two bare revokes the four-argument write simply succeeded.
+# A tries again AFTER B wrote, and B's marker must survive: A's marker would carry the
+# same bytes (no field names the run), so only the check BEFORE the write keeps A from
+# overwriting B's marker and then removing it as its own. The post-write re-read alone
+# would leave the first half of this green.
+rm -f "$KMARK"
+krun "$KH"; K32A="$KRUN"
+krun "$KH"; K32B="$KRUN"
+kw main privacy "$KB" "$KH" "$K32A"; k32a_st=$kst; k32a_out=$kout; k32a_mark=0; [ -e "$KMARK" ] && k32a_mark=1
+kw main privacy "$KB" "$KH" "$K32B"; k32b_st=$kst; k32b_out=$kout
+kw main privacy "$KB" "$KH" "$K32A"
+khex "$K32A" && khex "$K32B" && [ "$K32A" != "$K32B" ] \
+  && [ "$k32a_st" -eq 1 ] && [ "$k32a_mark" = 0 ] \
+  && case "$k32a_out" in *"forgeward: $KSUPER"*) true ;; *) false ;; esac \
+  && [ "$k32b_st" -eq 0 ] && [ "$kst" -eq 1 ] && [ -f "$KMARK" ] \
+  && case "$kout" in *"forgeward: $KSUPER"*) true ;; *) false ;; esac \
+  && ok "K32: once a later run on the same commit has started, the earlier run's write is refused, before and after the later run's write succeeds" \
+  || nok "K32: superseded run still wrote" "a=$k32a_st:$k32a_mark:$k32a_out b=$k32b_st:$k32b_out a-again=$kst:$kout"
+
+# K33 (PRE-FIX control, D5's post-write re-read): a later run starts AFTER this writer's
+# first read of the run file. A fake environment probe -- it runs after that read and
+# before the write -- starts it, by running the copied writer's own --revoke, then answers
+# with the real probe's line ($E1J, derived, not copied). The write must be undone.
+# 72e9c2e has no run file and wrote the marker. The run-file control below proves the
+# probe really started a new run; without it a probe that never ran would leave the
+# assertion green for the wrong reason.
+K33P="$TMP/k33plugin"; mkdir -p "$K33P"
+cp "$PLUGIN/scripts/forgeward-write-marker.sh" "$PLUGIN/scripts/forgeward-diff-hash.sh" "$K33P/"
+printf '%s\n' "$E1J" > "$K33P/env.line"
+cat > "$K33P/forgeward-detect-environment.sh" <<'K33EOF'
+#!/usr/bin/env bash
+"$(dirname "$0")/forgeward-write-marker.sh" --revoke "$(git rev-parse HEAD)" >/dev/null 2>&1
+cat "$(dirname "$0")/env.line"
+K33EOF
+chmod +x "$K33P"/*.sh
+rm -f "$KMARK"; krun "$KH"; K33RUN="$KRUN"
+kout="$(cd "$KR" && "$K33P/forgeward-write-marker.sh" main privacy "$KB" "$KH" "$K33RUN" 2>&1)"; kst=$?
+K33NOW="$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)"
+[ -n "$E1J" ] && khex "$K33RUN" && khex "$K33NOW" && [ "$K33NOW" != "$K33RUN" ] \
+  && [ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"forgeward: $KSUPERW"*) true ;; *) false ;; esac \
+  && ok "K33: a run that starts between the writer's first read and its write makes the writer remove its marker and refuse" \
+  || nok "K33: marker outlived a newer run" "st=$kst run=$K33RUN now=$K33NOW mark=$([ -e "$KMARK" ] && echo present) out=$kout"
+
+# K34 (WRONG-FIX control): green against 72e9c2e by construction (it has no run file). A
+# revoke for a DIFFERENT commit supersedes nothing; the plausible wrong fix -- one global
+# run file -- would refuse this write.
+rm -f "$KMARK"; krun "$KH"; K34RUN="$KRUN"
+kw --revoke "$KB"; k34_rv=$kst
+kw main privacy "$KB" "$KH" "$K34RUN"
+[ "$k34_rv" -eq 0 ] && [ "$kst" -eq 0 ] && [ -f "$KMARK" ] \
+  && ok "K34: a revoke of a different commit does not supersede a run; its write still succeeds" \
+  || nok "K34: a revoke elsewhere superseded the run" "revoke=$k34_rv st=$kst out=$kout"
+
+# K35 (contract pin): the run id is required; the four-argument form this branch used
+# before the pre-landing review is a usage error.
+rm -f "$KMARK"; krun "$KH"
+kw main privacy "$KB" "$KH"
+[ "$kst" -eq 64 ] && [ ! -e "$KMARK" ] && case "$kout" in *"$KUSAGE"*) true ;; *) false ;; esac \
+  && ok "K35: a write without the run id is a usage error and writes nothing" \
+  || nok "K35: write without run id" "st=$kst out=$kout"
+
+# K36 (contract pin): a run id must be the id itself. Pasting the whole `RUN_ID=<id>` line
+# is refused with exit 64 naming where the id comes from -- not as "superseded", which
+# would send the user to re-run a gate that was in fact current.
+kw main privacy "$KB" "$KH" "RUN_ID=$KRUN"
+[ "$kst" -eq 64 ] && [ ! -e "$KMARK" ] \
+  && case "$kout" in *"forgeward: run id 'RUN_ID=$KRUN' must be the id from the RUN_ID=<id> line Step 2's --revoke printed"*) true ;; *) false ;; esac \
+  && ok "K36: a malformed run id is refused with exit 64, naming the RUN_ID line it must come from" \
+  || nok "K36: malformed run id" "st=$kst out=$kout"
+
+# K37 (contract pin, D1 on the revoke side): --revoke's commit must resolve to itself as
+# well, and it is checked BEFORE a run is recorded -- a refused revoke supersedes nothing.
+K37BEFORE="$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)"
+kw --revoke "$K28N"
+K37AFTER="$(cat "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null)"
+git -C "$KR" branch -D "$K28N" >/dev/null 2>&1
+[ "$kst" -eq 64 ] && knorun && [ -n "$K37BEFORE" ] && [ "$K37BEFORE" = "$K37AFTER" ] \
+  && case "$kout" in *"forgeward: reviewed head '$K28N' resolves to $KH $K28MSG"*) true ;; *) false ;; esac \
+  && ok "K37: --revoke with a 64-hex branch name is refused with exit 64 before any run is recorded" \
+  || nok "K37: revoke accepted a hex-shaped name" "st=$kst before=$K37BEFORE after=$K37AFTER out=$kout"
+
+# K38 (contract pin): a run that cannot be recorded must not be able to certify: an older
+# run's write could still land. A directory at the run-file path is the root-proof way to
+# make the record fail (`mv` would move the new file INTO it and report success). The
+# revoke still withdraws, exits 1, says why, and prints no RUN_ID line.
+krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"; k38_written=$kst
+rm -f "$KCOMMON/forgeward-gate-runs/$KH"; mkdir "$KCOMMON/forgeward-gate-runs/$KH"
+kw --revoke "$KH"
+rmdir "$KCOMMON/forgeward-gate-runs/$KH" 2>/dev/null
+[ "$k38_written" -eq 0 ] && [ "$kst" -eq 1 ] && [ ! -e "$KMARK" ] && knorun \
+  && case "$kout" in *"could not record this gate run for ${KH:0:12} in $KCOMMON/forgeward-gate-runs/$KH, so an older run's write on that commit could still land"*) true ;; *) false ;; esac \
+  && case "$kout" in *"withdrew the earlier PASS marker for 'kfeat'"*) true ;; *) false ;; esac \
+  && ok "K38: a run that cannot be recorded makes --revoke exit 1 and say so, still withdrawing, with no RUN_ID line" \
+  || nok "K38: unrecorded run" "written=$k38_written st=$kst out=$kout"
+
+# K33b (contract pin): a newer run's marker lands at the same path between this writer's
+# write and its second read. It is not the bytes this process wrote -- the marker now
+# names its run, so two runs never write identical bytes -- so the writer must leave it
+# alone, and still refuse. The run file is read with the `read` builtin, so there is no
+# external command between the write and the second read to hook. Instead the newer run is
+# split in two around them: a stand-in environment probe in a scratch copy of scripts/
+# (it runs after the first read and before the write) starts the newer run with a
+# `--revoke`, so the second read sees a newer id; then a `cat` shim on PATH, firing on the
+# writer's `cat` of the MARKER in its superseded path, lands the newer run's write first.
+# The newer run's id is checked, so a hook that never fired cannot leave this green.
+# Mutation-checked: removing the byte comparison (the writer then removes whatever is at
+# the path) turns it red.
+K33BIN="$TMP/k33bbin"; mkdir -p "$K33BIN/scripts"
+K33CAT="$(command -v cat)"
+cp -p "$PLUGIN"/scripts/*.sh "$K33BIN/scripts/"
+cat > "$K33BIN/scripts/forgeward-detect-environment.sh" <<K33BEOF
+#!/usr/bin/env bash
+if [ ! -e "$K33BIN/started" ]; then
+  : > "$K33BIN/started"
+  "$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p' > "$K33BIN/newer"
+fi
+K33BEOF
+cat > "$K33BIN/cat" <<K33BEOF
+#!/usr/bin/env bash
+if [ ! -e "$K33BIN/fired" ] && [ -s "$K33BIN/newer" ] && [ "\${1:-}" = "$KMARK" ]; then
+  : > "$K33BIN/fired"
+  "$WRITE" main privacy "$KB" "$KH" "\$("$K33CAT" "$K33BIN/newer")" >/dev/null 2>&1 \
+    || : > "$K33BIN/newer-refused"
+fi
+exec "$K33CAT" "\$@"
+K33BEOF
+chmod +x "$K33BIN/cat" "$K33BIN/scripts/forgeward-detect-environment.sh"
+rm -f "$KMARK"; krun "$KH"; K33BRUN="$KRUN"
+kout="$(cd "$KR" && PATH="$K33BIN:$PATH" "$K33BIN/scripts/forgeward-write-marker.sh" main privacy "$KB" "$KH" "$K33BRUN" 2>&1)"; kst=$?
+K33BNEW="$("$K33CAT" "$K33BIN/newer" 2>/dev/null)"
+khex "$K33BRUN" && khex "$K33BNEW" && [ "$K33BNEW" != "$K33BRUN" ] \
+  && [ "$kst" -eq 1 ] && [ -f "$KMARK" ] && [ "$(kfield run_id)" = "$K33BNEW" ] \
+  && case "$kout" in *"forgeward: $KSUPERW"*) true ;; *) false ;; esac \
+  && ok "K33b: a newer run's marker written between this writer's write and its second read survives, and the writer still refuses" \
+  || nok "K33b: superseded writer removed a newer run's marker or reported a PASS" \
+         "st=$kst run=$K33BRUN newer=$K33BNEW on-disk-run=$(kfield run_id) out=$kout"
+
+# K39 (PRE-FIX control: red on e9ab0e0, which pruned run files older than 30 days on every
+# write): run files are never deleted. A prune selects a file and then deletes it BY PATH,
+# so a revoke that atomically replaced that file in between -- a new gate run on a commit
+# last gated long ago -- lost its fresh run file, and a same-diff PASS on another commit
+# then authorized that commit while its review was pending. A write with a 40-day-old run
+# file for another commit present must leave it byte-identical, and the count of run files
+# must not drop (floor: at least two before the write). The age is set with python3, not
+# `touch -d '40 days ago'`, which is GNU-only. Mutation-checked: re-adding the prune line
+# turns this red.
+K39OLD="$KCOMMON/forgeward-gate-runs/$(printf 'b%.0s' $(seq 40))"
+printf 'x\n' > "$K39OLD"
+python3 -I -c 'import os,sys,time
+t=time.time()-40*86400; os.utime(sys.argv[1],(t,t))' "$K39OLD"
+cp "$K39OLD" "$TMP/k39.copy"
+rm -f "$KMARK"; krun "$KH"
+k39_count() { find "$KCOMMON/forgeward-gate-runs" -type f | wc -l | tr -d ' '; }
+k39_before="$(k39_count)"
+kw main privacy "$KB" "$KH" "$KRUN"
+k39_after="$(k39_count)"
+[ "$k39_before" -ge 2 ] && [ "$kst" -eq 0 ] && [ -f "$KMARK" ] \
+  && [ -f "$K39OLD" ] && cmp -s "$K39OLD" "$TMP/k39.copy" && [ "$k39_after" -ge "$k39_before" ] \
+  && ok "K39: a marker write deletes no run file, however old: a 40-day-old one survives byte-identical and the count does not drop" \
+  || nok "K39: a marker write deleted a run file" "st=$kst before=$k39_before after=$k39_after old=$([ -e "$K39OLD" ] && echo kept || echo deleted) out=$kout"
+rm -f "$K39OLD"
+
+# K40 (contract pin; green on e9ab0e0): a marker write leaves the marker of a sibling
+# branch at ANOTHER commit byte-identical. Neither the write nor its GC may touch a live
+# branch's marker.
+git -C "$KR" branch -f kother "$KB" >/dev/null 2>&1
+printf '{"schema":5,"passed":true,"branch":"kother"}\n' > "$KMDIR/kother.json"
+cp "$KMDIR/kother.json" "$TMP/k40.copy"
+rm -f "$KMARK"; krun "$KH"; kw main privacy "$KB" "$KH" "$KRUN"
+[ "$kst" -eq 0 ] && [ -f "$KMARK" ] && [ -f "$KMDIR/kother.json" ] && cmp -s "$KMDIR/kother.json" "$TMP/k40.copy" \
+  && ok "K40: a marker write leaves a sibling branch's marker at another commit byte-identical" \
+  || nok "K40: a marker write changed a sibling branch's marker" "st=$kst out=$kout"
+rm -f "$KMDIR/kother.json"
+
+# K41: a run file gets the marker's mode, which the umask decides. Under 022 it is the
+# PRE-FIX control (e9ab0e0 left every run file 0600, mktemp's mode, beside a 0644 marker);
+# under 077 it is the WRONG-FIX control for a fixed `chmod 644`, which would make the run
+# file readable where the marker is not. Modes are read with python3 (`stat -c` is GNU-only).
+# Mutation-checked: dropping the chmod from record_run turns the 022 leg red.
+kmode() { python3 -I -c 'import os,sys; print("%04o" % (os.stat(sys.argv[1]).st_mode & 0o777))' "$1" 2>/dev/null; }
+k41() { # k41 <umask>: a gate run (revoke, then write) under <umask>; prints "<run-mode> <marker-mode>"
+  local run
+  rm -f "$KMARK" "$KCOMMON/forgeward-gate-runs/$KH"
+  run="$(cd "$KR" && umask "$1" && "$WRITE" --revoke "$KH" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$KR" && umask "$1" && "$WRITE" main privacy "$KB" "$KH" "$run" ) >/dev/null 2>&1 || return 1
+  printf '%s %s\n' "$(kmode "$KCOMMON/forgeward-gate-runs/$KH")" "$(kmode "$KMARK")"
+}
+k41_022="$(k41 022)"; k41_077="$(k41 077)"
+[ "$k41_022" = "0644 0644" ] && [ "$k41_077" = "0600 0600" ] \
+  && ok "K41: a run file's mode equals its marker's: 0644 under umask 022, 0600 under 077" \
+  || nok "K41: a run file's mode differs from its marker's" "022: ${k41_022:-write failed}; 077: ${k41_077:-write failed} (run marker)"
+
+# =============================================================================
+# F1..F10 -- both hooks accept a PASS only while the gate run that wrote it is still the
+# latest on the commit it reviewed, and never for a pushed commit that a gate run has
+# started on unless it is that commit (`run_is_current`, 0.31.0). These drive the fast
+# reminder, forgeward-gate-check.sh; P30-P39 in test/pre-push-test.sh drive the enforced
+# hook through the same cases. Every refusal below is built with the marker still ON
+# DISK and its diff hash still matching, so what refuses it is the run file, not revoke's
+# deletions (P41 in test/pre-push-test.sh pins what those still do). F3-F5 and F7-F10 are PRE-FIX controls -- 6e11899's hooks allow
+# each of those pushes. F2 and F6 are positive controls and the WRONG-FIX controls for
+# the plausible over-fix of refusing any pushed commit other than the reviewed one: F6 is
+# the /ship flow, a VERSION-only commit after the PASS with no gate run of its own.
+# Mutation-checked: with run_is_current made to always succeed, F3-F5 and F7-F10 go red
+# while F2 and F6 stay green. The fast reminder consults only the checked-out branch's
+# marker, so the sibling-branch case is pinned on the enforced hook only (P39).
+# =============================================================================
+# F1: run_is_current must stay byte-identical in both hooks, on A19's pattern -- the
+# bodies compared, each required non-empty so a broken extraction fails loudly.
+_rc_body() { awk '/^run_is_current\(\)/{f=1;next} f{print} f&&/^\}$/{exit}' "$1"; }
+_rc_a="$(_rc_body "$PLUGIN/scripts/forgeward-gate-check.sh")"
+_rc_b="$(_rc_body "$PLUGIN/scripts/forgeward-pre-push.sh")"
+if [ -n "$_rc_a" ] && [ -n "$_rc_b" ] && [ "$_rc_a" = "$_rc_b" ]; then
+  ok "F1: run_is_current is byte-identical in gate-check.sh and pre-push.sh"
+else
+  nok "F1: run_is_current has drifted between gate-check.sh and pre-push.sh" \
+      "$({ [ -z "$_rc_a" ] || [ -z "$_rc_b" ]; } && echo 'extraction returned nothing -- the function shape changed' || diff <(printf '%s\n' "$_rc_a") <(printf '%s\n' "$_rc_b") | tr '\n' ' ')"
+fi
+
+FR="$TMP/fresh"; mkrepo "$FR"
+( cd "$FR" && echo a > a.txt && git add -A && git commit -qm base && git branch -M main \
+   && git checkout -qb ffeat && echo 'const f = 1;' > f.js && git add -A && git commit -qm work ) >/dev/null 2>&1
+FB="$(git -C "$FR" rev-parse main)"; FC="$(git -C "$FR" rev-parse refs/heads/ffeat)"
+FCOMMON="$(git -C "$FR" rev-parse --path-format=absolute --git-common-dir)"
+FMD="$FCOMMON/forgeward-gate-markers"; FRUNS="$FCOMMON/forgeward-gate-runs"
+# fgate <commit>: a gate run on <commit> from the current checkout that PASSes -- revoke
+# (which mints the run; FRUN keeps its id), then the write with that id.
+fgate() {
+  FRUN="$(cd "$FR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$FR" && "$WRITE" main privacy "$FB" "$1" "$FRUN" ) >/dev/null 2>&1
+}
+frevoke() { ( cd "$FR" && "$WRITE" --revoke "$1" ) >/dev/null 2>&1; }
+fallowed() { fout="$(pretool "$FR" "git push origin HEAD")"; [ -z "$fout" ]; }
+fdenied() { # fdenied <label>: denied, naming the branch the reminder evaluated
+  fout="$(pretool "$FR" "git push origin HEAD")"
+  denies "$fout" && case "$fout" in *"the current branch ($1 @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac
+}
+fset() { # fset <marker> <key> [<json-value>]: rewrite one field of a fixture marker; no value deletes it
+  python3 -I -c 'import json,sys
+p,k=sys.argv[1],sys.argv[2]; d=json.load(open(p))
+if len(sys.argv)>3: d[k]=json.loads(sys.argv[3])
+else: d.pop(k,None)
+open(p,"w").write(json.dumps(d,indent=2)+"\n")' "$@"
+}
+fout=""   # set -u: a failed fgate short-circuits before fallowed/fdenied assign it
+
+# F2 (positive control, case j): a plain PASS from the latest run on the pushed commit.
+fgate "$FC"
+[ -f "$FMD/ffeat.json" ] && khex "$FRUN" && fallowed \
+  && ok "F2: a PASS from the latest gate run on the checked-out commit is accepted" \
+  || nok "F2: a current PASS was refused" "run=$FRUN out=$fout"
+
+# F3 (PRE-FIX control, case a): a killed writer's marker restored after a newer run's
+# revoke deleted it -- the same bytes, so the same diff hash.
+cp "$FMD/ffeat.json" "$TMP/f3.json"
+frevoke "$FC"; f3_deleted=0; [ -e "$FMD/ffeat.json" ] || f3_deleted=1
+cp "$TMP/f3.json" "$FMD/ffeat.json"
+[ "$f3_deleted" = 1 ] && fdenied ffeat \
+  && ok "F3: a marker restored after a newer run started on its commit is refused" \
+  || nok "F3: a superseded run's marker was accepted" "deleted=$f3_deleted out=$fout"
+
+# F4 (PRE-FIX control, case e): a schema-4 marker, which has no run_id, while the run
+# file still holds the run that wrote it -- the upgrade path costs one re-gate.
+fgate "$FC"; fset "$FMD/ffeat.json" run_id; fset "$FMD/ffeat.json" schema 4
+[ "$(cat "$FRUNS/$FC" 2>/dev/null)" = "$FRUN" ] && fdenied ffeat \
+  && ok "F4: a schema-4 marker (no run_id) is refused even while its run is current" \
+  || nok "F4: a marker without run_id was accepted" "out=$fout"
+
+# F5 (PRE-FIX control, case f): the run file is gone, as after a by-hand delete.
+fgate "$FC"; rm -f "$FRUNS/$FC"
+[ -f "$FMD/ffeat.json" ] && fdenied ffeat \
+  && ok "F5: a marker whose run file is missing is refused" \
+  || nok "F5: a marker with no run file was accepted" "out=$fout"
+
+# F6 (positive and WRONG-FIX control, case h): the /ship flow. A VERSION-only commit
+# after the PASS has the same diff and no gate run of its own, so the PASS still holds.
+fgate "$FC"
+( cd "$FR" && echo 1.0.1 > VERSION && git add VERSION && git commit -qm "chore: bump version" ) >/dev/null 2>&1
+FV="$(git -C "$FR" rev-parse HEAD)"
+[ "$FV" != "$FC" ] && [ ! -e "$FRUNS/$FV" ] && fallowed \
+  && ok "F6: a VERSION-only commit after the PASS, with no gate run of its own, is accepted (the /ship flow)" \
+  || nok "F6: the /ship version bump was refused" "out=$fout"
+
+# F7 (PRE-FIX control, case g): a malformed run_id or reviewed_head is refused, and no
+# file outside forgeward-gate-runs/ is read. Each case PLANTS the file the bad value
+# would name, holding the id it would need, so only the shape check stands between it
+# and an accept: `../planted` names a file one level up, which holds the run id. The tip
+# is F6's VERSION commit, which has no run file, so nothing else can refuse it. The
+# unmodified marker in the same state is the control.
+cp "$FMD/ffeat.json" "$TMP/f7.json"
+fallowed; f7_ctl=$?
+FUP="$(printf '%s' "$FC" | tr 'a-f' 'A-F')"; FRUP="$(printf '%s' "$FRUN" | tr 'a-f' 'A-F')"
+f7_fail=""
+f7() { # f7 <label> <key> <value> <plant-path> <plant-line>
+  cp "$TMP/f7.json" "$FMD/ffeat.json"; fset "$FMD/ffeat.json" "$2" "\"$3\""
+  printf '%s\n' "$5" > "$4"
+  fdenied ffeat || f7_fail="$f7_fail $1"
+  rm -f "$4"; printf '%s\n' "$FRUN" > "$FRUNS/$FC"
+}
+f7 head-dotdot reviewed_head ../planted "$FCOMMON/planted" "$FRUN"
+f7 head-upper reviewed_head "$FUP" "$FRUNS/$FUP" "$FRUN"
+f7 head-short reviewed_head "${FC:0:12}" "$FRUNS/${FC:0:12}" "$FRUN"
+f7 run-upper run_id "$FRUP" "$FRUNS/$FC" "$FRUP"
+f7 run-short run_id "${FRUN:0:12}" "$FRUNS/$FC" "${FRUN:0:12}"
+cp "$TMP/f7.json" "$FMD/ffeat.json"
+[ "$f7_ctl" = 0 ] && [ -z "$f7_fail" ] \
+  && ok "F7: a run_id or reviewed_head that is not a full lowercase id is refused, even with the file it names planted" \
+  || nok "F7: a malformed run_id or reviewed_head was accepted" "control=$f7_ctl accepted:$f7_fail"
+
+# F8 (PRE-FIX control, case c): the same diff on another commit. PASS on ffeat at C1;
+# C2 is C1 with a reworded message; a gate run starts on C2 (and FAILs) while ffeat is
+# still at C1, then ffeat moves to C2. The C1 marker is untouched and its hash matches.
+( cd "$FR" && git checkout -q main && git branch -f ffeat "$FC" && git checkout -q ffeat ) >/dev/null 2>&1
+fgate "$FC"
+( cd "$FR" && git checkout -qb ftmp && git commit -q --amend -m "work (reworded)" ) >/dev/null 2>&1
+FC2="$(git -C "$FR" rev-parse refs/heads/ftmp)"
+frevoke "$FC2"
+( cd "$FR" && git branch -f ffeat "$FC2" && git checkout -q ffeat ) >/dev/null 2>&1
+[ "$FC2" != "$FC" ] && [ -f "$FMD/ffeat.json" ] && [ -e "$FRUNS/$FC2" ] && fdenied ffeat \
+  && ok "F8: a PASS for one commit is refused for another with the same diff once a gate run started there" \
+  || nok "F8: a PASS crossed onto a commit with its own gate run" "c1=$FC c2=$FC2 out=$fout"
+
+# F9 (PRE-FIX control, case d): a PASS written on a detached HEAD (key `HEAD`), then a
+# newer run on that commit started from a branch checkout, which never visits that key.
+( cd "$FR" && git checkout -qb fdet main && echo d > d.js && git add -A && git commit -qm det \
+   && git checkout -q --detach ) >/dev/null 2>&1
+FDC="$(git -C "$FR" rev-parse HEAD)"
+fgate "$FDC"; fallowed; f9_before=$?
+( cd "$FR" && git checkout -q fdet ) >/dev/null 2>&1
+frevoke "$FDC"
+( cd "$FR" && git checkout -q --detach ) >/dev/null 2>&1
+[ "$f9_before" = 0 ] && [ -f "$FMD/HEAD.json" ] && fdenied HEAD \
+  && ok "F9: a detached-HEAD PASS is refused once a newer run starts on its commit, with HEAD.json still on disk" \
+  || nok "F9: a detached-HEAD PASS outlived a newer run" "before=$f9_before out=$fout"
+
+# F10 (PRE-FIX control, case b): a branch and a same-named tag, so the PASS lands at
+# heads/<name>.json; the tag is deleted, a newer run's revoke looks only under the bare
+# name, and the tag comes back.
+( cd "$FR" && git checkout -qb fsp main && echo s > s.js && git add -A && git commit -qm sp \
+   && git tag fsp ) >/dev/null 2>&1
+FSC="$(git -C "$FR" rev-parse refs/heads/fsp)"
+fgate "$FSC"; fallowed; f10_before=$?
+f10_written=0; [ -f "$FMD/heads/fsp.json" ] && f10_written=1
+git -C "$FR" tag -d fsp >/dev/null 2>&1; frevoke "$FSC"; git -C "$FR" tag fsp "$FSC" >/dev/null 2>&1
+[ "$f10_written" = 1 ] && [ "$f10_before" = 0 ] && [ -f "$FMD/heads/fsp.json" ] && fdenied heads/fsp \
+  && ok "F10: a PASS under the heads/<name> spelling is refused once a newer run starts on its commit" \
+  || nok "F10: the stale heads/<name> PASS was accepted" "written=$f10_written before=$f10_before out=$fout"
+
+# F11: is_fresh and snapshot_is_fresh must stay byte-identical in both hooks, F1's
+# pattern with the definition line included, so the usage comment is pinned too. Each
+# extraction is required non-empty and to start with its own definition.
+_fn_text() { awk -v fn="$2" 'index($0, fn "() {")==1{f=1} f{print} f&&/^\}$/{exit}' "$1"; }
+f11_fail=""
+for _fn in is_fresh snapshot_is_fresh; do
+  _fa="$(_fn_text "$PLUGIN/scripts/forgeward-gate-check.sh" "$_fn")"
+  _fb="$(_fn_text "$PLUGIN/scripts/forgeward-pre-push.sh" "$_fn")"
+  case "$_fa" in "$_fn() {"*) ;; *) f11_fail="$f11_fail $_fn:extraction" ;; esac
+  [ -n "$_fa" ] && [ "$_fa" = "$_fb" ] || f11_fail="$f11_fail $_fn:drift"
+done
+[ -z "$f11_fail" ] \
+  && ok "F11: is_fresh and snapshot_is_fresh are byte-identical in gate-check.sh and pre-push.sh" \
+  || nok "F11: the marker-snapshot functions drifted between the hooks" "failed:$f11_fail"
+
+# F12: the reminder reads a marker ONCE. A scratch copy of scripts/ whose
+# forgeward-diff-hash.sh FIRST moves a prepared marker over a named one, THEN execs the
+# real helper, so the swap lands between the reads of .diff_hash and .run_id with no
+# sleep. Fixture: PASS on ship at C (M1); a VERSION-only C2 on top, same diff; a second
+# run on C makes M1's run stale; M2 is a current PASS for a DIFFERENT diff (D, on d).
+# Leg 1 (M1 alone) and leg 2 (M2 in place before the check) are controls; leg 3 (M1 in
+# place, M2 swapped in mid-check) is the PRE-FIX control -- e9ab0e0 takes M1's hash and
+# M2's run and allows the push; leg 4 is the positive control, a current PASS swapped
+# for an identical copy of itself. A `.fired` file proves each swap really ran.
+# Mutation-checked: handing run_is_current the marker PATH instead of the copy turns
+# leg 3 red.
+SW="$TMP/swap"; mkdir -p "$SW/scripts"
+cp -p "$PLUGIN"/scripts/*.sh "$SW/scripts/"
+mv "$SW/scripts/forgeward-diff-hash.sh" "$SW/scripts/real-diff-hash.sh"
+cat > "$SW/scripts/forgeward-diff-hash.sh" <<'SWEOF'
+#!/usr/bin/env bash
+if [ -n "${FORGEWARD_SWAP_FROM:-}" ] && [ -f "$FORGEWARD_SWAP_FROM" ]; then
+  mv -f "$FORGEWARD_SWAP_FROM" "$FORGEWARD_SWAP_TO" && : > "$FORGEWARD_SWAP_FROM.fired"
+fi
+exec "$(dirname "$0")/real-diff-hash.sh" "$@"
+SWEOF
+chmod +x "$SW/scripts/forgeward-diff-hash.sh"
+SR="$TMP/swaprepo"; mkrepo "$SR"
+( cd "$SR" && echo 0.1.0 > VERSION && echo base > a.txt && git add -A && git commit -qm base \
+   && git branch -M main && git checkout -qb ship && echo 'const s = 1;' > s.js && git add -A \
+   && git commit -qm feat ) >/dev/null 2>&1
+SB="$(git -C "$SR" rev-parse main)"; SC="$(git -C "$SR" rev-parse HEAD)"
+SMD="$(git -C "$SR" rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers"
+sgate() { # sgate <commit>: a passing gate run on <commit> from the current checkout
+  local run
+  run="$(cd "$SR" && "$WRITE" --revoke "$1" 2>/dev/null | sed -n 's/^RUN_ID=//p')"
+  ( cd "$SR" && "$WRITE" main privacy "$SB" "$1" "$run" ) >/dev/null 2>&1
+}
+sgate "$SC"
+( cd "$SR" && echo 0.2.0 > VERSION && git commit -qam 'chore: bump version' ) >/dev/null 2>&1
+cp "$SMD/ship.json" "$TMP/f12.m1"
+( cd "$SR" && "$WRITE" --revoke "$SC" ) >/dev/null 2>&1
+( cd "$SR" && git checkout -qb d main && echo 'const d = 1;' > d.js && git add -A && git commit -qm d ) >/dev/null 2>&1
+SD="$(git -C "$SR" rev-parse HEAD)"; sgate "$SD"; cp "$SMD/d.json" "$TMP/f12.m2"
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+spre() { # spre <swap-from> <swap-to>: the copied reminder on `git push`; stdout = decision
+  printf '{"cwd":"%s","tool_input":{"command":"git push origin HEAD"}}' "$SR" \
+    | FORGEWARD_SWAP_FROM="$1" FORGEWARD_SWAP_TO="$2" "$SW/scripts/forgeward-gate-check.sh" pretooluse
+}
+cp "$TMP/f12.m1" "$SMD/ship.json"; f12_1="$(spre "" "")"
+cp "$TMP/f12.m2" "$SMD/ship.json"; f12_2="$(spre "" "")"
+cp "$TMP/f12.m1" "$SMD/ship.json"; cp "$TMP/f12.m2" "$TMP/f12.swap"
+f12_3="$(spre "$TMP/f12.swap" "$SMD/ship.json")"; f12_3f=0; [ -e "$TMP/f12.swap.fired" ] && f12_3f=1
+git -C "$SR" checkout -q d >/dev/null 2>&1
+cp "$SMD/d.json" "$TMP/f12.same"
+f12_4="$(spre "$TMP/f12.same" "$SMD/d.json")"; f12_4f=0; [ -e "$TMP/f12.same.fired" ] && f12_4f=1
+git -C "$SR" checkout -q ship >/dev/null 2>&1
+denies "$f12_1" && denies "$f12_2" && [ "$f12_3f" = 1 ] && denies "$f12_3" \
+  && case "$f12_3" in *"the current branch (ship @ "*"has not passed /forgeward:gate"*) true ;; *) false ;; esac \
+  && [ "$f12_4f" = 1 ] && [ -z "$f12_4" ] \
+  && ok "F12: a marker swapped in while the reminder hashes cannot lend its run to the stale PASS it replaced" \
+  || nok "F12: the reminder combined two markers' fields" \
+         "m1-alone=$(denies "$f12_1" && echo denied || echo allowed) m2-alone=$(denies "$f12_2" && echo denied || echo allowed) swap=$f12_3f:$(denies "$f12_3" && echo denied || echo allowed) same=$f12_4f:${f12_4:-allowed}"
 
 echo "1..$((PASS+FAIL))"
 echo "# pass $PASS / fail $FAIL"

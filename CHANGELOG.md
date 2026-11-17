@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.31.0 — 2026-11-16
+
+### Upgrading
+
+- Every marker written before 0.31.0 reads as not passed: the hooks now require the
+  marker's gate run (`run_id`, schema 5), which older markers do not carry. Run
+  `/forgeward:gate` once per branch you mean to push.
+- An installed pre-push hook runs the enforcer at the path it was installed from: the
+  installer writes that path into the hook. Where an earlier forgeward still sits at that
+  path, the enforced hook keeps running it and does not check the gate run; where the
+  path is gone, every push fails with exit 127. Re-run
+  `scripts/forgeward-install-pre-push.sh` in every repo where it is installed.
+
+### Fixed
+
+- Both hooks refuse a PASS whose gate run is no longer the latest for its commit. The
+  marker records its run id, and a marker is accepted only while
+  `forgeward-gate-runs/<reviewed_head>` still holds that id, and never for a pushed
+  commit that has a run file of its own and is not the marker's `reviewed_head`. Before,
+  the only thing standing between a newer run and an older PASS was `--revoke` deleting
+  the old marker by name, and that name list missed a marker under the historical
+  `heads/<name>` spelling, the detached `HEAD` key, a push's destination branch, and a
+  write that landed after the delete.
+- Each hook reads a marker once: every field comes from one private copy, so a marker
+  replaced while a push is checked can no longer lend its current run to a stale PASS
+  whose diff hash matches.
+- The marker writer reads a run file's first line, as both hooks do. It read the whole
+  file, so a run file holding the run id and then another line was accepted by the hooks
+  and refused by the writer.
+- A run file gets the same mode as the marker beside it (the umask decides both). It was
+  always `0600`.
+- `forgeward-diff-hash.sh` exits 1 with a message when `git diff` fails (no merge base, a
+  bad ref, a missing blob). It used to hash such a pair as the empty diff and exit 0, so a
+  later commit on it could match that hash.
+- The diff hash is taken from the repository root wherever it runs, and no longer
+  follows diff config. A gate run from a subdirectory hashed only that subdirectory, so
+  the reminder, run from the same subdirectory, missed a change outside it. An external
+  differ (`diff.external`, `GIT_EXTERNAL_DIFF`, a diff driver's `command`) could hide a
+  binary replaced after the PASS, and so could two blobs sharing an abbreviated id once
+  the first was pruned; the hash now uses full blob ids. `diff.ignoreSubmodules` or
+  `submodule.<name>.ignore` could hide a gitlink change. Other diff settings (context,
+  algorithm, renames, prefixes, colour, quoting) made a marker read stale for no reason.
+  `diff.orderFile` still reorders the output and reads a marker stale; it cannot pass one.
+
+- The PASS marker now certifies the commits the reviewers were given. Step 0 freezes the
+  base and head commits and every later step reviews that range; the marker writer
+  refuses when `HEAD` moved or the base moved in a way that changes the diff, and hashes
+  the frozen pair. Before, a commit landing while reviewers ran was certified by a marker
+  nobody reviewed.
+- A gate run that reaches review withdraws the earlier PASS of every local branch at the
+  reviewed commit first, and again on every later outcome that ends without a marker, so
+  a failed re-run no longer leaves an old PASS, on this branch or a sibling at the same
+  commit, authorizing the same diff.
+- The marker writer refuses a reviewed pair, or a base ref and reviewed head, that share
+  no merge base (an orphan branch, a shallow clone). The diff hash of such a pair was the
+  empty-diff hash, which the hooks recompute identically for any later code on it.
+- A reviewed commit id must resolve to itself. In a SHA-1 repo a branch named with 64 hex
+  characters passed the full-id check and resolved to that branch's live tip, and an
+  annotated tag's id peeled to a commit, so the moved-HEAD check passed vacuously.
+- `--revoke` withdraws each branch's marker under both its short and its canonical name.
+  A tag created after the write and named like the branch hid the marker from revoke,
+  while the push hook still accepted it.
+- `--revoke` fails loudly (exit 1) when the branches at the commit cannot be listed, for
+  example because a branch ref points at a missing object, and still withdraws every
+  other marker it can. It used to withdraw only the current branch's and exit 0.
+- `--revoke` withdraws the markers at the commit Step 0 froze, not at live `HEAD`, so a
+  checkout change during the run no longer leaves the reviewed commit's earlier PASS
+  standing through a failed re-review.
+- Two gate runs on the same commit no longer race: a run whose write comes after a later
+  run on that commit started (and perhaps failed) is refused, and a marker it already
+  wrote is removed.
+
+### Changed
+
+- `forgeward-write-marker.sh` takes `<base-ref> <fired-csv> <reviewed-base>
+  <reviewed-head> <run-id>`; all five are required (fired may be empty), and every usage
+  error exits 64. The two reviewed arguments must be the full commit ids Step 0 printed
+  (40 or 64 lowercase hex) and must resolve to themselves; `HEAD`, a branch name or a
+  short hex is refused. `<run-id>` is the id `--revoke` printed.
+- New `--revoke <reviewed-head>` mode. It takes the commit Step 0 froze, records a new
+  gate run for it, withdraws every marker at it, and on success prints `RUN_ID=<id>` as
+  its last line. Recording the run is what stales the earlier markers for that commit;
+  the deletions withdraw a branch's PASS for an earlier commit with the same diff, which
+  that run file does not reach, and are the only revocation an enforcer installed before
+  0.31.0 sees.
+- Run files (`forgeward-gate-runs/<commit>` under the common git dir) are kept, one small
+  file per commit ever gated; nothing deletes them. Deleting the directory by hand makes
+  every marker read stale and drops those commits' refusal of a same-diff PASS on another
+  commit.
+- The marker is schema 5 and carries `run_id`. A `/ship` version-bump commit still
+  pushes on the PASS before it. Every diff hash changes once, because the diff is now
+  hashed with a pinned invocation; that costs nothing beyond the re-gate under
+  Upgrading, since a marker from before 0.31.0 already reads as not passed.
+
 ## 0.30.0 — 2026-10-19
 
 ### Changed

@@ -5,6 +5,233 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — the diff hash is root-relative and its `git diff` invocation is pinned
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** `forgeward-diff-hash.sh` ran a porcelain `git diff … -- .` in the
+caller's cwd. `.` is the cwd, so a gate run from a subdirectory stored a hash of that
+subtree, and the reminder (which `cd`s to the payload's cwd) recomputed the same subtree
+hash: a change outside it after the PASS read fresh (V15). Git runs the enforced hook at
+the top of the worktree (githooks(5)), so there the subtree hash only read stale. And
+porcelain diff follows config and
+the environment. An external differ replaces git's output, `index` line included, so with
+one that prints the same text for two contents a binary replaced after the PASS hashed the
+same (V18). Without `--full-index` a binary is `Binary files … differ` plus abbreviated
+blob ids, and two blobs sharing a 7-hex prefix hashed the same once the first was pruned,
+because git lengthens a prefix only while both objects exist (V19; the pair takes ~13k
+tries to find). `diff.ignoreSubmodules` and `submodule.<name>.ignore` drop a gitlink
+change. Twenty settings and environment variables in all moved the hash (V17).
+
+**Decision.** Every pathspec carries `top` magic, and the invocation is pinned: options
+for everything that has one (`--no-ext-diff --no-textconv --full-index --no-color
+--no-renames -U3 --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/
+--ignore-submodules=none --submodule=short`), `-c` overrides for the keys that have none
+(`diff.relative`, `diff.noprefix`, `diff.mnemonicPrefix`, `diff.suppressBlankEmpty`,
+`diff.interHunkContext`, `diff.indentHeuristic`, `core.quotePath`), and `GIT_DIFF_OPTS`
+cleared for that one command, because git applies it after the command line (measured:
+`GIT_DIFF_OPTS=--unified=10` beats `-U3`). Every hash changes once; 0.31.0 already reads
+every earlier marker as not passed, so that costs nothing more.
+
+**Rejected:** `-O/dev/null` for `diff.orderFile`: how `/dev/null` reaches git.exe
+through Git Bash's path conversion is unverified, and an order file can only reorder, so
+it fails closed.
+
+**Not covered** (each fails closed, a marker reads stale): `diff.orderFile`; the function
+text in hunk headers from a user-config `diff.<driver>.xfuncname`; output that differs
+between git versions. `diff.mnemonicPrefix` is overridden but has no assertion: it did
+not change `e9ab0e0`'s output on the V17 fixture, so a case for it could not fail.
+
+**Coverage.** `test/gate-test.sh` V14 (subdirectory hash equals root hash), V15 (the
+reminder from a subdirectory), V16 (battery floor), V17 (one assertion per setting, and
+the orderFile non-goal pinned), V18 (`diff.external`, end to end), V19 (abbreviated blob
+id, end to end); V4 rebuilds the payload with the pinned invocation.
+
+## DECISION — run files are kept, and each acceptance check reads one marker snapshot
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** Two races, each reproduced against the run-file design below. The
+writer pruned run files older than 30 days with `find … -mtime +30 -exec rm -f {} +`,
+which selects a file and then deletes it by path: a `--revoke` that atomically replaced
+that file in between (a new gate run on a commit last gated long ago) lost its fresh run
+file, and a same-diff PASS on another commit then authorized that commit while its
+review was pending or after it FAILed. And each hook read the marker path several times
+in one check, `.base` and `.diff_hash` before hashing and `.run_id` and `.reviewed_head`
+after it, so a marker replaced in between combined a stale PASS's matching hash with a
+different PASS's current run and allowed a commit neither PASS covered.
+
+**Decision.** Nothing deletes a run file; `--revoke` still replaces one by atomic rename.
+Run files are kept, one small file per commit ever gated. Each hook copies the marker once
+into a private temp file and reads every field from that copy (`is_fresh` and
+`snapshot_is_fresh`, byte-identical in both hooks); a failed copy reads as not passed.
+Revoke's deletions are not hygiene: a branch's marker may certify an earlier commit with
+the same diff whose run that revoke does not touch, so the deletion is what stops a later
+commit on the branch, with no run file of its own, pushing on it. They are also the only
+revocation an enforcer installed before 0.31.0 sees. The advice to drop the loop as a
+simplification is rejected for that reason. The writer reads a run file's first line,
+exactly as `run_is_current` does (it read the whole file, so the two disagreed on a run
+file with a second line), and gives the file the marker's umask-derived mode before the
+rename (mktemp's `0600` survived the rename).
+
+**Rejected:** re-checking a run file's age before deleting it, which still races, and a
+lock, which this design does not take (a stale lock left by a killed run would wedge the
+gate). Delete-by-path GC cannot be made safe against an atomic replace without one.
+
+**Not covered.** Deleting `forgeward-gate-runs` by hand makes every marker read stale
+(one re-gate) and drops those commits' refusal of a same-diff PASS on another commit. A
+temp copy is left behind if a hook is killed between the copy and its removal.
+
+**Coverage.** `test/gate-test.sh` K39 (a 40-day-old run file survives a write
+byte-identical), K40 (a sibling branch's marker survives a write), F11 (both snapshot
+functions byte-identical), F12 (the reminder, a marker swapped mid-hash);
+`test/pre-push-test.sh` P40 (the enforcer, the same swap), P41 (a follow-up commit after
+a failed run on its branch is refused), P42 (a dangling symlink at the pushed commit's
+run-file path counts as a run file), P43 (the writer and the hook agree on a two-line run
+file); `test/gate-test.sh` K41 (run-file mode equals marker mode under umask 022 and 077).
+
+## DECISION — the run file, not revoke's name list, decides whether a PASS still stands
+
+**Date:** 2026-11-16 · **Version:** 0.31.0
+
+**What was wrong.** Until this change a newer gate run withdrew an older PASS only by
+deleting markers by name, and the hooks accepted any marker whose diff hash matched. That
+name list was wrong twice in one release. First, a tag named like the branch made revoke
+look for `heads/<b>.json` while the hook still accepted `<b>.json` (fixed by withdrawing
+both spellings, entry below). Then the reverse: a PASS written while such a tag existed
+lands at `heads/<b>.json`; delete the tag, revoke (with no tag present both of its
+spellings are `<b>`, so it removes only `<b>.json`), recreate the tag, and the hook reads
+the surviving `heads/<b>.json` and allows the push. The same shape covered the detached
+`HEAD` key, a push's destination branch, a marker restored from a copy after the revoke,
+and an older run's write landing after the delete. Separately, `forgeward-diff-hash.sh`
+hashed a pair whose `git diff` failed (a missing blob, no merge base) as the empty diff
+with exit 0, so a later commit on that pair matched a hash nobody reviewed.
+
+**Decision.** The marker (schema 5) records the `run_id` the gate's revoke printed, and
+both hooks accept a marker only through `run_is_current`, byte-identical in both: the
+`run_id`, `reviewed_head` and pushed commit must be 40 or 64 lowercase hex before any is
+used in a path; `forgeward-gate-runs/<reviewed_head>` must be a regular file whose first
+line is that `run_id`; and a pushed commit that has a run file of its own and is not the
+marker's `reviewed_head` is refused. Any failure reads as not passed. Revoke's deletions
+stay (the entry above says what they still do); the run file is the authority, so a third
+enumeration of marker names is not needed and was not attempted. `forgeward-diff-hash.sh` exits 1 with a message when
+its `git diff` fails.
+
+**Rejected:** patching the name list a third time (add `heads/<b>`). Every spelling the
+hook can read is a name revoke must know in advance, and the destination branch is one it
+cannot know at all; two misses in one release is the class, not two bugs. Binding the
+marker to the pushed commit instead of the diff: `/ship` commits a version bump after the
+PASS, and that commit must still push on it (F6, P38 pin this).
+
+**Not covered.** Acceptance is per diff and revocation per commit: a PASS on C1 and a FAIL
+on C2 with the same diff do not stop a push of a third commit C3 with that diff that no
+run ever started on. A write stalled across a whole newer run can overwrite
+that run's marker and then remove it (one re-gate). Markers and run files are local
+files; forging both is outside the threat model. Every marker written before this change
+lacks `run_id` and reads as not passed until the branch is gated once more.
+
+**Coverage.** `test/gate-test.sh` F1 pins the helper byte-identical across the hooks;
+F2–F10 drive the reminder hook (refused: killed writer, schema-4 marker, missing run
+file, malformed fields, same diff on another commit, detached `HEAD`, stale `heads/`
+spelling; allowed: a plain PASS and a `/ship` bump). `test/pre-push-test.sh` P30–P39
+drive the enforced hook with `forgeward.gate` enabled, adding the sibling-branch control.
+V11–V13 pin the diff-hash refusal (missing blob end to end, no merge base, a positive
+control) and K33b a newer marker surviving a superseded write.
+
+## DECISION — a PASS certifies the commits Step 0 froze, and every run withdraws the last one
+
+**Date:** 2026-11-16 · **Version:** 0.31.0 · **PARTLY SUPERSEDED** by the run-file entry
+above, which closes the destination-branch, detached-`HEAD`, older-release and empty-diff
+items under "Not covered" and makes the run file, not revoke's deletions, the authority.
+
+**What was wrong.** Three gaps, all present in 0.30.0, found by two hole reviews of the
+upstream-lenses design (`docs/upstream-lenses-design.md` §1, §4). The marker writer read
+`HEAD` and hashed the live `<base>...HEAD` at write time. Step 1 chose reviewers against
+symbolic `HEAD` while Step 2 resolved `HEAD_SHA` minutes later. And a failed re-run of an
+already-passed diff left the old marker authorizing that diff, because "write no marker"
+does not remove one.
+
+**Decision.** Step 0 freezes `<BASE_SHA>` and `<HEAD_SHA>`; everything after reviews
+`<BASE_SHA>...<HEAD_SHA>`. The writer takes both as full commit ids (40 or 64 lowercase
+hex) and refuses anything else with exit 64: `HEAD` as the reviewed head made the
+moved-HEAD check compare HEAD with itself, a branch as the reviewed base made the base
+comparison read one live ref twice, and a short hex that collides with a branch name
+resolves to the branch. It refuses on a moved `HEAD`; refuses a reviewed pair, or a base
+ref and reviewed head, with no merge base, because `forgeward-diff-hash.sh` then hashes
+an empty diff with exit 0 and the hooks would recompute that same hash for any later
+code; refuses when the base moved in a way that changes the diff (comparing the
+frozen-pair hash with the hash the push hook will recompute from the ref); and stores
+the frozen-pair hash. The gate runs `--revoke <HEAD_SHA>` before Step 2 snapshots anything
+and again on every outcome after that which ends without a marker. `--revoke` withdraws
+the marker of every local branch whose tip is the FROZEN commit, enumerated with the push
+hook's own `for-each-ref --points-at` expression because the hook accepts any of them,
+plus the current branch's only when HEAD is at that commit, and leaves branches at other
+commits alone. The full-id rule, the sibling markers and the no-merge-base refusal came
+from the whole-branch review of PR 1.
+
+The pre-landing review (gstack `/review` with Codex) then found five ways a failed or
+superseded re-review could still leave a push authorized, and all five are closed here.
+(1) The full-id check was shape-only: in a SHA-1 repo a branch NAMED with 64 hex
+characters passed it and resolved to its live tip, and an annotated tag's id peeled to a
+commit; so every reviewed id must now resolve to ITSELF, byte-for-byte, or exit 64.
+(2) A tag created after the write and named like the branch made revoke look for
+`heads/<b>.json` while the hook still accepted `<b>.json`; revoke now withdraws each
+branch under both its short and its canonical name. (3) Revoke swallowed a failed branch
+listing (a ref pointing at a missing object) and exited 0; it now says so, still tries
+every other path, and exits 1. (4) Revoke followed live HEAD, so a checkout change after
+Step 0 aimed it at the wrong commit; it now takes the frozen commit. (5) Concurrent runs
+raced: run A passed and paused, run B on the same commit started, failed and revoked,
+and A then wrote a PASS for the commit B rejected. Every revoke now FIRST records a new
+run id in `<common-dir>/forgeward-gate-runs/<commit>` and prints `RUN_ID=<id>`; the writer
+takes that id, refuses before the environment probe if the run file holds another, and
+reads it again after writing, removing its own marker (compared byte-for-byte, never by
+a field) if it changed. A later revoke records before it deletes, so whichever side of
+the writer's second read its record lands on, the older PASS does not survive it.
+
+**Rejected for the run id:** a lock. macOS ships no portable `flock`, and a lock left by a
+killed run would wedge every later gate on that repo, which is worse than a re-gate. A
+single global run file: a revoke of an unrelated commit would then supersede every run
+(K34 pins this). A run-id field in the marker JSON, to recognise the writer's own marker:
+reading it back means parsing JSON in the writer or text-matching a field, and comparing
+the whole content needs neither.
+
+**Rejected:** refusing whenever the base ref's SHA changed. A `git fetch` during the run
+would then fail every gate on a busy base, though the merge base, the diff and the hash
+are all unchanged. K9 pins this.
+
+**Not covered (filed in `TODOS.md`):** a marker earned under an older release stays valid
+for its exact diff after an upgrade, until the gate runs again; reviewers read surrounding
+context from the working tree, which differs from `<HEAD_SHA>` when the tree is dirty;
+the push hook also accepts the marker named after the push's **destination** branch,
+which `--revoke` cannot know, so pushing local branch `y` to remote branch `x` is still
+authorized by a stale `x` marker whose diff hash matches (closing it would need the
+writer to parse marker JSON, a dependency it deliberately does not take); and
+`forgeward-diff-hash.sh` itself still hashes an empty diff with exit 0 for a pair with no
+merge base. The writer refuses to certify such a pair; the helper does not fail. Not
+covered by the run id, all fail-closed except the last: the compare-then-remove is not
+atomic, so a third run writing byte-identical content in that instant loses its marker
+(one re-gate); every revoke supersedes, so a run whose own later revoke fires or another
+run's FAIL can refuse a concurrent PASS (one re-gate); and a write from a detached HEAD
+keys the literal `HEAD`, which a revoke run from a branch checkout does not visit, so
+that one marker can outlive a newer run (the enforced push hook reads it only for a push
+to a branch literally named `HEAD`; the fast reminder reads it on any detached checkout).
+
+**Coverage.** `test/gate-test.sh` K1–K38: K14–K17 the full-id refusals, K18 a dash-led
+base ref, K19 an unresolvable base ref, K20–K21 the no-merge-base refusals, K22–K27
+revoke (sibling withdrawn, another commit's marker kept, a directory skipped, a symlink
+removed, detached and unborn HEAD), and from the pre-landing review K28 a hex-shaped
+branch name and a tag id refused, K29 both spellings withdrawn under same-named tags,
+K30 a failed branch listing reported, K31 revoke aimed at the frozen commit after a
+checkout change, K32–K33 a superseded run refused before and after its write, K34 a
+revoke elsewhere superseding nothing, K35–K36 the run id required and well-formed, K37
+revoke's commit resolving to itself, and K38 a run that cannot be recorded.
+`test/pre-push-test.sh` drives one sibling end to end: its push is allowed before the
+revoke and blocked after it. `test/dual-client-test.sh` pins the Step 0 freeze, the
+frozen range (one symbolic occurrence allowed, with a floor of five frozen), revoke
+before snapshot, the five writer arguments, a revoke inside each of Step 3's three
+no-marker outcomes, each section checked on its own, and that every `--revoke` in the
+skill names `"<HEAD_SHA>"` (zero bare, at least five).
+
 ## DECISION — pre-push scans every published commit for credentials with Gitleaks
 
 **Date:** 2026-09-12 · **Version:** 0.29.0
