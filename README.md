@@ -656,7 +656,10 @@ binary is installed.
   the repo root); a deliberate `-o report.json`, `-o /tmp/x.json`, or a drive path in a non-scanner
   command stay allowed; the scan wrapper refuses output flags and reports (never deletes —
   under Git Bash `rm -rf "C:"` resolves to the **drive root**) anything a scan leaves behind; the
-  workspace guard catches whatever the text-level guards can't see. The live control asks the
+  workspace guard catches whatever the text-level guards can't see: every path `git status`
+  reports, by kind and content, plus the index, `HEAD`, the stash, the hooks, the
+  `forgeward.gate` switch, and the reviewed commit's run file and markers. A snapshot it
+  cannot read is exit 2, never clean. The live control asks the
   platform whether the contamination is even stageable before asserting — a POSIX-only test would
   pass while the bug remained, because the bug *is* the path translation.
 - **A ported file's provenance and a skill's declared tool list are checked from the file** —

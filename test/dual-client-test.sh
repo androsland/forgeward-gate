@@ -145,41 +145,147 @@ case "$gate_step3" in
 esac
 # Every --revoke in the skill must name the commit Step 0 froze: a bare one is a usage
 # error since the pre-landing review of 0.31.0, and before that it followed live HEAD.
-# Pin the VIOLATING form (bare occurrences == 0) with a floor on the right one (>= 5:
-# Step 2's revoke and its launch fallback, and Step 3's halt, refused write and FAIL).
+# Pin the VIOLATING form (bare occurrences == 0) with a floor on the right one (>= 7:
+# 2a's revoke, Step 3's rows 1-5, and the refused write in row 6).
 # `grep -o | wc -l` counts occurrences, not lines.
 revoke_all="$(grep -o 'forgeward-write-marker\.sh" --revoke' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
 revoke_frozen="$(grep -o 'forgeward-write-marker\.sh" --revoke "<HEAD_SHA>"' "$PLUGIN/skills/gate/SKILL.md" | wc -l)"
-[ "$((revoke_all - revoke_frozen))" -eq 0 ] && [ "$revoke_frozen" -ge 5 ] \
+[ "$((revoke_all - revoke_frozen))" -eq 0 ] && [ "$revoke_frozen" -ge 7 ] \
   && ok "every --revoke in the gate skill names the frozen <HEAD_SHA>" \
   || nok "bare --revoke in the gate skill" "all=$revoke_all frozen=$revoke_frozen"
-# Each of Step 3's three no-marker outcomes must carry its OWN revoke. A count over the
-# whole step (it was `>= 3`) stays green when one outcome loses its revoke and another
-# gains a second, so each outcome's text is cut out between its own two anchors and
-# checked alone. If EITHER anchor stops matching, the section is empty and the check
-# fails -- a missing end anchor must not let a section run on into the next outcome's
-# revoke and pass vacuously.
+# Each Step 3 outcome that ends without a marker must carry its OWN revoke. A count over
+# the whole step stays green when one outcome loses its revoke and another gains a
+# second, so each outcome's text is cut out between its own two anchors and checked
+# alone. If EITHER anchor stops matching, the section is empty and the check fails -- a
+# missing end anchor must not let a section run on into the next outcome's revoke and
+# pass vacuously.
 between() { # between <text> <start> <end>: the text between the two, or nothing
   local t="$1"
   case "$t" in *"$2"*) ;; *) return 0 ;; esac
   t="${t#*"$2"}"
   case "$t" in *"$3"*) printf '%s' "${t%%"$3"*}" ;; esac
 }
-for outcome in halt refused fail; do
-  case "$outcome" in
-    halt) label="the workspace-guard halt"
-      section="$(between "$gate_step3" 'If the workspace guard reported new paths' 'If every fired reviewer returned')" ;;
-    refused) label="a refused marker write"
-      section="$(between "$gate_step3" 'If the writer exits non-zero' 'Then hand off')" ;;
-    fail) label="FAIL"
-      section="$(between "$gate_step3" 'If any fired reviewer returned' '## Rules')" ;;
-  esac
-  case "$section" in
-    *'forgeward-write-marker.sh" --revoke'*)
-      ok "Step 3 withdraws the marker on $label" ;;
-    *) nok "Step 3 revoke on $label" "section-bytes=${#section}" ;;
-  esac
+has() { case "$1" in *"$2"*) return 0 ;; esac; return 1; } # has <text> <literal>
+count_in() { grep -oF -- "$2" <<<"$1" | wc -l; }            # count_in <text> <literal>
+
+# 0.32.0: Step 3 is six numbered rows and the first match wins, so the order is part of
+# the contract (a FAIL must be reported before an incomplete sibling, a changed
+# workspace before either). Each label exactly once, at strictly increasing lines.
+step3_rows='**1. The workspace changed**
+**2. The workspace could not be checked**
+**3. The review did not run to completion**
+**4. A reviewer returned FAIL**
+**5. A reviewer is incomplete**
+**6. Every fired reviewer returned PASS**'
+rows_ok=true; last_at=0; rows_seen=0
+while IFS= read -r label; do
+  n="$(count_in "$gate_step3" "$label")"
+  at="$(awk -v l="$label" 'index($0, l) { print NR; exit }' <<<"$gate_step3")"
+  if [ "$n" -ne 1 ] || [ -z "$at" ] || [ "$at" -le "$last_at" ]; then rows_ok=false; fi
+  last_at="${at:-0}"; rows_seen=$((rows_seen + 1))
+done <<<"$step3_rows"
+[ "$rows_ok" = true ] && [ "$rows_seen" -eq 6 ] \
+  && ok "Step 3's six rows appear once each, in first-match order" \
+  || nok "Step 3 row order" "rows_seen=$rows_seen"
+# Rows 1-5 each revoke, cut out between consecutive labels; the refused write in row 6
+# revokes too.
+prev=""
+while IFS= read -r label; do
+  if [ -n "$prev" ]; then
+    section="$(between "$gate_step3" "$prev" "$label")"
+    has "$section" 'forgeward-write-marker.sh" --revoke "<HEAD_SHA>"' \
+      && ok "Step 3 withdraws the marker on row $prev" \
+      || nok "Step 3 revoke on row $prev" "section-bytes=${#section}"
+  fi
+  prev="$label"
+done <<<"$step3_rows"
+section="$(between "$gate_step3" 'If the writer exits non-zero' 'Then hand off')"
+has "$section" 'forgeward-write-marker.sh" --revoke "<HEAD_SHA>"' \
+  && ok "Step 3 withdraws the marker on a refused marker write" \
+  || nok "Step 3 revoke on a refused marker write" "section-bytes=${#section}"
+
+# 0.32.0: Step 2 is four parts. Each heading exactly once and in order, so a cut between
+# two of them cannot silently run to the end of the file.
+SKILL_GATE="$PLUGIN/skills/gate/SKILL.md"
+parts_ok=true; last_at=0
+for part in '### 2a — ' '### 2b — ' '### 2c — ' '### 2d — '; do
+  n="$(grep -c -- "^$part" "$SKILL_GATE")"
+  at="$(awk -v l="$part" 'index($0, l) == 1 { print NR; exit }' "$SKILL_GATE")"
+  if [ "$n" -ne 1 ] || [ -z "$at" ] || [ "$at" -le "$last_at" ]; then parts_ok=false; fi
+  last_at="${at:-0}"
 done
+[ "$parts_ok" = true ] \
+  && ok "Step 2's four parts appear once each, in order" \
+  || nok "Step 2 part headings"
+gate_2a="$(sed -n '/^### 2a — /,/^### 2b — /p' "$SKILL_GATE")"
+gate_2b="$(sed -n '/^### 2b — /,/^### 2c — /p' "$SKILL_GATE")"
+gate_2c="$(sed -n '/^### 2c — /,/^### 2d — /p' "$SKILL_GATE")"
+gate_2d="$(sed -n '/^### 2d — /,/^## Step 3 — /p' "$SKILL_GATE")"
+
+# The run directory is created and PRINTED in one command: a shell variable does not
+# survive into a later tool call, which is how 0.31.0's `$ART/tree-before` came to name a
+# file that never existed. Pin the violating form too: `$ART` may appear only where the
+# run directory is made inside it, and `tree-before` nowhere.
+run_dir_block='RUN_DIR="$(mktemp -d "$ART/run.XXXXXX")" || exit 1
+printf '\''RUN_DIR=%s\n'\'' "$RUN_DIR"'
+art_uses="$(grep -oF -- '$ART' "$SKILL_GATE" | wc -l)"
+tree_before="$(grep -oF -- 'tree-before' "$SKILL_GATE" | wc -l)"
+has "$gate_2a" "$run_dir_block" && [ "$art_uses" -eq 1 ] && [ "$tree_before" -eq 0 ] \
+  && ok "2a creates the run directory and prints its path in the same command" \
+  || nok "2a run directory" "art_uses=$art_uses tree_before=$tree_before"
+has "$gate_2a" '"<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot "<HEAD_SHA>" > "<RUN_DIR>/snapshot"' \
+  && ok "2a records the workspace for the frozen commit into the run directory" \
+  || nok "2a snapshot command"
+checks="$(grep -oF -- 'forgeward-workspace-guard.sh" check' "$SKILL_GATE" | wc -l)"
+has "$gate_2d" '"<forgeward-root>/scripts/forgeward-workspace-guard.sh" check "<RUN_DIR>/snapshot"' && [ "$checks" -eq 1 ] \
+  && ok "the workspace is checked exactly once, in 2d" \
+  || nok "2d check command" "checks=$checks"
+# 2a's three stops, each between its own anchors.
+s1="$(between "$gate_2a" '--revoke "<HEAD_SHA>"' 'Then create this run')"
+s2="$(between "$gate_2a" 'Then create this run' 'Then record the workspace')"
+s3="$(between "$gate_2a" 'Then record the workspace' 'These three stops')"
+has "$s1" 'forgeward gate: could not start this gate run cleanly' \
+  && has "$s2" "forgeward gate: could not create this run's directory outside the repo" \
+  && has "$s3" 'forgeward gate: could not record the workspace before review' \
+  && ok "2a's three stops each sit after the step they stop" \
+  || nok "2a stop lines" "bytes=${#s1}/${#s2}/${#s3}"
+# Once anything is launched, no path may stop before 2d's check: 2b and 2c carry no stop
+# line, and a failed launch goes on to 2c.
+if has "$gate_2b$gate_2c" 'stop with' || has "$gate_2b$gate_2c" '`forgeward gate: '; then
+  nok "2b/2c carry a stop that skips the workspace check"
+elif has "$gate_2b" 'go to 2c' && [ -n "$gate_2b" ] && [ -n "$gate_2c" ]; then
+  ok "no path out of 2b or 2c skips 2d's check"
+else
+  nok "2b launch-failed path" "2b-bytes=${#gate_2b} 2c-bytes=${#gate_2c}"
+fi
+c2c_ok=true
+for phrase in 'Only output from an agent id recorded in 2b counts' 'A receipt is never a result' \
+  'There is no deadline' 'select:TaskStop' '`wait_agent`' 'timed_out: true' '`close_agent`' \
+  '`interrupt_agent`' '**cancelled**' '**not-started**' '**unconfirmed**'; do
+  has "$gate_2c" "$phrase" || { c2c_ok=false; printf '  # 2c lacks: %s\n' "$phrase"; }
+done
+[ "$c2c_ok" = true ] \
+  && ok "2c accounts for every reviewer by recorded id, with no deadline" \
+  || nok "2c lifecycle phrases"
+has "$gate_2d" 'forgeward gate: a reviewer may still be running; anything it writes from now on is unchecked.' \
+  && ok "2d names the window an unconfirmed stop leaves open" \
+  || nok "2d unconfirmed line"
+# The tools 2c needs must be granted. A list is read as list items under the key, so a
+# tool named only in prose elsewhere cannot satisfy it.
+gate_tools="$(awk '
+  NR == 1 && $0 == "---" { fm = 1; next }
+  fm && $0 == "---" { exit }
+  fm && $0 == "allowed-tools:" { inlist = 1; next }
+  inlist && /^  - / { sub(/^  - /, ""); print; next }
+  inlist { inlist = 0 }
+' "$SKILL_GATE")"
+tools_ok=true
+for tool in Bash Agent TaskStop ToolSearch; do
+  grep -qx -- "$tool" <<<"$gate_tools" || tools_ok=false
+done
+[ "$tools_ok" = true ] \
+  && ok "the gate skill is granted TaskStop and ToolSearch" \
+  || nok "gate allowed-tools" "$(printf '%s' "$gate_tools" | tr '\n' ',')"
 
 audit_policy="$(sed -n '/^## Runtime compatibility/,/^<!-- PORTED AUDIT PHASES/p' "$PLUGIN/skills/audit/SKILL.md"; sed -n '/^\*\*Parallel verification\.\*\*/,/^\*\*Give the verifier/p' "$PLUGIN/skills/audit/SKILL.md")"
 case "$audit_policy" in

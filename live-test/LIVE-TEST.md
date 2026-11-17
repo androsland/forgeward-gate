@@ -783,6 +783,29 @@ over-read:
 
 ---
 
+## 5d. Step 2 waits for every reviewer, and the workspace check sees your edits
+
+Since 0.32.0 Step 2 accounts for every launched reviewer by its agent id, then checks the
+workspace once (`skills/gate/SKILL.md`, 2c and 2d). On Claude Code a launch can come back as
+a receipt carrying an agent id instead of the reviewer's output. This section checks that
+the gate treats a receipt as pending, never as a result. Use the fixture from section 4,
+with a diff that fires at least three reviewers.
+
+1. Run `/forgeward:gate`. **Expect:** one `RUN_DIR=` line; no verdict reported for a
+   reviewer before its completion notice arrives; the workspace check runs once, after the
+   last reviewer is accounted for.
+2. Run it again. While reviewers are pending, edit a tracked file in the test repo from
+   another terminal. **Expect:** Step 3 row 1, `forgeward gate: the workspace changed while
+   the reviewers ran (the changes are above)…`, with a `changed: <file> (was clean, now ' M')`
+   line, and no marker written for the branch.
+3. Restore the file. Run it again and answer `stop` while reviewers are pending. **Expect:**
+   each pending reviewer stopped with TaskStop, the workspace check run, and Step 3 row 3:
+   `forgeward gate: cancelled before every reviewer finished. Nothing was shipped.`
+
+**NOT TESTED YET**
+
+---
+
 ## 6. Optional — real gstack `/ship` integration (only if gstack is installed)
 
 The hook gates `/ship`'s actual publish commands (`ship/SKILL.md:1247` `git push`,
