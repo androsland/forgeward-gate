@@ -350,6 +350,19 @@ paths, while `git ls-files` covers only that subtree and prints paths relative t
   edit to the file is invisible to `git status`, and the `ls-files -s` output is unchanged. The
   output carries no stat data, so an editor's background `git status` refreshing timestamps is
   not a change.
+- **Flagged entries, by content.** The index hash sees a flag being SET; it does not see an
+  edit to a file that was flagged BEFORE the snapshot, and `git status` skips those entries too
+  (measured, reproduced). So every entry whose `git ls-files -v` tag is lowercase
+  (assume-unchanged) or `S` (skip-worktree) **and that exists in the worktree** gets a
+  `flagged` record holding its content, by the same kind rules as the table below. An absent
+  flagged entry has no record: a sparse checkout leaves most of them absent, and creating one
+  then reads as a new record. A cheap count gates the pass, so a repo with no flags pays
+  nothing more. **Measured cost** (WSL2, git 2.34.1): 20,000 committed files, all
+  `--skip-worktree` and all absent, one `snapshot` took 1.0 s; with 200 of them present it took
+  1.2 s.
+- **The worktree.** The absolute git dir, as a `worktree` record. Two linked worktrees at one
+  commit, both clean, otherwise produce the same manifest, so a `check` run from the other one
+  would pass.
 - **The stash**: `refs/stash`, resolved through git rather than read as a file, so a
   `pack-refs` in between changes nothing.
 - **Every entry `git status` reports**, from
@@ -373,8 +386,15 @@ paths, while `git ls-files` covers only that subtree and prints paths relative t
   exits 2. An untracked directory holding only a broken `.git` file is not listed by
   `git status` at all, so there is no entry to record (§5.4).
 
-- **The hooks**: `core.hooksPath` as git resolves it for this worktree, and **every file in the
-  effective hooks directory**, by name and content. Where gstack's wrapper owns `pre-push`,
+- **The hooks**: `core.hooksPath` as git resolves it for this worktree, and **every entry
+  directly in the effective hooks directory**, the files git runs, by name and content. A
+  subdirectory is one `dir` record (§5.4). Both the config value and the directory path are
+  read with a sentinel (`$(git … && printf x)`, then the one newline git appends and the
+  sentinel are stripped), because `$(…)` strips trailing newlines and git does not: a
+  `core.hooksPath` that gains a trailing LF runs hooks from another directory. (`forgeward.gate`
+  is read plainly on purpose: its consumer, the pre-push hook, reads it through `$(…)` too.)
+  The stash and `HEAD` lookups map exit 1 to `absent`/`none` and any other status to exit 2,
+  so a git failure is never recorded as "no stash". Where gstack's wrapper owns `pre-push`,
   forgeward's enforcer is `pre-push.local` beside it (`forgeward-install-pre-push.sh`), so
   recording `pre-push` alone would miss the hook that does the work.
 - **The opt-in switch**: the value of `forgeward.gate`, or `absent`. The pre-push hook exits 0
@@ -399,6 +419,8 @@ content (`special`, `unreadable`), so the blind spot in §5.4 is shown on the ru
 | Difference | Line |
 |---|---|
 | a record only in the rebuilt manifest | a new untracked path, hook file or marker. A tracked path that was clean reads `changed: <path> (was clean, now '<XY>')`, never as a new path, so the delete advice below is not printed for it |
+| a flagged entry (skip-worktree or assume-unchanged) | `changed: <path> (flagged skip-worktree or assume-unchanged, so git status does not show it)`, or `new:` / `gone:` when it exists on one side only |
+| the worktree | `this check ran in another worktree than the snapshot`, with no "by a reviewer" suffix |
 | a record only in the snapshot | a path left the dirty set (a commit, checkout, stash, reset or delete took it), or a hook file or marker went away |
 | same key, different value | changed content, or kind, or status letters |
 | `HEAD` | moved, or switched branch |
@@ -440,7 +462,11 @@ Today's guard has two holes here, and both close:
   `sort`, `comm`, `awk` and plain `readlink`, called without GNU-only flags (`sort -z`,
   `readlink -f`, `stat -c`), and never `od`.
 - **Comparison.** Both manifests are sorted under `LC_ALL=C` and compared with every failure
-  checked. `git status` prints tracked and untracked entries as separate groups, not in one path
+  checked. Records that share a key are folded into one after the sort, values joined by `|`: after
+  `git rm --cached foo` git lists `foo` twice (`D ` and `??`), and a comparison that keeps one
+  value per key read the unchanged tree as changed on every run. No value holds `|` or a tab, and
+  a new-path report needs a single `??` entry, so a tracked file that was just untracked is never
+  called a new path. `git status` prints tracked and untracked entries as separate groups, not in one path
   order (measured).
 - **Reading entries.** NUL-delimited output is read with `read -r -d ''`, never captured into a
   variable, which would drop the NULs.
@@ -481,7 +507,12 @@ variable surviving between commands.**
 checkout by comparing text. A symlink alias, or a `..` in `FORGEWARD_ARTIFACT_ROOT` or `TMPDIR`,
 passes that comparison and lands inside the tree. Its own snapshot file would then read as a
 changed path on every run. The helper now resolves both sides with `cd … && pwd -P` before it
-compares, keeping its existing fallback to `/tmp`.
+compares, keeping its existing fallback to `/tmp`. **The directory handed out is checked too,
+not only the root**: `<root>/forgeward-artifacts` may be a symlink into the repo. An existing one
+that resolves inside is refused before the `mkdir`, and the created directory is resolved and
+tested again. Inside the repo, or unresolvable, it falls back to a fresh `mktemp -d` under `/tmp`
+(an unpredictable name, so it cannot be pre-planted), checked once more, and exits 1 if that is
+still inside, which 2a turns into its stop line. A nonexistent root falls back to `/tmp` too.
 
 - **The snapshot** is `<RUN_DIR>/snapshot`.
 - **No reviewer is ever given `<RUN_DIR>`.** The baseline lives there, and a reviewer holding
@@ -597,7 +628,7 @@ So every fired reviewer is exactly one of PASS, FAIL or incomplete.
 | # | Condition | Outcome |
 |---|---|---|
 | 1 | guard exit 1 | **halt: the workspace changed** |
-| 2 | guard exit 2, or any other non-zero | **halt: the workspace could not be checked**. Never read as clean. |
+| 2 | guard exit 2 or any other non-zero, or the check did not run or report a status (denied, timed out) | **halt: the workspace could not be checked**. Never read as clean. |
 | 3 | launch-failed or cancelled | **no marker: the review did not run to completion** |
 | 4 | any blocking reviewer FAIL | **FAIL**. Any incomplete axes are listed too. |
 | 5 | any blocking reviewer incomplete | **no marker: incomplete** |
@@ -663,6 +694,14 @@ The guard's entries go into its header list, which stays the only maintained cop
   forging markers by hand is outside the threat model (§4.4).
 - **A change undone before the check.** `check` compares two endpoints. An edit restored before
   2d, or a write that races the snapshot itself, is not seen. The guard is not a write audit.
+- **What a hook runs.** The hooks record covers the entries DIRECTLY in the effective hooks
+  directory, the files git runs. A subdirectory is one `dir` record; the files below it, and
+  anything a hook sources or runs, are not followed. A test pins this (W57), so the day it
+  changes, this bullet and the guard's header change with it.
+- **A FIFO swapped in at the batch hash.** A reviewer still running at 2d, so unconfirmed, can
+  replace a file the guard already classified as regular with a FIFO before the batch hash
+  opens it. `check` then hangs instead of missing the change. Filed in `TODOS.md`: run 2d under
+  `timeout` where one exists.
 - **Mode or timestamp changes with identical content.** Git reports a mode change on a tracked
   file only when `core.fileMode` is on.
 
@@ -723,6 +762,22 @@ removes the cost. On Git Bash, process creation dominates the run time.
   - the run file;
   - this branch's marker appearing;
   - a sibling branch's marker, at the same commit, appearing.
+- **Found by the final two reviews (W50–W59).** Each names its message as well as the exit status:
+  - `core.hooksPath` gaining a trailing LF (W50);
+  - a file flagged `skip-worktree` (W51) or `assume-unchanged` (W52) before the snapshot, then
+    edited; a flagged entry absent at snapshot gets no record, an unchanged tree is quiet, and
+    creating the file fires (W53);
+  - a PATH stub `git` that fails only the `refs/stash` lookup must give exit 2, with the real
+    git as the control leg (W54);
+  - `git rm --cached` on a tracked file: the unchanged tree exits 0 (the wedge), and an edit
+    reads as changed content with no new-path or `rm -rf` advice (W55);
+  - a `check` from a second linked worktree at the same commit differs (W56);
+  - a file below a hooks subdirectory is NOT followed: a pinned blind spot, so the day it
+    reddens this section and §5.4 change (W57);
+  - a new file in an already-untracked directory, which pins `--untracked-files=all` (W58);
+  - a commit inside a submodule under `submodule.<name>.ignore=all`, which pins
+    `--ignore-submodules=none` (W59).
+  P9c pins the symlinked `forgeward-artifacts` and P9d the nonexistent-root fallback.
 - **Must-NOT-fire controls.** Each must exit 0:
   - a config write to `branch.<name>.remote`;
   - a marker written for a branch at another commit, which is another worktree's gate run;
@@ -774,7 +829,15 @@ removes the cost. On Git Bash, process creation dominates the run time.
   - drop `-v` from the index record: the skip-worktree assertion;
   - drop the run-file record: the run-file assertion;
   - record `pre-push` only: the `pre-push.local` assertion;
-  - collect from the caller's directory: the subdirectory assertion.
+  - collect from the caller's directory: the subdirectory assertion;
+  - drop `--untracked-files=all`: W58;
+  - drop `--ignore-submodules=none`: W59;
+  - lose the sentinel on `core.hooksPath`: W50; skip the flagged-entry pass: W51, W52, W53c; read
+    a failed stash lookup as `absent`: W54; stop folding records that share a key: W55; drop the
+    worktree record: W56; skip the final-directory containment: P9c.
+  - In `test/dual-client-test.sh`: the launch-failed paragraph rewritten to return early, Step 3
+    row 2 without its did-not-run clause, and 2d without its denied-or-timed-out clause each
+    redden their own assertion.
 - **Measured, not asserted.** The plan records the time `snapshot` and `check` take on 5,000
   untracked files and on one 200 MB untracked file. A timing assertion would be flaky.
 
@@ -785,7 +848,10 @@ removes the cost. On Git Bash, process creation dominates the run time.
   later command**, which pins the violating form.
 - Each of 2a's three stop lines is present, cut out between its own anchors.
 - The check command appears **exactly once** in the skill, in 2d. Between the launch in 2b and
-  the check in 2d, no line ends the run: every early exit in 2b says to go to 2c. PR 4 adds guard
+  the check in 2d, no line ends the run: the launch-failed paragraph of 2b is pinned EXACTLY
+  (whitespace collapsed), because a `go to 2c` substring survives "go to 2c only if every launch
+  succeeded; otherwise return immediately". Step 3 row 2 and 2d each carry the "did not run, was
+  denied or timed out" wording. PR 4 adds guard
   check 1 between the stages (§8.1), and re-scopes this assertion to "once per stage, the last
   after every reviewer of every stage is accounted for".
 - 2c carries:
@@ -853,6 +919,21 @@ overlapped. The changes:
   - "reviewers cannot read it either";
   - "git and bash builtins, and nothing else".
 - **Elsewhere in the spec:** §8.1, §9.2, §10.2 and §13 were amended to match.
+
+**What the final two whole-branch reviews changed** (an Opus review and a Codex review, run
+after the above):
+
+- **Guard.** Flagged entries are recorded by content, the worktree is bound, a `core.hooksPath`
+  or hooks directory that gains a trailing newline is no longer lost, a failed stash or `HEAD`
+  lookup exits 2 instead of reading as absent, and a path git lists twice (after
+  `git rm --cached`) is folded into one record instead of wedging the gate.
+- **Run directory.** The directory handed out is checked, not only the root.
+- **Skill.** Step 3 row 2 and 2d also cover a check that was denied, timed out or never ran.
+  `REPOSITORY_ROOT` is printed and carried as `<REPOSITORY_ROOT>`, because a shell variable does
+  not survive into a later tool call.
+- **Tests.** W50–W59, P9c, P9d, and the exact pin of the launch-failed paragraph.
+- **Withdrawn:** "Cancelling stops them and still checks the workspace" covers a cancel, not an
+  interrupt (Ctrl-C), which skips the check (§5.4).
 
 **Not taken:**
 

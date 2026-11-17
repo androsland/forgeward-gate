@@ -37,9 +37,18 @@
 #     regular file by content; a symlink by its target text, never followed; `absent`;
 #     `special` (FIFO, socket, device), never opened; a submodule or nested repository
 #     by its checked-out commit, `no-commit` or `unreadable`; `dir`; `unreadable`;
-#   - core.hooksPath and every file in the effective hooks directory (gstack's wrapper
-#     owns `pre-push`; forgeward's enforcer is `pre-push.local` beside it);
+#   - every entry assume-unchanged (a lowercase `ls-files -v` tag) or skip-worktree (`S`)
+#     that exists in the worktree, by content, as a `flagged` record: `git status` never
+#     looks at those entries and the index hash does not move when one is edited. An
+#     absent flagged entry has no record (a sparse checkout's normal state);
+#   - core.hooksPath (read with a sentinel, so a trailing newline is kept) and every entry
+#     DIRECTLY in the effective hooks directory, the files git runs (gstack's wrapper owns
+#     `pre-push`; forgeward's enforcer is `pre-push.local` beside it). A subdirectory is
+#     recorded as `dir`; the files below it, and anything a hook sources or runs, are not
+#     followed;
 #   - forgeward.gate, the switch the pre-push hook reads;
+#   - the absolute git dir, as a `worktree` record, so a check run from another linked
+#     worktree than the snapshot differs;
 #   - this commit's run file, and the marker of every name `--revoke` withdraws for it.
 #
 # WHAT IT STRUCTURALLY CANNOT SEE (design §5.4):
@@ -53,6 +62,9 @@
 #     other commits' markers and run files;
 #   - a change undone before `check`, or a write racing `snapshot`: two endpoints are
 #     compared, and this is not a write audit;
+#   - a reviewer still running at the batch hash, which can swap a file it already
+#     classified for a FIFO: `check` then HANGS in the hash instead of missing the change.
+#     Run it under `timeout` where one exists;
 #   - a mode or timestamp change with identical content;
 #   - who made a change. A reviewer and someone working in this checkout look the same,
 #     which is exactly why it only ever REPORTS — deleting untracked files is
@@ -210,21 +222,33 @@ EOF
 state_records() {
   local sha="$1" common="$2" c b v rc hooks f names n
   NQ=0
-  c="$(git rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null)" || c=none
+  # rc 1 is git's "no such object" (an unborn HEAD, no stash); any other status is a git
+  # failure, which must not read as an absent value.
+  c="$(git rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null)"; rc=$?
+  case "$rc" in 0) ;; 1) c=none ;; *) return 1 ;; esac
   b="$(git symbolic-ref -q HEAD 2>/dev/null)"; rc=$?
   case "$rc" in 0) ;; 1) b=detached ;; *) return 1 ;; esac
   enc "$b"; printf 'head\t-\t%s %s\n' "$c" "$ENC"
   v="$(git ls-files -s -v -z | git hash-object --stdin)" || return 1
   printf 'index\t-\t%s\n' "$v"
-  v="$(git rev-parse --verify --quiet refs/stash 2>/dev/null)" || v=absent
+  v="$(git rev-parse --verify --quiet refs/stash 2>/dev/null)"; rc=$?
+  case "$rc" in 0) ;; 1) v=absent ;; *) return 1 ;; esac
   printf 'stash\t-\t%s\n' "$v"
-  v="$(git config --get core.hooksPath)"; rc=$?
-  case "$rc" in 0) enc "$v"; v="$ENC" ;; 1) v='unset' ;; *) return 1 ;; esac
+  # `$(…)` strips trailing newlines and git uses core.hooksPath verbatim, so a value that
+  # gains a trailing LF runs hooks from another directory. A sentinel keeps the bytes: strip
+  # the one newline git appends, then the sentinel. (forgeward.gate below is read WITHOUT
+  # one on purpose: its consumer, the pre-push hook, reads it through `$(…)` too.)
+  v="$(git config --get core.hooksPath && printf x)"; rc=$?
+  case "$rc" in 0) v="${v%?x}"; enc "$v"; v="$ENC" ;; 1) v='unset' ;; *) return 1 ;; esac
   printf 'hookspath\t-\t%s\n' "$v"
   v="$(git config --get forgeward.gate)"; rc=$?
   case "$rc" in 0) enc "$v"; v="$ENC" ;; 1) v=absent ;; *) return 1 ;; esac
   printf 'switch\t-\t%s\n' "$v"
-  hooks="$(git rev-parse --git-path hooks)" || return 1
+  hooks="$(git rev-parse --git-path hooks && printf x)" || return 1
+  hooks="${hooks%?x}"
+  v="$(git rev-parse --absolute-git-dir)" || return 1
+  enc "$v"
+  printf 'worktree\t-\t%s\n' "$ENC"
   for f in "$hooks"/* "$hooks"/.[!.]* "$hooks"/..?*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     enc "${f##*/}"; entry hook "$ENC" "$f" || return 1
@@ -263,19 +287,46 @@ path_records() {
   flush_files
 }
 
+# flag_records: read `git ls-files -v -z` on stdin and print one record per entry flagged
+# assume-unchanged (a lowercase tag) or skip-worktree (`S`) that exists in the worktree.
+# git status does not look at those entries, and an edit leaves the index unchanged. An
+# absent flagged entry has no record (a sparse checkout leaves most of them absent), so
+# creating one reads as a new record.
+flag_records() {
+  local rec tag p
+  NQ=0
+  while IFS= read -r -d '' rec; do
+    tag="${rec:0:1}"; p="${rec:2}"
+    case "$tag" in [a-z]|S) ;; *) continue ;; esac
+    [ -e "$p" ] || [ -L "$p" ] || continue
+    enc "$p"; entry flagged "$ENC" "$p" || return 1
+  done
+  flush_files
+}
+
 # manifest <HEAD_SHA>: print the whole v2 manifest, or nothing and status 1. It RETURNS,
 # never exits: every caller runs it inside a command substitution and checks the status
 # there (CLAUDE.md, the swallowed-exit bullet).
 manifest() {
-  local recs common n=0
+  local recs common n=0 nflag
+  # A cheap count gates the flagged-entry pass, so a repo with no flags pays nothing more.
+  nflag="$(git ls-files -v | awk '/^[a-zS] / { n++ } END { print n + 0 }')" || return 1
   common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
     || common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
   case "$common" in /*|[A-Za-z]:/*) ;; *) common="$TOP/$common" ;; esac
   # --no-optional-locks: without it `git status` refreshes and REWRITES the index.
+  # The awk folds records that share a key (after `git rm --cached` git lists a path twice,
+  # `D ` and `??`) into one, values joined by `|`; no value holds `|` or a tab, and sorting
+  # makes them adjacent.
   recs="$( { state_records "$1" "$common" \
+             && { [ "$nflag" -eq 0 ] || git ls-files -v -z | flag_records; } \
              && git --no-optional-locks status --porcelain -z --no-renames \
                   --untracked-files=all --ignore-submodules=none | path_records
-           } | sort)" || return 1
+           } | sort | awk -F '\t' '
+             ($1 FS $2) == k { v = v "|" $3; next }
+             NR > 1 { print k FS v }
+             { k = $1 FS $2; v = $3 }
+             END { if (NR > 0) print k FS v }')" || return 1
   while IFS= read -r _; do n=$((n+1)); done <<EOF
 $recs
 EOF
@@ -289,12 +340,18 @@ function who() { return " — by a reviewer, or someone working in this checkout
 function bare(v) { sub(/:.*/, "", v); return v }
 function report(t, k, o, n) {
   if (t == "path") {
-    if (o == "" && substr(n, 1, 2) == "??") { print "  new path: " k who(); newp = 1 }
+    if (o == "" && substr(n, 1, 2) == "??" && index(n, "|") == 0) { print "  new path: " k who(); newp = 1 }
     else if (o == "") print "  changed: " k " (was clean, now \047" substr(n, 1, 2) "\047)" who()
     else if (n == "") print "  left the dirty set: " k " (a commit, checkout, stash, reset or delete took it)" who()
     else if (bare(o) == bare(n)) { print "  changed content: " k who(); dirty = 1 }
     else { print "  changed: " k " (was " bare(o) ", now " bare(n) ")" who(); dirty = 1 }
   }
+  else if (t == "flagged") {
+    if (o == "") print "  new: " k " (flagged skip-worktree or assume-unchanged, so git status does not show it)" who()
+    else if (n == "") print "  gone: " k " (flagged skip-worktree or assume-unchanged, so git status does not show it)" who()
+    else print "  changed: " k " (flagged skip-worktree or assume-unchanged, so git status does not show it)" who()
+  }
+  else if (t == "worktree") print "  this check ran in another worktree than the snapshot (was " o ", now " n ")"
   else if (t == "head") print "  HEAD moved or switched branch (was " o ", now " n ")" who()
   else if (t == "index") print "  the index changed (git add, git rm, or a skip-worktree or assume-unchanged flag)" who()
   else if (t == "stash") print "  the stash changed" who()

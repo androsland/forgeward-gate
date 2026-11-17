@@ -18,6 +18,10 @@
   findings, instead of FAIL. It still blocks the marker.
 - Step 2 waits for every launched reviewer by its agent id, and a launch receipt is never a
   result. Cancelling while reviewers are pending stops them and still checks the workspace.
+  **An interrupt (Ctrl-C) is not a cancel: it skips the check.** After interrupting a gate,
+  run `git status` before re-running it, because whatever a still-running reviewer writes
+  becomes the next run's baseline.
+- A nonexistent `FORGEWARD_ARTIFACT_ROOT` falls back to `/tmp` instead of being created.
 
 ### Fixed
 
@@ -31,7 +35,21 @@
   calls. The run directory is now created and printed in one command.
 - A failed reviewer launch ended Step 2 without checking the workspace.
 - `forgeward-artifact-dir.sh` handed out a directory inside the repo when its root was a
-  symlink into the repo or walked back into it with `..`.
+  symlink into the repo or walked back into it with `..`, or when
+  `<root>/forgeward-artifacts` was itself a symlink into the repo. The directory handed out is
+  now checked, with a fresh `mktemp -d` under `/tmp` as the fallback.
+- The guard now also records files flagged skip-worktree or assume-unchanged before the
+  snapshot (`git status` skips them, and editing one left the index hash unchanged), and the
+  worktree it ran in, so a check from another linked worktree no longer passes.
+- `git rm --cached` on a tracked file made `git status` list the path twice and the guard
+  report the unchanged tree as changed on every run; such records are now folded, and the
+  file is not called a new path.
+- A trailing newline added to `core.hooksPath` redirected hooks to another directory without
+  the guard noticing, because `$(…)` strips it. It is read with a sentinel now. A failed stash
+  or `HEAD` lookup is exit 2 rather than "no stash".
+- Step 3's "could not be checked" row and 2d now also cover a check that was denied, timed
+  out or never ran, and the repository root is printed and carried as `<REPOSITORY_ROOT>`
+  because a shell variable does not survive between tool calls.
 
 ## 0.31.0 — 2026-11-16
 

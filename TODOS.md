@@ -1088,6 +1088,31 @@ themselves so that none of them requires the commit to be actionable.
   gate run on a one-line diff, recording whether the pinned launch is accepted.
   **Priority:** P2
 
+- **LIVE-TEST 5d points at the wrong fixture, and its section labels collide with SKILL's.**
+  (final whole-branch reviews of the PR 2 branch, 2026-11-17) 5d step 1 sends the tester to
+  section 4's fixture for a run firing three or more reviewers; 5c is the many-reviewer
+  fixture. Separately, LIVE-TEST's own section labels "(2d)" and "(2e)" now collide with
+  `skills/gate/SKILL.md`'s 2a–2d. **Priority:** P3
+
+- **Run 2d under `timeout` where one exists.** (final reviews, 2026-11-17) A reviewer still
+  running at 2d, so unconfirmed, can swap a file the guard already classified as regular for a
+  FIFO before the batch hash opens it; `check` then hangs instead of missing the change. Bounds
+  the hang only, and needs a decision on the limit, since the gate imposes no deadline of its
+  own (§5.4). **Priority:** P3
+
+- **A pre-created `forgeward-artifacts` in a shared `/tmp`.** (final reviews, 2026-11-17)
+  Another local user can create `/tmp/forgeward-artifacts` first and own what is in it. It
+  predates the 0.32.0 branch and is out of its scope. **Priority:** P3
+
+- **`revoke_names`'s `|| here=""` swallows a git failure.** (final reviews, 2026-11-17) A failed
+  `HEAD` lookup reads as "HEAD is not at this commit", so the current branch's name is dropped
+  from the list silently. The copies in `forgeward-write-marker.sh` and the guard are
+  byte-pinned by W47, so a fix changes both together. **Priority:** P3
+
+- **Windows / Git Bash was never examined for the symlink legs.** (final reviews, 2026-11-17)
+  P9b and P9c create symlinks, which need privileges or a flag under Git Bash, and the
+  physical-path containment was only ever run on Linux. **Priority:** P3
+
 ## Standalone posture (no gstack installed)
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
@@ -2746,7 +2771,10 @@ shipped on its own branch instead.
   `forgeward-artifact-dir.sh` contains by physical path. Building it found that the spec's
   raw `hash-object --stdin-paths` batch hashes a different file for a `"`-led or CR-ending
   path, and that a broken-gitfile submodule fails `git status` itself; §5 is corrected for
-  both. Pinned by P9b and W1–W49 in `test/gate-test.sh` and the 2a–2d and six-row assertions
+  both. Two whole-branch reviews then found further holes, closed in the same release:
+  flagged (skip-worktree, assume-unchanged) entries, the worktree binding, a trailing
+  newline on `core.hooksPath`, a failed stash lookup read as absent, the `git rm --cached`
+  wedge, and the final artifact directory. Pinned by P9b, P9c, P9d and W1–W59 in `test/gate-test.sh` and the 2a–2d and six-row assertions
   in `test/dual-client-test.sh`, each guard with a mutation check. The two follow-ups the
   spec filed are under `## Reviewers`: an interrupted run's leftovers, and the Codex model
   pin.

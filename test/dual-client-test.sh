@@ -253,10 +253,34 @@ has "$s1" 'forgeward gate: could not start this gate run cleanly' \
 # line, and a failed launch goes on to 2c.
 if has "$gate_2b$gate_2c" 'stop with' || has "$gate_2b$gate_2c" '`forgeward gate: '; then
   nok "2b/2c carry a stop that skips the workspace check"
-elif has "$gate_2b" 'go to 2c' && [ -n "$gate_2b" ] && [ -n "$gate_2c" ]; then
-  ok "no path out of 2b or 2c skips 2d's check"
 else
-  nok "2b launch-failed path" "2b-bytes=${#gate_2b} 2c-bytes=${#gate_2c}"
+  # EXACT pin of the launch-failed paragraph, not a `go to 2c` substring: a paragraph that
+  # said "go to 2c only if every launch succeeded; otherwise return immediately to the user
+  # without a marker" contains the substring and skips 2d. Whitespace is collapsed so a
+  # re-wrap does not redden it; any wording change does, on purpose.
+  lf="$(between "$gate_2b" '**If a launch fails**' 'This is also the fallback')"
+  lf="$(printf '%s' "$lf" | tr '\n' ' ' | tr -s ' ')"; lf="${lf# }"; lf="${lf% }"
+  lf_want=", or the runtime cannot spawn the required reviewers with the explicit runtime policy above: stop every reviewer that did start (2c), mark the run **launch-failed**, and go to 2c. An unmeasured axis cannot return PASS, and a reviewer that did start may have written into the repo, so the run still ends at 2d's check."
+  if [ -n "$lf" ] && [ "$lf" = "$lf_want" ] && [ -n "$gate_2c" ]; then
+    ok "no path out of 2b or 2c skips 2d's check (the launch-failed paragraph is pinned exactly)"
+  else
+    nok "2b launch-failed paragraph is not the pinned text" "2b-bytes=${#gate_2b} got='$lf'"
+  fi
+fi
+# Step 3 row 2 and 2d: a check that was denied, timed out or never ran is "could not be
+# checked", not clean. Each section is cut between its own anchors, so a missing anchor
+# empties the cut and fails the assertion.
+row2="$(between "$gate_step3" '**2. The workspace could not be checked**' '**3. The review did not run to completion**')"
+if has "$row2" 'any other non-zero' && has "$row2" 'the check did not run or report a status'; then
+  ok "Step 3 row 2 covers a check that exited non-zero or did not run or report a status"
+else
+  nok "Step 3 row 2 wording" "row2-bytes=${#row2}"
+fi
+d_tail="$(between "$gate_2d" 'Exit 2, or any other non-zero' '## Step 3')"
+if has "$d_tail" 'denied, timed out, or never ran or reported a status' && has "$d_tail" 'never read'; then
+  ok "2d reads a denied, timed-out or never-run check as could-not-check, never as clean"
+else
+  nok "2d could-not-check wording" "2d-tail-bytes=${#d_tail}"
 fi
 c2c_ok=true
 for phrase in 'Only output from an agent id recorded in 2b counts' 'A receipt is never a result' \

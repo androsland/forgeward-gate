@@ -443,10 +443,12 @@ is not a full commit id): print its message and stop with
 These three stops, and an interrupt, are the only ways out of Step 2 that skip the
 check. Nothing has been launched yet, so there is nothing to check for.
 
-Resolve the repository root once as well (Step 0 already froze the commits):
+Resolve the repository root once as well (Step 0 already froze the commits). A shell
+variable does not survive into a later tool call, so print it and record the path it
+prints exactly as `<REPOSITORY_ROOT>`:
 
 ```bash
-REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+git rev-parse --show-toplevel
 ```
 
 ### 2b — Launch
@@ -481,7 +483,7 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `<forgeward-root>/agents/<reviewer>.md`. Pass the resolved absolute
   `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
   any plugin-root expression in the rubric; normal Codex shell commands do not inherit
-  the plugin hook environment. The prompt must also carry `$REPOSITORY_ROOT`, `<base>`,
+  the plugin hook environment. The prompt must also carry `<REPOSITORY_ROOT>`, `<base>`,
   `<BASE_SHA>`, `<HEAD_SHA>`, `<BASE_SHA>...<HEAD_SHA>`, the read-only instruction, and
   the rubric's verdict format. Do not paraphrase or copy only part of the rubric into the
   prompt.
@@ -586,8 +588,9 @@ leading `./` resolves to the **drive root**, so an `rm -rf` there is a far worse
 than the one it cleans up. Print the paths and let the user run `rm -rf -- "./C:"`
 themselves.
 
-Exit 2, or any other non-zero, means the workspace could not be checked. It is never
-read as clean.
+Exit 2, or any other non-zero, means the workspace could not be checked, and so does a
+check that was denied, timed out, or never ran or reported a status. That is never read
+as clean.
 
 ## Step 3 — Decide
 
@@ -612,7 +615,7 @@ and say that the earlier PASS it names may still authorize a push.
   This is a halt, not a FAIL: no marker is written, and none of the reported paths is
   deleted.
 
-- **2. The workspace could not be checked** (2d exited 2, or any other non-zero): HALT.
+- **2. The workspace could not be checked** (2d exited 2 or any other non-zero, or the check did not run or report a status): HALT.
   It is never read as clean. Revoke:
 
   ```bash

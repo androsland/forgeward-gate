@@ -45,7 +45,23 @@ fail, so it cannot be recorded as `unreadable` the way the spec said.
 - No valid verdict is **incomplete**, reported apart from findings. It still blocks the
   marker.
 - The artifact directory is contained by physical path, and a root that cannot be resolved
-  falls back to `/tmp`.
+  falls back to `/tmp`. The directory handed out is checked as well as the root: a symlinked
+  `<root>/forgeward-artifacts` fell through the root check, so it is resolved before and after
+  the `mkdir` and falls back to a fresh `mktemp -d`.
+- Flagged entries are recorded by content (A2). `git status` skips skip-worktree and
+  assume-unchanged entries, and the index hash does not move when one is edited, so a file
+  flagged before the snapshot was unseen. An absent flagged entry has no record, because a
+  sparse checkout leaves most of them absent.
+- `core.hooksPath` and the hooks directory are read with a sentinel (A1). `$(…)` strips a
+  trailing newline and git does not, so a value gaining a LF ran hooks from another directory
+  while the record stayed the same. `forgeward.gate` is not, because its consumer reads it
+  through `$(…)` as well.
+- Records that share a key are folded into one (A4). After `git rm --cached` git lists a path
+  twice, and a one-value-per-key comparison reported the unchanged tree as changed on every
+  run.
+- The manifest carries the absolute git dir (A5), so a check from another linked worktree at
+  the same commit differs.
+- A failed stash or `HEAD` lookup exits 2 (A3). Only exit 1 means absent.
 
 **Rejected.**
 - **A gate-imposed deadline.** The gate cannot tell a slow reviewer from a hung one, and a

@@ -61,6 +61,8 @@ done
 # inside the tree, where the gate's own snapshot would read as a changed path every run.
 # A root that does not exist yet cannot be resolved, so it cannot be shown to be outside,
 # and creating it to find out could create it inside the repo: fall back to /tmp.
+# The directory handed out is checked as well as the root (below): a symlinked
+# `<root>/forgeward-artifacts` would otherwise land inside the repo.
 phys() { (cd "$1" 2>/dev/null && pwd -P); }
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$top" ]; then
@@ -74,5 +76,35 @@ if [ -n "$top" ]; then
 fi
 
 dir="$root/forgeward-artifacts/$$"
-mkdir -p "$dir" 2>/dev/null || { dir="/tmp/forgeward-artifacts/$$"; mkdir -p "$dir" || exit 1; }
+# An existing <root>/forgeward-artifacts that resolves into the repo is refused BEFORE the
+# mkdir, which would otherwise create the per-process directory inside the repo.
+dir_phys=""
+if [ -n "$top" ] && [ -e "$root/forgeward-artifacts" ]; then
+  dir_phys="$(phys "$root/forgeward-artifacts")"
+  case "$dir_phys/" in "${top%/}"/*) dir="" ;; esac
+fi
+if [ -n "$dir" ]; then
+  mkdir -p "$dir" 2>/dev/null || { dir="/tmp/forgeward-artifacts/$$"; mkdir -p "$dir" || exit 1; }
+fi
+# The root was checked, not the directory handed out: `<root>/forgeward-artifacts` may be a
+# symlink into the repo. Resolve the directory itself and repeat the test. Inside the repo,
+# or unresolvable, fall back to a fresh mktemp -d: its name is unpredictable, so it cannot
+# have been planted. That one is checked too, and exit 1 (the gate's 2a stops on it) if it
+# is still inside.
+if [ -n "$top" ]; then
+  dir_phys=""
+  if [ -n "$dir" ]; then
+    dir_phys="$(phys "$dir")"
+    case "$dir_phys/" in
+      /*) case "$dir_phys/" in "${top%/}"/*) dir_phys="" ;; esac ;;
+      *) dir_phys="" ;;
+    esac
+  fi
+  if [ -z "$dir_phys" ]; then
+    dir="$(mktemp -d /tmp/forgeward-artifacts.XXXXXX)" || exit 1
+    dir_phys="$(phys "$dir")"
+    case "$dir_phys/" in /*) ;; *) exit 1 ;; esac
+    case "$dir_phys/" in "${top%/}"/*) exit 1 ;; esac
+  fi
+fi
 printf '%s\n' "$dir"

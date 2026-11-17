@@ -2228,7 +2228,7 @@ else
   ok "workspace guard: 'C:' tree not stageable on this platform (drive paths resolve natively) — general case asserted above"
 fi
 
-# W1..W49 -- workspace guard v2 (design §5.1, §5.5). Every recorded field has a fixture
+# W1..W59 -- workspace guard v2 (design §5.1, §5.5). Every recorded field has a fixture
 # that changes only that field; every must-not-fire case is a legitimate change made
 # while a gate runs. Assertions read the MESSAGE, not only the exit status.
 WG="$TMP/wguard"; mkrepo "$WG"
@@ -2519,6 +2519,95 @@ case "$wout|$wout2" in
       || nok "W49: restricted PATH" "snapshot=$wtsrc check=$wrc truncated=$wrc2" ;;
   *) nok "W49: restricted PATH" "snapshot=$wtsrc out='$wout' out2='$wout2'" ;;
 esac
+
+# --- W50..W59: the holes the final whole-branch reviews found. ---
+# W50 (final review, A1): `$(…)` strips a trailing newline and git does not, so a
+# core.hooksPath that gains a LF runs hooks from another directory. Pin: it fires.
+wg config core.hooksPath .hk; wsnap; wg config core.hooksPath $'.hk\n'
+wfires "W50: core.hooksPath gaining a trailing newline" "core.hooksPath changed"
+wg config --unset core.hooksPath
+# W51/W52: an entry flagged BEFORE the snapshot is invisible to `git status`, and the index
+# hash does not move when it is edited. W51 skip-worktree, W52 assume-unchanged.
+wg update-index --skip-worktree b; wsnap; printf 'edited\n' >> "$WG/b"
+wfires "W51: a file flagged skip-worktree before the snapshot, edited" "changed: b (flagged skip-worktree or assume-unchanged, so git status does not show it)"
+wg update-index --no-skip-worktree b; printf 'b\n' > "$WG/b"
+wg update-index --assume-unchanged a; wsnap; printf 'edited\n' >> "$WG/a"
+wfires "W52: a file flagged assume-unchanged before the snapshot, edited" "changed: a (flagged skip-worktree or assume-unchanged, so git status does not show it)"
+wg update-index --no-assume-unchanged a; printf 'a\n' > "$WG/a"
+# W53: a flagged entry ABSENT at snapshot gets no record (a sparse checkout's normal state),
+# so the unchanged tree is quiet; creating the file reads as new.
+wg update-index --skip-worktree d/e/c; rm -f "$WG/d/e/c"; wsnap
+{ [ "$wsrc" = 0 ] && [ "$(awk -F'\t' '$1 == "flagged"' "$WS" | grep -c .)" = 0 ]; } \
+  && ok "W53a: an absent flagged entry has no record" || nok "W53a: an absent flagged entry was recorded" "snapshot=$wsrc"
+wquiet "W53b: a flagged entry absent at snapshot, tree unchanged"
+printf 'c\n' > "$WG/d/e/c"
+wfires "W53c: a flagged entry created after the snapshot" "new: d/e/c (flagged skip-worktree or assume-unchanged"
+wg update-index --no-skip-worktree d/e/c
+# W54: a failed stash lookup is a git failure, not "no stash". The stub fails only the
+# refs/stash lookup; the control leg is the real git on an unchanged tree.
+wsnap
+WGSB="$TMP/wguard-stashstub"; mkdir -p "$WGSB"
+printf '#!/bin/sh\ncase " $* " in *" refs/stash "*) exit 128 ;; esac\nexec %s "$@"\n' "$(command -v git)" > "$WGSB/git"
+chmod +x "$WGSB/git"
+wout="$( cd "$WG" && PATH="$WGSB:$PATH" wto "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W54: git failing the stash lookup" "git failed while the workspace was being recorded"
+wquiet "W54b (control): the real git on the unchanged tree"
+# W55: after `git rm --cached` git lists the path twice (`D ` and `??`). An unchanged tree
+# must still check clean (the wedge), and an edit is a content change, not a new path.
+wg rm -q --cached b; wwedge "W55: git rm --cached on a tracked file, unchanged tree"
+printf 'edited\n' >> "$WG/b"
+wfires "W55b: an untracked-from-index file edited" "changed content: b"
+case "$wout" in *"new path"*|*'rm -rf'*) nok "W55c: a file untracked from the index is called a new path" "out='$wout'" ;;
+  *) ok "W55c: no new-path report and no rm advice for a file untracked from the index" ;; esac
+wg add b; printf 'b\n' > "$WG/b"
+# W56: a check run from another linked worktree is not the snapshot's worktree.
+wg checkout -q --detach; wsnap
+wg worktree add -q --detach "$TMP/wguard-wt2" HEAD
+wcheck "$TMP/wguard-wt2"
+case "$wout" in *"this check ran in another worktree than the snapshot"*)
+  [ "$wrc" != 0 ] && ok "W56: a check from another linked worktree differs" || nok "W56: exit status" "rc=$wrc out='$wout'" ;;
+  *) nok "W56: another worktree was not noticed" "rc=$wrc out='$wout'" ;; esac
+wg worktree remove --force "$TMP/wguard-wt2"; wg checkout -q main
+# W57: PINNED BLIND SPOT, ruling C2. The hooks record covers the entries DIRECTLY in the
+# effective hooks directory; a subdirectory is one `dir` record and the files below it are
+# not followed. This repo owns that rule, so the day this reddens, design §5.4 and the
+# guard's header must change with it.
+mkdir -p "$WG/.git/hooks/sub"; printf 'x\n' > "$WG/.git/hooks/sub/helper"; wsnap
+printf 'y\n' > "$WG/.git/hooks/sub/helper"; wcheck
+{ [ "$wrc" = 0 ] && [ -z "$wout" ] && [ "$(awk -F'\t' '$1 == "hook" && $2 == "sub" && $3 == "dir"' "$WS" | grep -c .)" = 1 ]; } \
+  && ok "W57: a file below a hooks subdirectory is not followed (pinned blind spot): one 'dir' record, check exits 0" \
+  || nok "W57: the hooks-subdirectory ruling changed" "rc=$wrc out='$wout'"
+rm -rf "$WG/.git/hooks/sub"
+# W58 (final review F5): an untracked directory holding a file at snapshot, and a new file
+# written inside it. Pins --untracked-files=all (the default collapses it to `dir/`).
+mkdir -p "$WG/udir"; printf '1\n' > "$WG/udir/one"; wsnap; printf '2\n' > "$WG/udir/two"
+wfires "W58: a new file inside an already-untracked directory" "new path: udir/two"
+rm -rf "$WG/udir"
+# W59 (final review F5): submodule.<name>.ignore=all hides a submodule's new commit from a
+# default `git status`. Pins --ignore-submodules=none. Own repo: it adds a submodule.
+WGSAVE="$WG"; WG="$TMP/wguard-sm"; WGSRC="$TMP/wguard-smsrc"
+mkrepo "$WGSRC"; ( cd "$WGSRC" && printf 's\n' > s && git add s && git commit -qm s ) >/dev/null 2>&1
+mkrepo "$WG"; ( cd "$WG" && printf 'a\n' > a && git add a && git commit -qm base \
+  && git -c protocol.file.allow=always submodule add -q "$WGSRC" sm && git commit -qm sm \
+  && git config submodule.sm.ignore all ) >/dev/null 2>&1
+wsnap; git -C "$WG/sm" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m inner >/dev/null 2>&1
+wfires "W59: a commit inside a submodule marked ignore=all" "changed: sm"
+WG="$WGSAVE"
+
+# P9c (B1): the directory handed out is checked, not only the root. A symlinked
+# <root>/forgeward-artifacts that points into the repo must not be returned.
+_p9c="$TMP/p9c-root"; mkdir -p "$_p9c"; ln -s "$R" "$_p9c/forgeward-artifacts"
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_p9c" "$ARTDIR" )"; _adrc=$?
+_adp="$(cd "$_ad" 2>/dev/null && pwd -P)"
+case "${_adp:-/}/" in
+  "$_rp"/*|//) nok "P9c: a symlinked forgeward-artifacts into the repo must not be handed out" "rc=$_adrc got '$_ad' -> '$_adp'" ;;
+  *) [ "$_adrc" = 0 ] && ok "P9c: a symlinked <root>/forgeward-artifacts into the repo is refused" \
+       || nok "P9c: exit status" "rc=$_adrc" ;;
+esac
+# P9d: a nonexistent root falls back under /tmp (the documented fallback, now pinned).
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$TMP/p9d-nonexistent" "$ARTDIR" )"
+case "$_ad" in /tmp/*) [ -d "$_ad" ] && ok "P9d: a nonexistent root falls back under /tmp" || nok "P9d: fallback dir missing" "$_ad" ;;
+  *) nok "P9d: a nonexistent root did not fall back under /tmp" "got '$_ad'" ;; esac
 
 # P11/P12: the LIVE filesystem behaviour, with a stub that writes its report exactly
 # the way a scanner's -o does (makedirs + open on the path it was handed). Real
