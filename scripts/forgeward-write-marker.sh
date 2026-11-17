@@ -140,6 +140,43 @@ marker="$(marker_of "$branch")"
 
 commit_of() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || true; }
 
+# revoke_names <commit>: every name a marker for <commit> can be under, one per line,
+# sorted, each once. That is every local branch at <commit>, by the push hook's own
+# `for-each-ref --points-at` expression, under both spellings: the short name (what the
+# hook enumerates and the writer keys on) and the canonical name minus refs/heads/ (what
+# the hook's destination-name lookup uses). One call emits both as consecutive lines, and
+# ref names cannot hold a newline, so the pairs cannot drift. Plus the current branch
+# under both spellings, ONLY when HEAD is at <commit>: a branch at another commit belongs
+# to another run. On a detached HEAD there it is the literal `HEAD` key the writer uses;
+# an unborn HEAD has no commit. Returns 1 when the branch listing fails, after printing
+# the names it could still find.
+# BYTE-IDENTICAL in forgeward-write-marker.sh (which withdraws these markers) and
+# forgeward-workspace-guard.sh (which records them). gate-test.sh pins the bytes, and also
+# derives one list from the other, because the writer runs under `set -e` and the guard
+# does not, so identical text is not proof of identical behaviour.
+revoke_names() {
+  local c="$1" listing="" names="" short full here cur canonical rc=0
+  if listing="$(git for-each-ref --format='%(refname:short)%0a%(refname)' --points-at "$c" refs/heads/ 2>/dev/null)"; then
+    while IFS= read -r short && IFS= read -r full; do
+      names="$names$short"$'\n'"${full#refs/heads/}"$'\n'
+    done <<EOF
+$listing
+EOF
+  else
+    rc=1
+  fi
+  here="$(git rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null)" || here=""
+  if [ -n "$here" ] && [ "$here" = "$c" ]; then
+    cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+      || cur="$(git symbolic-ref --short -q HEAD 2>/dev/null)" || cur=""
+    names="$names$cur"$'\n'
+    canonical="$(git symbolic-ref -q HEAD 2>/dev/null)" || canonical=""
+    case "$canonical" in refs/heads/?*) names="$names${canonical#refs/heads/}"$'\n' ;; esac
+  fi
+  printf '%s' "$names" | sort -u || rc=1
+  return "$rc"
+}
+
 # A reviewed commit must resolve to ITSELF (header: the shape alone is not enough). Called
 # directly, never inside a substitution, so its exit stops the script (CLAUDE.md).
 must_be_itself() { # must_be_itself <label> <arg> <resolved>
@@ -200,32 +237,12 @@ if [ "$mode" = revoke ]; then
       "${reviewed_head:0:12}" "$run_file" >&2
     failed=1
   fi
-  # Every local branch at <reviewed-head>, by the push hook's own expression, under both
-  # spellings: the short name (what the hook enumerates and this writer keys on) and the
-  # canonical name minus refs/heads/ (what the hook's destination-name lookup uses). One
-  # call emits both as consecutive lines; ref names cannot hold a newline, so the pairs
-  # cannot drift.
-  names=""
-  if listing="$(git for-each-ref --format='%(refname:short)%0a%(refname)' --points-at "$reviewed_head" refs/heads/ 2>/dev/null)"; then
-    while IFS= read -r short && IFS= read -r full; do
-      names="$names$short"$'\n'"${full#refs/heads/}"$'\n'
-    done <<EOF
-$listing
-EOF
-  else
+  # Every name a marker for <reviewed-head> can be under (revoke_names, above).
+  if ! names="$(revoke_names "$reviewed_head")"; then
     printf "forgeward: could not list the local branches at %s, so an earlier PASS for one of them may still authorize a push. One cause is a branch ref that points at a missing object; \`git for-each-ref refs/heads/\` names it.\n" \
       "${reviewed_head:0:12}" >&2
     failed=1
   fi
-  # The current branch, under both spellings, ONLY when HEAD is at <reviewed-head>: a
-  # branch at another commit belongs to another run. On a detached HEAD there `$branch`
-  # is the literal `HEAD` key the writer uses; on an unborn HEAD there is no commit.
-  if [ "$(commit_of HEAD)" = "$reviewed_head" ]; then
-    names="$names$branch"$'\n'
-    canonical="$(git symbolic-ref -q HEAD 2>/dev/null || true)"
-    case "$canonical" in refs/heads/?*) names="$names${canonical#refs/heads/}"$'\n' ;; esac
-  fi
-  names="$(printf '%s' "$names" | sort -u)"
   while IFS= read -r b; do
     [ -n "$b" ] || continue
     m="$(marker_of "$b")"

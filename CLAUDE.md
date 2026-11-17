@@ -233,10 +233,10 @@ commit that was fixing it — a line number cannot survive its own fix.
       attributor that does not track the closing brace runs its body to EOF.
       `check_root` is the last definition in `forgeward-detect-gstack-skill.sh`, closing
       cleanly at `:127`; the `exit`s it was charged with are `check_root … && exit 0` at
-      `:146` — its own **call site** — and a bare `exit 1` at `:149`. `snap` is the same
-      shape twice over, at `forgeward-scan.sh:321` and
-      `forgeward-workspace-guard.sh:48` — last definition in each, no later column-0 `}`
-      at all, so the range runs to EOF and sweeps in whatever top-level `exit`s follow;
+      `:146` — its own **call site** — and a bare `exit 1` at `:149`. `snap` at
+      `forgeward-scan.sh:321` is the same shape — the last definition in its file, no
+      later column-0 `}` at all, so the range runs to EOF and sweeps in whatever
+      top-level `exit`s follow;
     - matching `$(fn` finds only a substitution's **first** stage, so a function at the
       tail of a pipe (`out="$(printf … | normalize_manifest …)"`, `read_version`) is
       invisible;
@@ -251,9 +251,9 @@ commit that was fixing it — a line number cannot survive its own fix.
   lines at `forgeward-gate-check.sh:186-189` and has never been one — and it filed
   `check_root` under the one-liner overrun, which cannot be its mechanism because
   `check_root` closes at a column-0 brace like any other block. Its second version then
-  filed `snap` under that same overrun row, and `snap` is not that either: it is the
-  last definition in both its files with no later column-0 `}` anywhere, so it is the
-  EOF case, and removing it left `warn` as the row's only instance. So the table
+  filed `snap` under that same overrun row, and `snap` is not that either: it was then
+  the last definition in both its files with no later column-0 `}` anywhere (0.32.0's
+  workspace-guard rewrite removed the second), so it is the EOF case, and removing it left `warn` as the row's only instance. So the table
   explaining four wrong censuses has now been wrong three times on its own account, in
   the same row twice. That is the reason the remedy is a property and a method, not a
   better table: **prose describing a scan is a scan too, and nothing re-runs it.**

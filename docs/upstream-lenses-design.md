@@ -368,6 +368,11 @@ paths, while `git ls-files` covers only that subtree and prints paths relative t
   | other directory entry | `dir` |
   | a file that exists but cannot be read | `unreadable` |
 
+  Two shapes never reach the table (measured, git 2.34.1). A **submodule** whose gitfile is
+  broken makes `git status` itself fail with exit 128, so the guard cannot build a manifest and
+  exits 2. An untracked directory holding only a broken `.git` file is not listed by
+  `git status` at all, so there is no entry to record (§5.4).
+
 - **The hooks**: `core.hooksPath` as git resolves it for this worktree, and **every file in the
   effective hooks directory**, by name and content. Where gstack's wrapper owns `pre-push`,
   forgeward's enforcer is `pre-push.local` beside it (`forgeward-install-pre-push.sh`), so
@@ -393,7 +398,7 @@ content (`special`, `unreadable`), so the blind spot in §5.4 is shown on the ru
 
 | Difference | Line |
 |---|---|
-| a record only in the rebuilt manifest | a new path, hook file or marker |
+| a record only in the rebuilt manifest | a new untracked path, hook file or marker. A tracked path that was clean reads `changed: <path> (was clean, now '<XY>')`, never as a new path, so the delete advice below is not printed for it |
 | a record only in the snapshot | a path left the dirty set (a commit, checkout, stash, reset or delete took it), or a hook file or marker went away |
 | same key, different value | changed content, or kind, or status letters |
 | `HEAD` | moved, or switched branch |
@@ -440,8 +445,12 @@ Today's guard has two holes here, and both close:
 - **Reading entries.** NUL-delimited output is read with `read -r -d ''`, never captured into a
   variable, which would drop the NULs.
 - **Hashing.** Content is hashed by git and never captured with `$(…)`, which strips trailing
-  newlines. Paths without a newline go through one `git hash-object --no-filters --stdin-paths`
-  batch; that option has no `-z`, so each remaining path costs one process.
+  newlines. Every regular file goes through one `git hash-object --no-filters --stdin-paths`
+  batch, each path C-quoted: `\`, `"`, LF, CR and TAB escaped and the whole wrapped in `"`.
+  A raw path is not safe there even without a newline (measured, git 2.34.1): the option
+  C-unquotes a line that starts with `"` and strips a trailing CR, so it silently hashes a
+  different file, and one badly quoted line fails the whole batch. Quoting every path closes
+  both, and lets a path holding a newline into the same batch.
 - **No writes.** Nothing goes to the object store (no `-w`) or to the index
   (`--no-optional-locks`). `LC_ALL=C` is set as in every shipped script.
 - **Exits.** No function that can `exit` is called inside a command substitution (the CLAUDE.md
@@ -630,6 +639,9 @@ The guard's entries go into its header list, which stays the only maintained cop
   `.gitignore` is itself a dirty entry, so it is seen.
 - **Writes outside the repo,** including the installed plugin's own files, the `PreToolUse`
   hook script and the run directory.
+- **An untracked FIFO, or an untracked directory holding only a broken `.git` file.**
+  `git status` lists neither (measured), so neither has an entry. A FIFO standing where a
+  tracked file was is listed, and recorded as `special`.
 - **A symlink's target.** A link is recorded as its text, so a change to the file it points at
   is not seen. That is deliberate, since the link may point outside the repo.
 - **Inside a submodule or a nested repository,** only the checked-out commit is recorded. An
@@ -682,10 +694,11 @@ The guard's entries go into its header list, which stays the only maintained cop
 - **No gate-imposed deadline.** A reviewer that hangs holds the gate until the user cancels or
   interrupts it.
 
-**Cost.** `snapshot` and `check` each read every dirty and untracked file once, and spend one
-process per path containing a newline. A checkout with large files that are untracked but not
-ignored pays for them on every run; ignoring them removes the cost. On Git Bash, process creation
-dominates the run time.
+**Cost.** `snapshot` and `check` each read every dirty and untracked file once, in one
+`hash-object` batch. Measured twice on WSL2 with git 2.34.1: 5,000 small untracked files took 1.1–1.4 s
+each for `snapshot` and `check`, and one 200 MB untracked file 0.6–0.8 s each. A checkout
+with large files that are untracked but not ignored pays for them on every run; ignoring them
+removes the cost. On Git Bash, process creation dominates the run time.
 
 ### 5.5 Tests
 
@@ -728,7 +741,8 @@ dominates the run time.
   - a FIFO replacing a tracked file;
   - a dirty submodule;
   - an untracked nested repository;
-  - a nested repository with a broken gitfile, recorded as `unreadable`;
+  - a submodule with a broken gitfile. `git status` itself fails on it, so this one control
+    must exit 2 and name the git failure rather than exit 0 (§5.1);
   - an unreadable file. This one is skipped when running as root, where nothing is
     unreadable, and the skip is printed.
 - **The guard writes nothing.** `.git/index` is byte-identical before and after `snapshot` and

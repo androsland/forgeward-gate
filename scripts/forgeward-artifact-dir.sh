@@ -56,11 +56,20 @@ done
 
 # Never hand back a directory inside the repo under review, however TMPDIR is set.
 # Normalize the toplevel too: under Git Bash `git rev-parse --show-toplevel` answers in
-# Windows form (C:/Users/…), which would never textually match a POSIX $root.
+# Windows form (C:/Users/…), which would never textually match a POSIX $root. Then compare
+# PHYSICAL paths: a symlink alias or a `..` in the root passes a text comparison and lands
+# inside the tree, where the gate's own snapshot would read as a changed path every run.
+# A root that does not exist yet cannot be resolved, so it cannot be shown to be outside,
+# and creating it to find out could create it inside the repo: fall back to /tmp.
+phys() { (cd "$1" 2>/dev/null && pwd -P); }
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$top" ]; then
   top_posix="$(posixify "$top")"
   [ -n "$top_posix" ] && top="$top_posix"
+  top_phys="$(phys "$top")"
+  [ -n "$top_phys" ] && top="$top_phys"
+  root_phys="$(phys "$root")"
+  if [ -n "$root_phys" ]; then root="$root_phys"; else root=/tmp; fi
   case "$root/" in "${top%/}"/*) root=/tmp ;; esac
 fi
 
