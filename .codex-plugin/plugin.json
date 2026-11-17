@@ -1,6 +1,6 @@
 {
   "name": "forgeward",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "Enforced, read-only conformance gate plus opt-in local-container security audit and pentest skills.",
   "author": {
     "name": "forgeward"

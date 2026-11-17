@@ -2734,6 +2734,23 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **Step 2 checks the workspace on every exit, and the guard records what a push depends
+  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17; unmerged when this entry was
+  written, so check the tree before calling it merged.) PR 2 of the seven-PR upstream-lenses
+  stack (`docs/upstream-lenses-design.md` §5). Workspace guard v2 records a manifest with a
+  header and an end count: every `git status` entry by kind and content, the index, `HEAD`,
+  the stash, the hooks, `forgeward.gate`, this commit's run file and its markers.
+  `revoke_names` is shared byte-identically with the writer. Step 2 became the 2a–2d funnel,
+  with the run directory printed in one command and every reviewer accounted for by agent id,
+  and Step 3 became six rows with incomplete reported apart from FAIL.
+  `forgeward-artifact-dir.sh` contains by physical path. Building it found that the spec's
+  raw `hash-object --stdin-paths` batch hashes a different file for a `"`-led or CR-ending
+  path, and that a broken-gitfile submodule fails `git status` itself; §5 is corrected for
+  both. Pinned by P9b and W1–W49 in `test/gate-test.sh` and the 2a–2d and six-row assertions
+  in `test/dual-client-test.sh`, each guard with a mutation check. The two follow-ups the
+  spec filed are under `## Reviewers`: an interrupted run's leftovers, and the Codex model
+  pin.
+
 - **A PASS certifies the commits the reviewers were given, and every run withdraws the
   last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. Merged as
   #71 on 2026-11-17, merge commit `50aa301`, checked with `git merge-base --is-ancestor

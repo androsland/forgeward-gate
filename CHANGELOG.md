@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.32.0 — 2026-11-17
+
+### Upgrading
+
+- `forgeward-workspace-guard.sh snapshot` now takes the reviewed commit,
+  `snapshot <HEAD_SHA>`, and writes a v2 manifest. A bare `snapshot` exits 64, and `check`
+  on a snapshot from an earlier version exits 2. The gate takes its own snapshot on every
+  run, so nothing changes unless you call the guard yourself.
+
+### Changed
+
+- An edit made in the checkout while reviewers run now halts the gate, the same as a
+  reviewer's write: the guard cannot tell the two apart. Wait for the gate before editing,
+  or re-run it after.
+- A reviewer that returns no valid verdict line is reported as **incomplete**, apart from
+  findings, instead of FAIL. It still blocks the marker.
+- Step 2 waits for every launched reviewer by its agent id, and a launch receipt is never a
+  result. Cancelling while reviewers are pending stops them and still checks the workspace.
+
+### Fixed
+
+- The workspace guard saw only new untracked paths. It now also sees changed content in
+  dirty and untracked files, the index (skip-worktree and assume-unchanged flags included),
+  `HEAD` and its branch, the stash, `core.hooksPath` and every hook file, `forgeward.gate`,
+  and the reviewed commit's run file and markers.
+- The guard exited 0 outside a repository and read a missing or unreadable snapshot as
+  clean. Both exit 2 now.
+- Step 2 kept the snapshot path in a shell variable that does not survive between tool
+  calls. The run directory is now created and printed in one command.
+- A failed reviewer launch ended Step 2 without checking the workspace.
+- `forgeward-artifact-dir.sh` handed out a directory inside the repo when its root was a
+  symlink into the repo or walked back into it with `..`.
+
 ## 0.31.0 — 2026-11-16
 
 ### Upgrading
