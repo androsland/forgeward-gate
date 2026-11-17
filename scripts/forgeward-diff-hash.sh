@@ -204,7 +204,7 @@ snapshot_manifest() { # snapshot_manifest <path> <mode>
 #   - the function text in hunk headers, which a `diff.<driver>.xfuncname` in user config
 #     supplies for a driver the branch's `.gitattributes` selects.
 #   - output that differs between git versions (a gate and a push on different gits).
-diff_part="$(GIT_DIFF_OPTS= git \
+diff_part="$(GIT_DIFF_OPTS='' git \
   -c diff.relative=false -c diff.noprefix=false -c diff.mnemonicPrefix=false \
   -c diff.suppressBlankEmpty=false -c diff.interHunkContext=0 \
   -c diff.indentHeuristic=false -c core.quotePath=true \

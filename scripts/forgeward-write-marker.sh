@@ -94,7 +94,7 @@ full_id() { # full_id <label> <value>
   printf "forgeward: %s '%s' must be the full commit id Step 0 printed (40 or 64 lowercase hex characters).\n" "$1" "$2" >&2
   exit 64
 }
-mode=write
+mode='write'
 if [ "${1:-}" = "--revoke" ]; then
   [ "$#" -eq 2 ] || usage
   mode=revoke
