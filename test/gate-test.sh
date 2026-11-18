@@ -4212,10 +4212,10 @@ E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/for
 # =============================================================================
 # R1..R7 — the ported quality rubrics' drift check.
 #
-# forgeward's five quality reviewers are PORTS of gstack's Review Army specialist
+# forgeward's ported reviewers (the five quality reviewers and `targeted`) are PORTS of gstack's Review Army specialist
 # checklists, not runtime reads of them, so the axis works on a machine with no gstack
 # at all. The cost of a port is drift: gstack can improve a checklist and nothing here
-# would know. `forgeward-rubric-drift.sh` is the cheap closing of that loop — five
+# would know. `forgeward-rubric-drift.sh` is the cheap closing of that loop — a handful of
 # sha256 comparisons against files already on disk.
 #
 # THE VACUITY TRAP is the mirror image of E2's. This script's failure mode is not
@@ -4349,7 +4349,7 @@ esac
 # shipped tree (R14d is the same instrument for `skills/`). Everything above runs on a
 # synthetic fixture, so all six would pass unchanged if the real `agents/` directory
 # carried no provenance blocks at all and the drift check covered nothing. This counts
-# the real ported rubrics and requires all five — and it requires
+# the real ported rubrics and requires at least six: the five quality reviewers and `targeted` — and it requires
 # BOTH fields, because the script skips any reviewer missing either one and a
 # half-recorded port is silently unchecked rather than loudly broken.
 #
@@ -4374,13 +4374,13 @@ esac
 # reader tolerates what a checkout does to it on the way in. And keep it fixture-free:
 # every other assertion here drives a synthetic fixture, so R6 and R14d have to read the
 # SHIPPED tree with nothing in the path at all. Running the script over the real
-# agents/ would need a synthetic gstack root holding copies of the five real rubrics,
+# agents/ would need a synthetic gstack root holding copies of the real rubrics,
 # which reintroduces exactly the fixture dependence they exist to escape.
 _strict_provenance file "$PLUGIN"/agents/*-reviewer.md
 _r6n="$_sp_n"; _r6bad="$_sp_bad"
-[ "$_r6n" -ge 5 ] && [ -z "$_r6bad" ] \
+[ "$_r6n" -ge 6 ] && [ -z "$_r6bad" ] \
   && ok "drift: all $_r6n shipped ported rubrics record BOTH source-path and a 64-hex source-sha256 (the fixtures above are not the only thing covered)" \
-  || nok "drift R6: a ported rubric is not drift-checkable" "complete: $_r6n (expected >= 5) | half-recorded:${_r6bad:- none}"
+  || nok "drift R6: a ported rubric is not drift-checkable" "complete: $_r6n (expected >= 6) | half-recorded:${_r6bad:- none}"
 
 # R6b: THIRD-PARTY-LICENSES.md names the same port commit as each rubric's own header. A
 # re-port updates `source-commit` because the header comment says to, and the licence
@@ -4418,9 +4418,9 @@ elif [ -z "$_r6b_sec" ]; then
 else
   case "$_r6b_sec" in *"\`$_r6b_ac\`"*) ;; *) _r6b_bad="$_r6b_bad audit" ;; esac
 fi
-[ "$_r6b_n" -ge 5 ] && [ "$_r6b_n" -eq "$_r6n" ] && [ -z "$_r6b_bad" ] \
+[ "$_r6b_n" -ge 6 ] && [ "$_r6b_n" -eq "$_r6n" ] && [ -z "$_r6b_bad" ] \
   && ok "drift: all $_r6b_n ported rubrics' and the audit's source-commit appear in THIRD-PARTY-LICENSES.md (a re-port cannot leave the licence file on the old commit)" \
-  || nok "drift R6b: THIRD-PARTY-LICENSES.md disagrees with a ported file's source-commit" "checked: $_r6b_n (expected >= 5 and = R6's $_r6n) | mismatched:${_r6b_bad:- none}"
+  || nok "drift R6b: THIRD-PARTY-LICENSES.md disagrees with a ported file's source-commit" "checked: $_r6b_n (expected >= 6 and = R6's $_r6n) | mismatched:${_r6b_bad:- none}"
 
 # R7: the two sha256 arms agree. CLAUDE.md's rule is one reader per shape and this
 # script has two — `sha256sum` and `shasum -a 256` — allowed only because a digest has a
@@ -4649,7 +4649,7 @@ case "$_r13c" in
 esac
 
 # R14: A PORTED SKILL IS DRIFT-CHECKED, AND IT IS NAMED BY ITS DIRECTORY.
-# `skills/audit/` is a port of gstack's /cso audit phases, taken the same way the five
+# `skills/audit/` is a port of gstack's /cso audit phases, taken the same way the
 # reviewer rubrics were and carrying the same provenance block — but the loop globbed
 # `agents/*-reviewer.md` and nothing else, so the largest ported artefact in the repo
 # was unchecked while the script printed a confident count of everything it did check.
@@ -4756,7 +4756,7 @@ esac
 # This pins pass 2 of the root scan — the fallback that runs when NO candidate holds
 # every landmark. Candidate-major is the shorter way to write it and it is wrong: a
 # `cso`-only root that sorts earlier would shadow a `review/specialists` root that sorts
-# later, and the five reviewer rubrics would then all report `no longer exist`. Nothing
+# later, and every reviewer rubric would then report `no longer exist`. Nothing
 # else here goes red on that, which is what makes this load-bearing rather than a
 # restatement of R14b.
 #
@@ -5664,7 +5664,7 @@ else
         "writing tools:${_a30_bad:- none} | tools enumerated: $_a30_n (expected >= 3)$([ "$_a30_n" -eq 0 ] && { [ "$_a30_key" -gt 0 ] && echo ' | the allowed-tools key IS present but not as a block sequence, so this reader saw none of it' || echo ' | the allowed-tools key is ABSENT, which grants EVERY tool'; })"
   fi
 
-  # A31: the port records where it came from. Same two fields the five ported reviewers
+  # A31: the port records where it came from. Same two fields the ported reviewers
   # carry (assertion R6's subject), for the same reason — without both, re-porting after
   # an upstream change is guesswork.
   #

@@ -14,10 +14,11 @@ full.
 
 **Upstream:** <https://github.com/garrytan/gstack>
 
-The checklist body of each file below — from its `## Categories` heading to end of file —
-is copied verbatim from the corresponding `review/specialists/*.md` in that repo, at the
-commit in the table. The files are re-ported one at a time as upstream moves, so they need
-not share a commit. Each file's own provenance comment carries the exact `source-path`,
+The checklist body of each file below — everything after upstream's first `---` separator
+line, to end of file: from the `## Categories` heading for the five quality reviewers, and
+from the preamble that begins "Read-only:" for `targeted-reviewer` — is copied verbatim
+from the corresponding `review/specialists/*.md` in that repo, at the commit in the table.
+The files are re-ported one at a time as upstream moves, so they need not share a commit. Each file's own provenance comment carries the exact `source-path`,
 `source-commit` and `source-sha256`, and is the authority if this table ever disagrees.
 
 | File in this repo | Upstream path | Ported at commit |
@@ -26,11 +27,12 @@ not share a commit. Each file's own provenance comment carries the exact `source
 | `agents/data-migration-reviewer.md` | `review/specialists/data-migration.md` | `9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6` |
 | `agents/maintainability-reviewer.md` | `review/specialists/maintainability.md` | `47d639abffa882b8cbb641d7d1dedf08ecada9ec` (0.30.0) |
 | `agents/performance-reviewer.md` | `review/specialists/performance.md` | `9ca8f1d7a9386312d07ce2f40b9b89cf7f62c3e6` |
+| `agents/targeted-reviewer.md` | `review/specialists/targeted.md` | `0ead11c8e20a82e249f36c3abf89599dfe602324` (0.33.0) |
 | `agents/testing-reviewer.md` | `review/specialists/testing.md` | `47d639abffa882b8cbb641d7d1dedf08ecada9ec` (0.30.0) |
 
-Everything else in those five files — the scoping instructions, the read-only contract, the
+Everything else in those six files — the scoping instructions, the read-only contract, the
 forgeward severity floors, the verdict line, the "Reading the ported checklist" section that
-translates gstack's pipeline vocabulary in two of them, and the provenance block itself — is
+translates gstack's pipeline vocabulary in three of them, and the provenance block itself — is
 forgeward's own and is covered by [LICENSE](LICENSE), not by the notice below.
 
 ```

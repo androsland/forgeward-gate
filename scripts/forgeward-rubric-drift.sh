@@ -6,7 +6,7 @@
 # and always exits 0.
 #
 # WHY THIS EXISTS. forgeward's quality reviewers (maintainability, testing,
-# performance, api-contract, data-migration) are ports of gstack's Review Army
+# performance, api-contract, data-migration) and `targeted` are ports of gstack's Review Army
 # specialist checklists, and `skills/audit/` is a port of gstack's `/cso` audit
 # phases — all taken under MIT with the source commit and a sha256 recorded in the
 # ported file. A port removes the runtime dependency — forgeward reviews quality and
@@ -185,7 +185,7 @@ else
 fi
 
 # TWO LANDMARKS AND TWO PASSES. A candidate qualifies as a gstack checkout if it holds
-# `review/specialists` (where the five reviewer rubrics come from) or `cso` (where the
+# `review/specialists` (where the reviewer rubrics come from) or `cso` (where the
 # audit phases come from). Pass 1 takes the first candidate holding ALL of them, so a
 # checkout that can answer every ported artefact always beats one that can answer some.
 # Pass 2 is the fallback for a genuinely partial machine, and it is landmark-major

@@ -65,6 +65,7 @@ privacy-reviewer
 security-reviewer
 seo-reviewer
 supply-chain-reviewer
+targeted-reviewer
 testing-reviewer"
 actual_reviewers="$(for reviewer_file in "$PLUGIN"/agents/*-reviewer.md; do
   frontmatter_value "$reviewer_file" name
@@ -324,6 +325,51 @@ case "$gate_step2|$audit_policy" in
   *) nok "other-runtime fallback policy" ;;
 esac
 
+# 0.33.0: targeted-reviewer (docs/upstream-lenses-design.md §6, §7.2, §7.4). Its verdict
+# rests on reads beyond the hunk, so it is the one rubric told to read the reviewed commit
+# and never the working tree. Every literal below is read from the forgeward-authored part
+# of the file, above the separator line that opens the ported body, so upstream's own text
+# cannot satisfy an assertion here. flat() folds line wrapping, so a re-wrap of the prose
+# does not redden them; a reworded rule does.
+flat() { tr '\n' ' ' | tr -s ' '; }
+TARGETED="$PLUGIN/agents/targeted-reviewer.md"
+tr_own="$(awk '/^---$/ { c++ } c >= 3 { exit } { print }' "$TARGETED" 2>/dev/null | flat)"
+[ "${#tr_own}" -ge 2000 ] && has "$tr_own" '`git show <HEAD_SHA>:<path>` reads a file' \
+  && ok "targeted-reviewer reads every line it cites with git show at <HEAD_SHA>" \
+  || nok "targeted reviewed-commit read instruction" "own-bytes=${#tr_own}"
+has "$tr_own" 'not the working tree, inside the diff and outside it.' \
+  && ok "targeted-reviewer's reviewed-commit rule covers the changed files, not only the rest of the repo" \
+  || nok "targeted reviewed-commit scope"
+has "$tr_own" 'no `checkout`, `switch`, `restore`, `reset`, `stash`, `worktree`, `clean` or `commit`.' \
+  && ok "targeted-reviewer forbids every git command that changes state" \
+  || nok "targeted forbidden git commands"
+tr_override='This Severity section overrides the checklist body'"'"'s own severity sentences, its CRITICAL-floor paragraph and its Forced-CRITICAL paragraph. Do not open `review/checklist.md` or any other gstack file, even where one is installed. The Forced-CRITICAL classes are the three listed above.'
+has "$tr_own" "$tr_override" \
+  && ok "targeted-reviewer carries the severity override sentence word for word" \
+  || nok "targeted severity override sentence"
+has "$tr_own" '`TARGETED VERDICT: PASS` if zero Critical and zero High, otherwise `TARGETED VERDICT: FAIL`.' \
+  && has "$tr_own" 'return `TARGETED VERDICT: FAIL`' \
+  && ok "targeted-reviewer ends on one TARGETED VERDICT line, and an unreadable diff or commit is FAIL" \
+  || nok "targeted verdict line"
+has "$tr_own" '## Reading the ported checklist' && has "$tr_own" 'the Severity section wins.' \
+  && ok "targeted-reviewer maps the ported body's vocabulary and says its own Severity section wins" \
+  || nok "targeted reading-the-checklist section"
+tr_ng_ok=true; tr_ng_miss=""
+for needle in '`tokens.css`' '`pricing.mdx`' 'a repo'"'"'s `CLAUDE.md` or `AGENTS.md`' \
+    '`MAX = 50`' '**nothing**' 'not checked out' 'gitlink'; do
+  has "$tr_own" "$needle" || { tr_ng_ok=false; tr_ng_miss="$tr_ng_miss [$needle]"; }
+done
+[ "$tr_ng_ok" = true ] \
+  && ok "targeted-reviewer writes in the must-not-fire and cannot-see non-goals" \
+  || nok "targeted non-goals" "missing:$tr_ng_miss"
+# The read-only paragraph is carried verbatim from an existing reviewer (§6). Derived from
+# that reviewer, never copied here, with a floor so two empty extractions cannot agree.
+ro_para() { awk '/^\*\*Read-only means the filesystem too/ { f = 1 } f && /^$/ { exit } f { print }' "$1"; }
+ro_m="$(ro_para "$PLUGIN/agents/maintainability-reviewer.md")"
+ro_t="$(ro_para "$TARGETED" 2>/dev/null)"
+[ "${#ro_m}" -ge 400 ] && [ "$ro_t" = "$ro_m" ] \
+  && ok "targeted-reviewer carries the read-only paragraph byte for byte from an existing reviewer" \
+  || nok "targeted read-only paragraph" "maintainability-bytes=${#ro_m} targeted-bytes=${#ro_t}"
 # Package routing for a fresh install: the Codex manifest names only the Codex event
 # file. This proves the package contract, not how Codex treats old global trust state.
 claude_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/hooks.json")"

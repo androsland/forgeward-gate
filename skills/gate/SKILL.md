@@ -272,10 +272,11 @@ gstack as the owner of this axis, and do not tell the user to run `/review` befo
 merging.** All three were correct until this release and all three are now false.
 
 Their checklists are ports of gstack's Review Army specialists, taken under MIT with the
-source commit and a sha256 recorded in each `agents/*-reviewer.md`. That is a fork, so it
-drifts. Run the drift check — it is a handful of sha256 comparisons against files already
-on disk (the five reviewers and `/forgeward:audit`), it prints nothing when there is no
-news, and it always exits 0:
+source commit and a sha256 recorded in each `agents/*-reviewer.md`. So is
+`targeted-reviewer`'s, which sits outside this axis: it owns money, gate, auth and secret
+code. A port is a fork, so it drifts. Run the drift check — it is a handful of sha256
+comparisons against files already on disk (the ported reviewers and `/forgeward:audit`),
+it prints nothing when there is no news, and it always exits 0:
 
 ```bash
 "<forgeward-root>/scripts/forgeward-rubric-drift.sh"
@@ -470,6 +471,7 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
 `forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`,
+`forgeward:targeted-reviewer`,
 `forgeward:maintainability-reviewer`, `forgeward:testing-reviewer`,
 `forgeward:performance-reviewer`, `forgeward:api-contract-reviewer`,
 `forgeward:data-migration-reviewer`). The selected plugin agent supplies the complete

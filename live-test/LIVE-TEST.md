@@ -47,7 +47,7 @@ cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
 ```
 
 **Verify it actually loaded (all four):**
-- `/plugin` → `forgeward` is enabled and its detail view lists 11 reviewer agents (five of them the ported quality reviewers §5c exercises), the `gate`, `audit` and `ci-gate` skills, and hooks.
+- `/plugin` → `forgeward` is enabled and its detail view lists 12 reviewer agents (six of them ports, which §5c exercises: the five quality reviewers and `targeted`), the `gate`, `audit` and `ci-gate` skills, and hooks.
 - `claude plugin list` → shows `forgeward`.
 - `claude plugin details forgeward` → lists a **PreToolUse / Bash** hook and a **UserPromptExpansion / ship** hook.
 - Type `/forgeward:gate` → it autocompletes.

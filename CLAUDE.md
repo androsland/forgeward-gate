@@ -360,7 +360,7 @@ commit that was fixing it — a line number cannot survive its own fix.
   at that severity **regardless of what the JSON says**, with an explicit "do not promote one
   because the consequence sounds severe".
 - **A11y's blocking surface was widened DELIBERATELY at 0.14.0, and it is the one place
-  this repo has done that.** Two classes now qualify as High on their own: an accessible
+  this repo has widened an existing reviewer's.** Two classes now qualify as High on their own: an accessible
   name that is WRONG rather than missing, and any text below AA contrast. The old rubric
   said "a real barrier that blocks a user from completing a task", which reads a
   wrong-but-present name as Low — the user does complete the task, they are simply told
@@ -374,6 +374,11 @@ commit that was fixing it — a line number cannot survive its own fix.
   and must be reported as "unmeasured, needs a rendered check" rather than as a High. A
   vendor's documented value is not evidence for that third case: one shipped UA rule for
   disabled input text predicts ~2.0:1 where the engine paints 7.57:1.
+  `targeted-reviewer` (0.33.0) is not a second instance: it is a new reviewer with a new
+  remit, not an existing one widened. Its no-downgrade Critical for uncapped spend is
+  upstream's own rule. Its High for a skipped or deleted enforcement test whose guard
+  survives is deliberately stricter than upstream's wording
+  (`docs/upstream-lenses-design.md` §7.2).
 - **Do not disclose an axis as unowned in the same run that just scanned for it.** The
   rejected alternative to the Low pin was announcing `build-config` as covered by nothing
   while the reviewer was finding instances of it — a worse lie than the silence it replaces.
@@ -398,6 +403,8 @@ commit that was fixing it — a line number cannot survive its own fix.
   someone re-ports it. `scripts/forgeward-rubric-drift.sh` detects that gstack moved; it
   cannot make anyone act, and it is blind on a machine with no gstack — which is exactly
   the machine the port exists to serve, so its silence there is not a clean bill.
+  The same holds for `targeted-reviewer` (0.33.0), which is ported and drift-checked the
+  same way but owns no part of this axis: its remit is money, gate, auth and secret code.
 - **`supply-chain-reviewer` owns dependency CVEs, install-time scripts and lockfile
   integrity outright (0.23.0). Never re-key any of the five classes on whether gstack's
   `/cso` is installed, and never restore a `DEFERRED`/`FULL` mode.** Detection sees
