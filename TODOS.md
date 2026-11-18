@@ -1067,7 +1067,10 @@ themselves so that none of them requires the commit to be actionable.
   dirty tree, the context a finding rests on can be code that is not in the reviewed
   commit. **What would settle it:** tell reviewers to read context with
   `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
-  read files from disk). **Priority:** P3
+  read files from disk). **0.33.0:** `targeted-reviewer` already reads every line it cites
+  at `<HEAD_SHA>` and is forbidden git commands that change state (spec §7.2), because its
+  verdict rests on reads beyond the hunk. The entry stays open for every other reviewer,
+  which still reads the checkout. **Priority:** P3
 - **An interrupted gate run's leftovers become the next run's baseline.** (upstream-lenses
   spec §5.4, hole review of the PR 2 revision, 2026-11-17) The user interrupting a gate
   skips the workspace check, and a reviewer still running afterwards can write into the
@@ -2820,9 +2823,25 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **`targeted` is ported: money, gate, auth and secret code get a reviewer of their own.**
+  (0.33.0, branch `feat/targeted-reviewer`, 2026-11-18; unmerged when this entry was
+  written, so check the tree before calling it merged.) PR 3 of the seven-PR
+  upstream-lenses stack (`docs/upstream-lenses-design.md` §7). `agents/targeted-reviewer.md`
+  carries gstack `0ead11c8`'s checklist verbatim under forgeward's own scope, severity and
+  output sections. Step 1 fires it from a table row; Step 1d classifies the diff into money,
+  gate, auth and secret on added and deleted lines, by what a file does, and fails closed to
+  all four. Step 2b passes the classes to this reviewer only and now passes privacy its
+  posture; the marker carries the bare `targeted`. The reviewer reads every cited line at
+  `<HEAD_SHA>` and is forbidden git commands that change state. `dual-client-test.sh` pins
+  the enumeration, Step 1d, the launch context, the bare name and the reviewer's
+  reviewed-commit rule and override sentence, each with a mutation check; R6 and R6b floors
+  are six. LIVE-TEST §5c gains `targeted`'s negative control (Run A), a positive control
+  and a dirty-tree leg (Run C). Spec reconciled first, with two hole reviews (§7.5, §7.6).
+  Deferred: the working-tree read for every other reviewer stays open in `## Reviewers`.
+
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
-  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17; unmerged when this entry was
-  written, so check the tree before calling it merged.) PR 2 of the seven-PR upstream-lenses
+  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge
+  commit `08dea59`, checked with `git merge-base --is-ancestor 08dea59 origin/master`.) PR 2 of the seven-PR upstream-lenses
   stack (`docs/upstream-lenses-design.md` §5). Workspace guard v2 records a manifest with a
   header and an end count: every `git status` entry by kind and content, the index, `HEAD`,
   the stash, the hooks, `forgeward.gate`, this commit's run file and its markers.

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.33.0 — 2026-11-18
+
+### Added
+
+- `targeted-reviewer`, ported from gstack's `targeted` specialist: a read-only reviewer for
+  money, gate, auth and secret code. It fires when the diff touches spend or its caps, a CI
+  or verdict gate, an identity or permission check, or a secret, and it reads deleted lines
+  as closely as added ones. Uncapped spend, an auth bypass from a less-privileged entry
+  point, and a secret written where it leaves the machine are Critical. Every control it
+  relies on is cited from the reviewed commit, never from the working tree.
+
+### Changed
+
+- A diff touching money, gate, auth or secret code runs one more reviewer. A provider-side
+  budget does not lower its uncapped-spend Critical, and a skipped or deleted test on an
+  enforcement path is High even when the guard it covered is intact.
+- The firing line prints `targeted` with the classes it fired on, as
+  `targeted(money,secret)`. The pass marker and the PASS report carry the bare `targeted`.
+- Step 2b now passes `privacy-reviewer` the site posture of each route group it covers, as
+  Step 1a always said it did, and passes `targeted-reviewer` its classes. No other reviewer
+  gets either.
+
 ## 0.32.0 — 2026-11-17
 
 ### Upgrading

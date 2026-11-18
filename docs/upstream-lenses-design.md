@@ -2,7 +2,7 @@
 
 **Status:** approved 2026-11-16, after two hole reviews; §5 revised 2026-11-17 for PR 2,
 after two more (§5.6); §6, §7 and §12 reconciled with the merged PRs 1 and 2 on 2026-11-18
-for PR 3, after two more (§7.5, §7.6); **the §7 revision awaits the maintainer** ·
+for PR 3, after two more (§7.5, §7.6); the §7 revision approved by the maintainer on 2026-11-18 ·
 **Date:** 2026-11-14 ·
 **Targets:** 0.31.0 – 0.37.0 (a seven-PR stack) · **Upstream pinned:** gstack
 `0ead11c8e20a82e249f36c3abf89599dfe602324`

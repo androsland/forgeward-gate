@@ -5,6 +5,58 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — `targeted` is ported, and it reads the reviewed commit
+
+**Date:** 2026-11-18 · **Version:** 0.33.0
+
+**What was missing.** Money, gate, auth and secret code had no reviewer of its own.
+`security-reviewer` covers auth and secrets inside a broad rubric, and
+`ai-output-reviewer` covers cost safety for an LLM call only. A retry loop around a paid
+search API, or a CI job made `continue-on-error`, reached no blocking rule anywhere in the
+gate.
+
+**What changed.** `agents/targeted-reviewer.md` ports gstack's `targeted` specialist
+verbatim from `0ead11c8`, under forgeward's own scope, severity and output sections
+(`docs/upstream-lenses-design.md` §6 and §7). Step 1 fires it from a new table row, and a
+new Step 1d classifies the diff into four classes, read on added and deleted lines alike.
+A file is classified by what it does: a reviewer prompt, a rule file or a hook
+registration is gate code whatever its extension. Step 2b passes the classes to this
+reviewer only, as a scope hint. It now also names privacy's site posture beside them,
+which Step 1a always promised and 2b's two lists omitted. The marker's fired list and the
+PASS report carry the bare `targeted`, because `targeted(money,secret)` would split on its
+comma into two entries that name no reviewer.
+
+**Where it departs from upstream, deliberately.**
+
+- **It reads the reviewed commit, not the working tree.** Its verdict rests on controls
+  found outside the hunk, so a cap that exists only in an uncommitted edit would turn a
+  Critical into a PASS. Every line it cites comes from git at `<HEAD_SHA>`. Git commands
+  that change state are forbidden, because the workspace guard cannot undo a
+  `checkout <HEAD_SHA> -- <path>`, cannot see a `stash` that was popped before it looked,
+  and does not watch `.git/worktrees`. The other reviewers still read the checkout
+  (TODOS.md, P3).
+- **A skipped or deleted enforcement test is High even when its guard survives.** Upstream
+  asks for the test to go "together with the guard it covered".
+- **An outside-repository control lowers a High to Medium only with in-repo evidence that
+  covers the changed path, and it never lowers a Critical.** A provider console budget does
+  not demonstrate a cap on this path. The no-downgrade rule for uncapped spend is
+  upstream's own.
+- **A class line with nothing to enforce passes in one sentence**, so a constant-price
+  endpoint does not fail on its vocabulary.
+
+**Rejected: folding the four classes into `security-reviewer`.** That is the 0.17.0 case
+that declined gstack's `security` specialist, a second full rubric on one axis. `targeted`
+is narrower: four classes, deletion first, every changed value followed to its control,
+in an isolated context. Overlapping findings print under both axes, and nothing dedupes
+them.
+
+**What it does not buy.** Step 1's classification is model judgement. Non-LLM spend and
+gate logic written without the class vocabulary are seen by nothing if Step 1 misses them,
+and both non-goal lists are written into Step 1d and the reviewer. The port is a
+snapshot: it is drift-checked like the five quality ports, and the drift check is blind on
+a machine with no gstack. `targeted` is not a quality reviewer, so Step 1c's quality
+prose still counts five. `red-team` is next, in 0.34.0 (§8).
+
 ## DECISION — Step 2 is one funnel, and the workspace guard records what a push depends on
 
 **Date:** 2026-11-17 · **Version:** 0.32.0
