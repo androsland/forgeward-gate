@@ -2400,7 +2400,10 @@ else
 fi
 WSUB="$TMP/wguard-sub"; mkrepo "$WSUB"; ( cd "$WSUB" && git commit -q --allow-empty -m s ) >/dev/null 2>&1
 wg -c protocol.file.allow=always submodule add -q "$WSUB" sm; wg commit -qm sub
-( cd "$WG/sm" && git commit -q --allow-empty -m dirty ) >/dev/null 2>&1
+# The submodule is a fresh clone with no repo-local identity, so the commit names one itself:
+# CI has no global identity, and without it the commit fails silently and the fixture is clean.
+git -C "$WG/sm" -c user.email=t@t.t -c user.name=t -c commit.gpgsign=false \
+  commit -q --allow-empty -m dirty >/dev/null 2>&1
 case "$(git -C "$WG" status --porcelain)" in *" M sm"*) wwedge "W32: a dirty submodule" ;;
   *) nok "W32: the fixture did not produce a dirty submodule" "$(git -C "$WG" status --porcelain | tr '\n' ' ')" ;; esac
 mkrepo "$WG/nested"; ( cd "$WG/nested" && git commit -q --allow-empty -m n ) >/dev/null 2>&1
