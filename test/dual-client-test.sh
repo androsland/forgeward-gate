@@ -370,6 +370,52 @@ ro_t="$(ro_para "$TARGETED" 2>/dev/null)"
 [ "${#ro_m}" -ge 400 ] && [ "$ro_t" = "$ro_m" ] \
   && ok "targeted-reviewer carries the read-only paragraph byte for byte from an existing reviewer" \
   || nok "targeted read-only paragraph" "maintainability-bytes=${#ro_m} targeted-bytes=${#ro_t}"
+# 0.33.0: Step 1 fires targeted-reviewer from a table row and classifies the diff in
+# Step 1d, which sits after Step 1c's subsections and directly before Step 2. 2b hands
+# the classes to that reviewer only, and privacy's posture to privacy only; the marker and
+# the PASS report carry the bare name (docs/upstream-lenses-design.md §7.1).
+gate_step1="$(sed -n '/^## Step 1 — /,/^## Step 2 — /p' "$SKILL_GATE")"
+gate_1d="$(sed -n '/^### Step 1d — targeted classes$/,/^## Step 2 — /p' "$SKILL_GATE")"
+has "$gate_step1" '| `targeted-reviewer` |' \
+  && ok "Step 1's table fires targeted-reviewer" \
+  || nok "Step 1 table fires targeted-reviewer"
+n1d="$(grep -c -- '^### Step 1d — targeted classes$' "$SKILL_GATE")"
+at1d="$(awk 'index($0, "### Step 1d — targeted classes") == 1 { print NR; exit }' "$SKILL_GATE")"
+atcfg="$(awk 'index($0, "### The config was read") == 1 { print NR; exit }' "$SKILL_GATE")"
+at2="$(awk 'index($0, "## Step 2 — ") == 1 { print NR; exit }' "$SKILL_GATE")"
+next_head="$(awk -v a="${at1d:-0}" 'NR > a && /^##/ { print NR; exit }' "$SKILL_GATE")"
+[ "$n1d" -eq 1 ] && [ -n "$at1d" ] && [ -n "$atcfg" ] && [ -n "$at2" ] \
+  && [ "$at1d" -gt "$atcfg" ] && [ "$next_head" = "$at2" ] \
+  && ok "Step 1d appears once, after Step 1c's subsections and directly before Step 2" \
+  || nok "Step 1d placement" "n=$n1d at=${at1d:-none} config=${atcfg:-none} next=${next_head:-none} step2=${at2:-none}"
+d1_ok=true; d1_miss=""
+for needle in '**added and deleted**' '- **money:**' '- **gate:**' '- **auth:**' '- **secret:**' \
+    'by what it does, not by its extension' 'That exemption is from the gate class only.' \
+    '`targeted(money,gate,auth,secret)`' '`targeted(money,secret)`' '**scope hint**' \
+    'the bare `targeted`' '**Must NOT fire on:**' '`tokens.css`' '`pricing.mdx`' \
+    '**Structurally cannot see:**' '`MAX = 50`' 'gitlink'; do
+  has "$gate_1d" "$needle" || { d1_ok=false; d1_miss="$d1_miss [$needle]"; }
+done
+[ "$d1_ok" = true ] \
+  && ok "Step 1d reads added and deleted lines, classifies by function, fails closed to all four classes, prints them, and states its non-goals" \
+  || nok "Step 1d contract" "missing:$d1_miss"
+fire_example="$(grep -m1 -F -- '`Surfaces: ' "$SKILL_GATE")"
+has "$fire_example" 'targeted(money,secret)' \
+  && ok "the Step 1 firing-decision example prints targeted with its classes" \
+  || nok "firing-decision example prints targeted's classes" "line=$fire_example"
+b_open="$(between "$gate_2b" 'The launch context is intentionally small.' 'For each fired reviewer' | flat)"
+has "$b_open" 'The reviewer each one concerns also gets its Step 1 classification, and no other reviewer does: `privacy-reviewer` the site posture of each route group it covers (Step 1a), and `targeted-reviewer` its classes (Step 1d).' \
+  && ok "2b's opening paragraph gives privacy its posture and targeted its classes, and no other reviewer either" \
+  || nok "2b opening paragraph classification sentence" "bytes=${#b_open}"
+b_codex="$(between "$gate_2b" 'The prompt must also carry' 'Do not paraphrase' | flat)"
+has "$b_codex" 'and, for `privacy-reviewer` and `targeted-reviewer` only, that classification.' \
+  && ok "2b's Codex prompt carries that classification for privacy and targeted only" \
+  || nok "2b Codex must-also-carry classification" "bytes=${#b_codex}"
+row6="$(between "$gate_step3" '**6. Every fired reviewer returned PASS**' 'Then hand off' | flat)"
+has "$row6" 'Each entry in the fired list is a bare reviewer name, and so is each name in the PASS report below: `targeted`, never `targeted(money,secret)`' \
+  && ok "Step 3 gives the marker writer and the PASS report the bare targeted, never its classes" \
+  || nok "Step 3 row 6 bare targeted" "bytes=${#row6}"
+
 # Package routing for a fresh install: the Codex manifest names only the Codex event
 # file. This proves the package contract, not how Codex treats old global trust state.
 claude_event="$(jq -r '.hooks | keys | sort | join(",")' "$PLUGIN/hooks/hooks.json")"

@@ -347,7 +347,8 @@ commit that was fixing it — a line number cannot survive its own fix.
   skill must make the same runtime choice explicitly. Gate launch prompts carry only the
   complete rubric, absolute repository/plugin roots, the exact base ref with the base and
   head commits Step 0 froze, the site posture when privacy fires on a `private-shareable`
-  group, read-only instruction and verdict format. Do not pass the parent conversation or a
+  group, `targeted`'s classes when it fires (each hint to its own reviewer only),
+  read-only instruction and verdict format. Do not pass the parent conversation or a
   suspected finding: inheritance raises both cost and anchoring risk. An unknown runtime
   keeps the existing fail-closed Gate fallback; Audit keeps its labeled self-verification
   fallback.
