@@ -8,6 +8,8 @@ allowed-tools:
   - Glob
   - Agent
   - Skill
+  - TaskStop
+  - ToolSearch
 ---
 
 # /forgeward:gate — the enforced conformance gate
@@ -381,6 +383,14 @@ that the owner ran. The `deep-audit` clause above says exactly that and nothing 
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
+Step 2 has four parts: **2a** starts the run, **2b** launches the reviewers, **2c**
+accounts for every one of them, and **2d** checks the workspace once. Step 3 decides on
+what they produce. Every path through Step 2 that gets past 2a's snapshot, and is not
+interrupted, ends at 2d's check: a reviewer that started may have written into the repo,
+and only that check can see it.
+
+### 2a — Start the run
+
 **First, start this run on the reviewed commit.** `--revoke` records a new run id for
 `<HEAD_SHA>`, and both push hooks accept a marker only while its run id is the one
 recorded for the commit it reviewed, so every earlier PASS for this commit, under any
@@ -403,19 +413,45 @@ could not be listed, or this run could not be recorded; the writer says which, a
 no `RUN_ID`. Print its message verbatim and stop with
 `forgeward gate: could not start this gate run cleanly (the reason is above), so an earlier PASS may still authorize a push. Nothing was reviewed.`
 
-**Before spawning anything**, snapshot the working tree so the read-only contract can
-be checked rather than assumed. Keep the snapshot OUTSIDE the repo:
+**Then create this run's directory**, outside the repo, and print its path in the same
+command. A shell variable does not survive into a later command (see Runtime
+compatibility), so every later command writes the printed path literally:
 
 ```bash
-ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")"
-"<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot > "$ART/tree-before.txt"
+ART="$("<forgeward-root>/scripts/forgeward-artifact-dir.sh")" || exit 1
+RUN_DIR="$(mktemp -d "$ART/run.XXXXXX")" || exit 1
+printf 'RUN_DIR=%s\n' "$RUN_DIR"
 ```
 
-Resolve the repository root once as well (Step 0 already froze the commits):
+Record the printed path exactly; wherever this skill says `<RUN_DIR>`, write it. **Never
+give `<RUN_DIR>` to a reviewer:** it holds the baseline 2d compares against, and a
+reviewer holding Bash could rewrite it. Non-zero, or no `RUN_DIR=` line: print the
+message and stop with
+`forgeward gate: could not create this run's directory outside the repo (the reason is above). Nothing was reviewed; the earlier PASS for this commit was already withdrawn.`
+
+**Then record the workspace**, before anything is launched:
 
 ```bash
-REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+"<forgeward-root>/scripts/forgeward-workspace-guard.sh" snapshot "<HEAD_SHA>" > "<RUN_DIR>/snapshot"
 ```
+
+Print anything it writes to stderr: a coverage note names each entry it recorded without
+its content. Non-zero (2 when `HEAD` moved since Step 0 or git failed, 64 for an id that
+is not a full commit id): print its message and stop with
+`forgeward gate: could not record the workspace before review (the reason is above). Nothing was reviewed; the earlier PASS for this commit was already withdrawn.`
+
+These three stops, and an interrupt, are the only ways out of Step 2 that skip the
+check. Nothing has been launched yet, so there is nothing to check for.
+
+Resolve the repository root once as well (Step 0 already froze the commits). A shell
+variable does not survive into a later tool call, so print it and record the path it
+prints exactly as `<REPOSITORY_ROOT>`:
+
+```bash
+git rev-parse --show-toplevel
+```
+
+### 2b — Launch
 
 The launch context is intentionally small. Every reviewer gets its complete applicable
 rubric, the absolute repository root, the resolved forgeward root when the rubric needs
@@ -447,19 +483,26 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `<forgeward-root>/agents/<reviewer>.md`. Pass the resolved absolute
   `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
   any plugin-root expression in the rubric; normal Codex shell commands do not inherit
-  the plugin hook environment. The prompt must also carry `$REPOSITORY_ROOT`, `<base>`,
+  the plugin hook environment. The prompt must also carry `<REPOSITORY_ROOT>`, `<base>`,
   `<BASE_SHA>`, `<HEAD_SHA>`, `<BASE_SHA>...<HEAD_SHA>`, the read-only instruction, and
   the rubric's verdict format. Do not paraphrase or copy only part of the rubric into the
   prompt.
 
 In either runtime, tell each reviewer to review the diff of `<BASE_SHA>...<HEAD_SHA>`,
 and that wherever its rubric names the range `<base>...HEAD` it means that frozen range;
-pass `<base>` exactly as Step 0 produced it. If the runtime cannot spawn the required
-reviewers with the explicit runtime policy above, stop without writing a marker; an
-unmeasured axis cannot return PASS. A reviewer that did start may have written one, so
-once it has finished, withdraw it with
-`"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"` exactly as
-Step 3's FAIL path does.
+pass `<base>` exactly as Step 0 produced it. Never pass `<RUN_DIR>`.
+
+**Record every agent id the runtime returns.** Only output from a recorded id counts (2c).
+
+- **Claude Code** launches the whole batch in one message, so every launch in it has
+  already run. Record the id from each launch receipt.
+- **Codex** launches one at a time. After a failed launch, launch no more; the reviewers
+  left unlaunched are **not-started**.
+
+**If a launch fails**, or the runtime cannot spawn the required reviewers with the
+explicit runtime policy above: stop every reviewer that did start (2c), mark the run
+**launch-failed**, and go to 2c. An unmeasured axis cannot return PASS, and a reviewer
+that did start may have written into the repo, so the run still ends at 2d's check.
 This is also the fallback for any other runtime, preserving the existing fail-closed
 reviewer-launch behavior.
 
@@ -467,53 +510,165 @@ reviewer-launch behavior.
 batch is at least three reviewers wide. That is the intended cost: the quality axis used
 to be free because nothing ran it.
 
-Each reviewer returns findings and ends with one line: `<AXIS> VERDICT: PASS|FAIL`.
-Collect every verdict line. Do not edit any code in response to findings.
+### 2c — Account for every reviewer
 
-**Then check the contract held:**
+Each fired reviewer ends in exactly one state:
+
+| State | Meaning |
+|---|---|
+| **returned** | its final output arrived |
+| **errored** | the runtime reported that it failed, or that it timed out and has ended |
+| **stopped** | the gate stopped it, and the runtime confirmed the stop |
+| **unconfirmed** | the gate asked for a stop, and the runtime did not confirm it |
+| **not-started** | Codex only: never launched, because an earlier launch failed |
+
+Go on to 2d once every fired reviewer is in one of these states.
+
+**Only output from an agent id recorded in 2b counts.** A completion notice from any
+other id is ignored, and the report names it. An earlier gate run that was interrupted
+can leave its reviewers running, and a verdict line carries no run identity: without
+this rule, an earlier run's `SECURITY VERDICT: PASS` arriving now would be counted as
+this run's.
+
+**The gate stops reviewers on two paths only**, and on either it stops every pending
+reviewer and goes to 2d:
+
+- **launch-failed**, from 2b;
+- **cancelled**: the user asks the gate to stop while reviewers are pending.
+
+While reviewers are pending, answer any other user message with one line saying the gate
+is waiting for its reviewers and can be cancelled; that never changes the outcome.
+**There is no deadline.** The gate never starts a stop on its own clock: a reviewer that
+hangs holds the gate until the user cancels or interrupts it.
+
+Per runtime:
+
+- **Claude Code.** A launch reply that carries an agent id instead of the reviewer's
+  output is a launch receipt. **A receipt is never a result.** Wait for that agent's
+  completion notice; its output is the reviewer's output. Never infer, predict or
+  summarise a pending reviewer's result. To stop one, call **TaskStop** with its agent
+  id; the stop is confirmed only when TaskStop reports success. TaskStop may be a
+  deferred tool that must be loaded first: **ToolSearch** with `select:TaskStop`.
+- **Codex.** Wait with `wait_agent` on the recorded ids until each has a final status. A
+  return with `timed_out: true` carries no final status, so wait again. To stop one, use
+  the session's close or interrupt call — `close_agent` where it is exposed, otherwise
+  `interrupt_agent` — and the stop is confirmed when `list_agents` or `wait_agent` no
+  longer reports it running. Which of these a session exposes is a runtime property, so
+  the names are examples of the capability, not a fixed list.
+
+Each reviewer returns findings and ends with one line: `<AXIS> VERDICT: PASS|FAIL`. **A
+valid verdict** is exactly one such line naming the reviewer's own axis. Anything else
+is **incomplete**: no such line, two such lines, another axis or another word, or a
+reviewer that errored, was stopped, is unconfirmed or never started. So every fired
+reviewer is exactly one of PASS, FAIL or incomplete. Do not edit any code in response to
+findings.
+
+### 2d — Check the workspace
+
+Once every fired reviewer is accounted for, check the workspace, exactly once, on every
+path that got past 2a's snapshot:
 
 ```bash
-"<forgeward-root>/scripts/forgeward-workspace-guard.sh" check "$ART/tree-before.txt"
+"<forgeward-root>/scripts/forgeward-workspace-guard.sh" check "<RUN_DIR>/snapshot"
 ```
 
-Non-zero means a reviewer wrote into the repo it was auditing. That has happened: a
-scanner handed a Windows path from a POSIX shell created a `C:` directory tree at the
-repo root — untracked, matched by no common `.gitignore`, and committed by any
-`git add -A`. Handle it in Step 3; never ignore it, and **do not delete the paths
+Record its exit status and print its output. If any reviewer is **unconfirmed**, print
+right after it:
+`forgeward gate: a reviewer may still be running; anything it writes from now on is unchecked.`
+
+Exit 1 means the workspace changed while the reviewers ran: a new or changed path, the
+index, `HEAD`, the stash, a hook, the `forgeward.gate` switch, this commit's run file or
+one of its markers. The guard names each change and cannot tell a reviewer's from the
+user's. A reviewer writing into the repo has happened: a scanner handed a Windows path
+from a POSIX shell created a `C:` directory tree at the repo root — untracked, matched
+by no common `.gitignore`, and committed by any `git add -A`. **Do not delete the paths
 yourself** — they are untracked files whose provenance only the user can confirm, and
 the drive-letter shape is actively dangerous to remove: under Git Bash `C:` without a
 leading `./` resolves to the **drive root**, so an `rm -rf` there is a far worse bug
-than the one it cleans up. Print the paths and let the user run
-`rm -rf -- "./C:"` themselves.
+than the one it cleans up. Print the paths and let the user run `rm -rf -- "./C:"`
+themselves.
+
+Exit 2, or any other non-zero, means the workspace could not be checked, and so does a
+check that was denied, timed out, or never ran or reported a status. That is never read
+as clean.
 
 ## Step 3 — Decide
 
-- **If the workspace guard reported new paths**: HALT before shipping, whatever the
-  verdicts were. Revoke again, so any marker a reviewer holding Bash wrote for this
-  commit stops reading fresh: a new run id is recorded for the reviewed commit, and every
-  marker for that commit, under any name, then names a stale run. Markers for other
-  commits are not staled (revoke still deletes, by name, the marker of each local branch
-  at this commit):
+Decide on 2c's states and 2d's exit status. **The first row that matches wins.** Under
+every row, print the verdicts of the reviewers that did return: contamination, or an
+incomplete sibling, does not invalidate a security finding. Every row but the last ends
+with no marker and **revokes again**, so any marker for the reviewed commit, under any
+name, stops reading fresh: a new run id is recorded for that commit, and markers for
+other commits are not staled. If that revoke exits non-zero, print its message verbatim
+and say that the earlier PASS it names may still authorize a push.
+
+- **1. The workspace changed** (2d exited 1): HALT, whatever the verdicts were. /ship
+  stages and commits, so handing off now is how a reviewer's artifact lands in the
+  user's history. Revoke:
 
   ```bash
   "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
   ```
 
-  If that exits non-zero, print its message verbatim and say that the earlier PASS it
-  names may still authorize a push. Either way, then print the paths and stop with:
-  `forgeward gate: reviewers left files in your repo — delete them and re-run. Nothing was shipped.`
-  The verdicts still stand (contamination does not invalidate a security finding), but
-  /ship stages and commits, so handing off now is how the artifact lands in the user's
-  history. This is a halt, not a FAIL: no marker is written, and none of the reported
-  paths is deleted.
+  Then stop with:
+  `forgeward gate: the workspace changed while the reviewers ran (the changes are above). Check them, delete anything a reviewer left, and re-run. Nothing was shipped.`
+  This is a halt, not a FAIL: no marker is written, and none of the reported paths is
+  deleted.
 
-- **If every fired reviewer returned `VERDICT: PASS`** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
+- **2. The workspace could not be checked** (2d exited 2 or any other non-zero, or the check did not run or report a status): HALT.
+  It is never read as clean. Revoke:
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
+  ```
+
+  Then stop with:
+  `forgeward gate: the workspace could not be checked after review (the reason is above), so nothing can be certified. Nothing was shipped.`
+
+- **3. The review did not run to completion** (launch-failed or cancelled): no marker.
+  Revoke:
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
+  ```
+
+  Then stop with
+  `forgeward gate: not every reviewer could be launched, so the review did not run to completion. Nothing was shipped.`
+  or, when the user cancelled,
+  `forgeward gate: cancelled before every reviewer finished. Nothing was shipped.`
+
+- **4. A reviewer returned FAIL**: do NOT write a marker and do NOT invoke /ship.
+  Revoke:
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
+  ```
+
+  Then print each failing reviewer's Critical/High findings (severity, `file:line`,
+  issue, fix) grouped by axis, list any incomplete axes as well, and stop with:
+  `forgeward gate: FAIL — fix the Critical/High findings above and re-run /forgeward:gate. Nothing was shipped.`
+  FAIL is decided before incomplete so that a measured Critical gets this line, which
+  asks for a fix, not a re-run.
+
+- **5. A reviewer is incomplete** (no valid verdict, 2c): no marker. An unmeasured axis
+  cannot return PASS, and it is reported apart from findings, never labelled FAIL.
+  Revoke:
+
+  ```bash
+  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
+  ```
+
+  Then name each incomplete axis and why (no verdict line, two, another axis, errored,
+  stopped, unconfirmed, not started), and stop with:
+  `forgeward gate: incomplete — the axes above returned no valid verdict, so nothing was measured there. Re-run /forgeward:gate. Nothing was shipped.`
+
+- **6. Every fired reviewer returned PASS** (and any self-skipped reviewer counts as PASS): write the pass marker, then ship.
 
   ```bash
   "<forgeward-root>/scripts/forgeward-write-marker.sh" "<base>" "<comma-separated fired reviewers>" "<BASE_SHA>" "<HEAD_SHA>" "<RUN_ID>"
   ```
 
-  Pass the two full names Step 0 printed and the id Step 2's revoke printed, literally.
+  Pass the two full names Step 0 printed and the id 2a's revoke printed, literally.
   If the writer exits non-zero, nothing was certified: run
   `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"`, print
   the writer's message, and stop with no handoff. If that `--revoke` also exits non-zero,
@@ -551,23 +706,6 @@ than the one it cleans up. Print the paths and let the user run
   success report**, telling the user their work shipped when nothing was pushed. A gate
   that lies about what it did is worse than one that stops. Report only what happened.
 
-- **If any fired reviewer returned `VERDICT: FAIL`, or anything other than PASS**: do NOT
-  write a marker and do NOT invoke /ship. A fired reviewer whose output carries no
-  `<AXIS> VERDICT:` line at all (it crashed, timed out, or ignored the format) is a FAIL
-  for that axis, never a skip: an unmeasured axis cannot return PASS. Revoke again, so
-  any marker for the reviewed commit, under any name, stops reading fresh (a new run id
-  is recorded for that commit; markers for other commits are not staled):
-
-  ```bash
-  "<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"
-  ```
-
-  If that exits non-zero, print its message verbatim and say that the earlier PASS it
-  names may still authorize a push. Then print each failing reviewer's Critical/High
-  findings (severity, `file:line`, issue, fix) grouped by axis — for a reviewer with no
-  verdict line, say that it returned none — and stop with:
-  `forgeward gate: FAIL — fix the Critical/High findings above and re-run /forgeward:gate. Nothing was shipped.`
-
 ## Rules
 
 - **Read-only.** You never Edit/Write code here. You dispatch reviewers and report.
@@ -577,7 +715,12 @@ than the one it cleans up. Print the paths and let the user run
   flags refused) and take any scratch directory from `scripts/forgeward-artifact-dir.sh`.
   A `PreToolUse` deny and the workspace guard back that up, because the same reviewer
   broke this contract twice — the second time with a spawn prompt that explicitly
-  forbade it. Do not treat an instruction as a control.
+  forbade it. Do not treat an instruction as a control, and do not treat the guard as
+  complete either: it does not see a gitignored write, an empty directory, or a write made
+  after its check, so the instruction still binds. The guard records more than
+  paths: the index, `HEAD`, the stash, the hooks, the `forgeward.gate` switch, and this
+  commit's run file and markers, so a change to any of them while reviewers ran halts the
+  run too.
 - **Conditional.** Only fire reviewers whose surface the diff touches; say which you skipped and why.
 - **The marker is only written on all-PASS, and only for the commits Step 0 froze.** Every
   run that reaches Step 2 records a new run on the reviewed commit before it reviews
@@ -589,3 +732,4 @@ than the one it cleans up. Print the paths and let the user run
   verbatim and stops the gate, because an earlier PASS may still authorize a push. No
   fresh marker ⇒ the push hook blocks /ship. That is the gate.
 - **Never lower the bar.** If a reviewer fails, the gate fails. Do not rationalize a FAIL into a pass.
+  An incomplete reviewer is not a PASS either, and a launch receipt is never a result.

@@ -5,6 +5,76 @@ Durable decisions for the forgeward gate, with the reasoning that produced them.
 is recognizable from the symptom alone.
 Sections are **newest first**.
 
+## DECISION — Step 2 is one funnel, and the workspace guard records what a push depends on
+
+**Date:** 2026-11-17 · **Version:** 0.32.0
+
+**What was wrong.** The workspace guard recorded only the untracked path list. An edit to a
+file that was already dirty, a `git add`, a moved `HEAD`, a new stash, a changed hook
+(`pre-push.local` included, where the enforcer sits behind gstack's wrapper), an unset
+`forgeward.gate`, and a marker or run file written by a reviewer holding Bash all passed the
+check. It exited 0 outside a repository, and read a missing snapshot as an empty list, so the
+check came back clean. Step 2 kept the snapshot path in `$ART`, a shell variable that does not
+survive into a later tool call. A failed launch stopped Step 2 without any check, though a
+reviewer that did start may have written into the repo. A reviewer with no verdict line was
+reported as FAIL, which asks for a fix to findings that do not exist, and nothing said that a
+launch receipt is not a result. `forgeward-artifact-dir.sh` compared paths as text, so a root
+that was a symlink into the repo, or walked back into it with `..`, handed out a directory
+inside it.
+
+**Found while building it.** The spec batched raw paths through
+`git hash-object --stdin-paths`. Measured on git 2.34.1, that option C-unquotes a line that
+starts with `"` and strips a trailing CR, so it silently hashes a different file, and one badly
+quoted line fails the whole batch. A submodule with a broken gitfile makes `git status` itself
+fail, so it cannot be recorded as `unreadable` the way the spec said.
+
+**Decision.**
+- Guard v2 writes a manifest: a versioned header naming the frozen `<HEAD_SHA>`, one sorted
+  record per entry, and an `end <count>` line. It records every entry `git status` reports, by
+  kind and content; the index (`ls-files -s -v`, so skip-worktree and assume-unchanged flags
+  count); `HEAD` and its branch; the stash; `core.hooksPath` and every file in the hooks
+  directory; `forgeward.gate`; this commit's run file; and the markers `--revoke` would
+  withdraw. `check` rebuilds and compares by key. Exit 0 unchanged, 1 changed, 2 could not
+  check, 64 usage.
+- Every hashed path is C-quoted into one batch.
+- The marker names come from `revoke_names`, byte-identical in the writer and the guard (W47),
+  and the two lists are derived from each other on a fixture, never copied (W48).
+- Step 2 is one funnel: 2a revokes, creates and prints the run directory, and snapshots; 2b
+  launches and records every agent id; 2c accounts for every reviewer; 2d checks once. Once
+  anything is launched, every path ends at 2d. Step 3 is six rows, first match wins.
+- No valid verdict is **incomplete**, reported apart from findings. It still blocks the
+  marker.
+- The artifact directory is contained by physical path, and a root that cannot be resolved
+  falls back to `/tmp`. The directory handed out is checked as well as the root: a symlinked
+  `<root>/forgeward-artifacts` fell through the root check, so it is resolved before and after
+  the `mkdir` and falls back to a fresh `mktemp -d`.
+- Flagged entries are recorded by content (A2). `git status` skips skip-worktree and
+  assume-unchanged entries, and the index hash does not move when one is edited, so a file
+  flagged before the snapshot was unseen. An absent flagged entry has no record, because a
+  sparse checkout leaves most of them absent.
+- `core.hooksPath` and the hooks directory are read with a sentinel (A1). `$(…)` strips a
+  trailing newline and git does not, so a value gaining a LF ran hooks from another directory
+  while the record stayed the same. `forgeward.gate` is not, because its consumer reads it
+  through `$(…)` as well.
+- Records that share a key are folded into one (A4). After `git rm --cached` git lists a path
+  twice, and a one-value-per-key comparison reported the unchanged tree as changed on every
+  run.
+- The manifest carries the absolute git dir (A5), so a check from another linked worktree at
+  the same commit differs.
+- A failed stash or `HEAD` lookup exits 2 (A3). Only exit 1 means absent.
+
+**Rejected.**
+- **A gate-imposed deadline.** The gate cannot tell a slow reviewer from a hung one, and a
+  stopped reviewer is incomplete either way. The user cancels.
+- **Deleting what a reviewer left.** Only the user can confirm where a path came from, and a
+  bare `C:` is the drive root under Git Bash.
+- **Checking only on a PASS.** A reviewer that started may have written whatever its verdict,
+  and a FAIL report that hides a write leaves it for the next `git add -A`.
+- **Snapshotting gitignored paths.** It costs too much on every run (§5.4).
+
+What the guard still cannot see is listed in its header, the only maintained copy, and in §5.4
+of `docs/upstream-lenses-design.md`.
+
 ## DECISION — the diff hash is root-relative and its `git diff` invocation is pinned
 
 **Date:** 2026-11-16 · **Version:** 0.31.0

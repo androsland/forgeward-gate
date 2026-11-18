@@ -1068,6 +1068,111 @@ themselves so that none of them requires the commit to be actionable.
   commit. **What would settle it:** tell reviewers to read context with
   `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
   read files from disk). **Priority:** P3
+- **An interrupted gate run's leftovers become the next run's baseline.** (upstream-lenses
+  spec §5.4, hole review of the PR 2 revision, 2026-11-17) The user interrupting a gate
+  skips the workspace check, and a reviewer still running afterwards can write into the
+  repo. The next run snapshots that as its baseline, and a PASS hands it to `/ship`, which
+  stages and commits: the original `C:` incident with an interrupt in the middle. §5.4
+  tells the user to run `git status` before re-running. **What would settle it:** a
+  per-worktree "open run" pointer written by `snapshot` and cleared once the check runs;
+  the next `snapshot` checks against the open run's baseline first and halts once on new
+  paths only, since a halt on every difference would fire after every interrupt and teach
+  people to ignore it. Measure how often a reviewer outlives an interrupt before building
+  it. **Priority:** P2
+- **Codex's live spawn catalog may not offer the pinned reviewer model.** (hole review of
+  the PR 2 revision, 2026-11-17) Step 2 pins every Codex reviewer launch to
+  `model: "gpt-5.6-terra"`. A Codex consult running `gpt-6.1-sol` reported that its
+  session's `spawn_agent` model catalog did not list `gpt-5.6-terra`. That is an interface
+  observation, not a tested launch failure. If it holds, every Codex gate run ends
+  launch-failed, which is fail-closed but unusable. **What would settle it:** one real Codex
+  gate run on a one-line diff, recording whether the pinned launch is accepted.
+  **Priority:** P2
+
+- **LIVE-TEST 5d points at the wrong fixture, and its section labels collide with SKILL's.**
+  (final whole-branch reviews of the PR 2 branch, 2026-11-17) 5d step 1 sends the tester to
+  section 4's fixture for a run firing three or more reviewers; 5c is the many-reviewer
+  fixture. Separately, LIVE-TEST's own section labels "(2d)" and "(2e)" now collide with
+  `skills/gate/SKILL.md`'s 2a–2d. **Priority:** P3
+
+- **Run 2d under `timeout` where one exists.** (final reviews, 2026-11-17) A reviewer still
+  running at 2d, so unconfirmed, can swap a file the guard already classified as regular for a
+  FIFO before the batch hash opens it; `check` then hangs instead of missing the change. Bounds
+  the hang only, and needs a decision on the limit, since the gate imposes no deadline of its
+  own (§5.4). **Priority:** P3
+
+- **A pre-created `forgeward-artifacts` in a shared `/tmp`.** (final reviews, 2026-11-17)
+  Another local user can create `/tmp/forgeward-artifacts` first and own what is in it. It
+  predates the 0.32.0 branch and is out of its scope. **Priority:** P3
+
+- **`revoke_names`'s `|| here=""` swallows a git failure.** (final reviews, 2026-11-17) A failed
+  `HEAD` lookup reads as "HEAD is not at this commit", so the current branch's name is dropped
+  from the list silently. The copies in `forgeward-write-marker.sh` and the guard are
+  byte-pinned by W47, so a fix changes both together. **Priority:** P3
+
+- **Windows / Git Bash was never examined for the symlink legs.** (final reviews, 2026-11-17)
+  P9b and P9c create symlinks, which need privileges or a flag under Git Bash, and the
+  physical-path containment was only ever run on Linux. **Priority:** P3
+
+- **A self-matching `.gitignore` inside the tree hides itself and every later write below
+  it.** (gstack `/review` Red Team and adversarial pass, 2026-11-17) A reviewer writing
+  `src/.gitignore` containing `*` leaves the guard clean (reproduced), and `git add -A` then
+  silently skips the user's own new files in `src/`. `.pytest_cache/` ships that shape.
+  Stated in design §5.4 and the guard header; not detected. **What would settle it:** record
+  untracked ignored entries collapsed by directory (`git ls-files -o -i --exclude-standard
+  --directory`, so `node_modules/` costs one record), measured on a repo with a large ignored
+  tree, and decide whether that narrows the "gitignored writes are not seen" non-goal or only
+  this shape. **Priority:** P2
+
+- **A process a returned reviewer left running can write after the check.** (gstack `/review`
+  adversarial pass, 2026-11-17) "Returned" describes the agent, not its processes: a reviewer
+  can background a slow scan and return its verdict. On the all-PASS row nothing re-checks
+  after 2d, so the write reaches `/ship`. `forgeward-scan.sh` backgrounds nothing, so the
+  exposure is the reviewer model's own choice. Stated in design §5.4. **What would settle
+  it:** check whether Claude Code and Codex end a finished subagent's background shells; if
+  not, tell every reviewer rubric never to background a command (an instruction, not a
+  control) and weigh a second check right before the marker write. **Priority:** P2
+
+- **The flagged-entry pass is a bash loop over every `ls-files -v` entry.** (gstack `/review`
+  adversarial pass, 2026-11-17) That pass measured about 5–7.5 s per pass at 200,000
+  skip-worktree entries on WSL2, paid at `snapshot` and `check`; not re-measured here. The
+  figure is in design §5.4's Cost paragraph. **What would settle it:** filter the flagged
+  entries before the loop. A NUL-separated awk does not work in BSD awk, so this needs a
+  portability decision first. **Priority:** P3
+
+- **A file that vanishes before the batch hash stops the gate with the wrong message.** (gstack
+  `/review` Red Team, 2026-11-17) The batched `hash-object --stdin-paths` fails whole (git
+  exits 128) when one queued file is gone, so editor temp files or a watcher can stop the gate
+  at `snapshot`, and turn a real change at `check` into "could not be checked". Fail-closed;
+  the message says git failed. **What would settle it:** on a batch failure, re-classify the
+  queued paths once and name the one that vanished. **Priority:** P3
+
+- **Two detached-`HEAD` worktrees share the `HEAD.json` marker name.** (gstack `/review` Red
+  Team, 2026-11-17, reproduced with the real writer) A PASS written in one worktree reads as a
+  reviewer's write in a concurrent gate run in the other, which halts, and that run's row-1
+  revoke then deletes the first worktree's valid PASS. Both fail closed (one re-gate). The
+  shared name predates 0.32.0; the false halt arrives with the guard's marker record.
+  **Priority:** P3
+
+- **`forgeward-artifact-dir.sh` edge cases.** (gstack `/review`, 2026-11-17)
+  - Reached through a planted symlink, the `/tmp/forgeward-artifacts/$$` fallback creates an
+    empty directory inside the repo before the final check refuses it.
+  - A repo whose toplevel is `/tmp` or `/` now makes the script exit 1, since no fallback can
+    be outside it.
+  - Directories are keyed by PID, and the run directory sits inside the gate's own per-PID
+    one: a reviewer's call that reused the gate's PID would be handed the run directory's
+    parent, and cleaning it deletes the snapshot (a row-2 halt). Code path only, from the Red
+    Team; PID reuse was not measured.
+
+  **Priority:** P3
+
+- **The trailing-newline stripping fixed in the guard remains in the other scripts.** (gstack
+  `/review`, 2026-11-17) `$(git rev-parse --show-toplevel)` and `$(cd … && pwd -P)` drop a
+  trailing newline in `forgeward-artifact-dir.sh` (`top`, `phys`),
+  `forgeward-detect-environment.sh`, `forgeward-detect-gstack-skill.sh`,
+  `forgeward-pentest.sh` and `forgeward-rubric-drift.sh`. The guard was fixed (W60) because
+  there it hid a reviewer's write. In the artifact-dir script it matters only for an artifact
+  root inside a repo whose name ends in a newline. Deliberately not widened in 0.32.0.
+  **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -2715,10 +2820,33 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **Step 2 checks the workspace on every exit, and the guard records what a push depends
+  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17; unmerged when this entry was
+  written, so check the tree before calling it merged.) PR 2 of the seven-PR upstream-lenses
+  stack (`docs/upstream-lenses-design.md` §5). Workspace guard v2 records a manifest with a
+  header and an end count: every `git status` entry by kind and content, the index, `HEAD`,
+  the stash, the hooks, `forgeward.gate`, this commit's run file and its markers.
+  `revoke_names` is shared byte-identically with the writer. Step 2 became the 2a–2d funnel,
+  with the run directory printed in one command and every reviewer accounted for by agent id,
+  and Step 3 became six rows with incomplete reported apart from FAIL.
+  `forgeward-artifact-dir.sh` contains by physical path. Building it found that the spec's
+  raw `hash-object --stdin-paths` batch hashes a different file for a `"`-led or CR-ending
+  path, and that a broken-gitfile submodule fails `git status` itself; §5 is corrected for
+  both. Two whole-branch reviews then found further holes, closed in the same release:
+  flagged (skip-worktree, assume-unchanged) entries, the worktree binding, a trailing
+  newline on `core.hooksPath`, a failed stash lookup read as absent, the `git rm --cached`
+  wedge, and the final artifact directory. The gstack `/review` pass that followed found
+  three more, fixed in the same release: a worktree path ending in a newline, a config value
+  spelling "not set", and an untested comparison failure. Pinned by P9b, P9c, P9d and W1–W62
+  in `test/gate-test.sh` and the 2a–2d and six-row assertions
+  in `test/dual-client-test.sh`, each guard with a mutation check. The two follow-ups the
+  spec filed are under `## Reviewers`: an interrupted run's leftovers, and the Codex model
+  pin. The `/review` pass's deferred findings are there too.
+
 - **A PASS certifies the commits the reviewers were given, and every run withdraws the
-  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. **Not
-  merged when this was written.** Check with `git merge-base --is-ancestor` before
-  reading it as landed.) PR 1 of the seven-PR upstream-lenses stack
+  last one.** (0.31.0, branch `fix/bind-pass-to-reviewed-commits`, 2026-11-16. Merged as
+  #71 on 2026-11-17, merge commit `50aa301`, checked with `git merge-base --is-ancestor
+  50aa301 origin/master`.) PR 1 of the seven-PR upstream-lenses stack
   (`docs/upstream-lenses-design.md`). Step 0 freezes both commits; the writer takes them,
   refuses on a moved `HEAD` or a diff-changing base move, and hashes the frozen pair;
   `--revoke` runs before Step 2 and on every later outcome that ends without a marker.

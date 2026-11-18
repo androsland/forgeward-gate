@@ -60,7 +60,20 @@ denies()  { case "$1" in *'"permissionDecision": "deny"'*) return 0 ;; *) return
 
 # --- scratch repo on the same shape as the demo (main + feature) ---
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forgeward-test.XXXXXX")"
-cleanup() { rm -rf "$TMP"; }
+# AD_OUT: directories forgeward-artifact-dir.sh handed out (P9..P9d). Its fallbacks are
+# hard-coded under the real /tmp, outside $TMP, so the trap removes them too. Only one path
+# component below /tmp is ever removed; anything with a further `/` is left alone.
+AD_OUT=()
+cleanup() {
+  local d
+  for d in ${AD_OUT[@]+"${AD_OUT[@]}"}; do
+    case "$d" in
+      /tmp/forgeward-artifacts/*/*|/tmp/forgeward-artifacts.*/*) ;;
+      /tmp/forgeward-artifacts/[0-9]*|/tmp/forgeward-artifacts.??????) rm -rf -- "$d" ;;
+    esac
+  done
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 R="$TMP/repo"
 git init -q "$R"; cd "$R"
@@ -2171,7 +2184,7 @@ _p8r_got="$(printf '%s\n' "${_p8r_at[@]}" | sort -n)"
   || nok "audit P8r: the recipe census" "$_p8r_bad"
 
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
-ad="$( cd "$R" && "$ARTDIR" )"
+ad="$( cd "$R" && "$ARTDIR" )"; AD_OUT+=("$ad")
 case "$ad" in
   /*) ok "artifact dir: POSIX-absolute ('$ad')" ;;
   *)  nok "artifact dir posix-absolute" "got: '$ad'" ;;
@@ -2182,10 +2195,33 @@ case "$ad" in
   *)      ok "artifact dir: outside the repo under review" ;;
 esac
 
+# P9b (0.32.0): containment compares PHYSICAL paths. A symlink aliasing the repo, or a
+# `..` that walks back into it, passes a text comparison and lands inside the tree, where
+# the gate's own workspace snapshot would read as a new path on every run.
+_rp="$(cd "$R" && pwd -P)"
+ln -s "$R" "$TMP/repo-alias"; mkdir -p "$TMP/walk"
+# repo_tree <dir>: every path below <dir> except .git, sorted. `git status` lists no empty
+# directory, so it cannot witness that a call created nothing inside the repo; this can.
+repo_tree() { find "$1" -path "$1/.git" -prune -o -print | sort; }
+_rt="$(repo_tree "$R")"
+for _root in "$TMP/repo-alias" "$TMP/walk/../repo"; do
+  _ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_root" "$ARTDIR" )"; AD_OUT+=("$_ad")
+  _adp="$(cd "$_ad" 2>/dev/null && pwd -P)"
+  case "${_adp:-/}/" in
+    "$_rp"/*|//) nok "artifact dir: a root of '${_root#"$TMP"/}' must resolve outside the repo" "got '$_ad' -> '$_adp'" ;;
+    *) ok "artifact dir: a root of '${_root#"$TMP"/}' that resolves into the repo is refused" ;;
+  esac
+  # Handing out a directory outside is not enough: one created inside on the way (a root
+  # compared as text, not by physical path, mkdirs through the alias first) is left behind.
+  _new="$(comm -13 <(printf '%s\n' "$_rt") <(repo_tree "$R"))"
+  [ -z "$_new" ] && ok "artifact dir: a root of '${_root#"$TMP"/}' creates nothing inside the repo" \
+    || nok "artifact dir: a root of '${_root#"$TMP"/}' created a path inside the repo" "${_new//$'\n'/ }"
+done
+
 # P10: the workspace guard catches ANY new untracked path a reviewer leaves behind —
 # including shapes the command-text guard structurally cannot see.
 snap="$ad/snapshot.txt"
-( cd "$R" && "$GUARD" snapshot > "$snap" )
+( cd "$R" && "$GUARD" snapshot "$(git rev-parse HEAD)" > "$snap" )
 # A plain scratch file, because that is the general shape: the guard's job is to catch
 # ANY new untracked path, whatever produced it. (Staging the literal 'C:' tree is
 # platform-dependent — MSYS coreutils resolve it to a real Windows path — so it is
@@ -2213,6 +2249,439 @@ if ( cd "$R" && mkdir -p 'C:/Users/x/scratchpad' 2>/dev/null && echo '{}' > 'C:/
 else
   ok "workspace guard: 'C:' tree not stageable on this platform (drive paths resolve natively) — general case asserted above"
 fi
+
+# W1..W59 -- workspace guard v2 (design §5.1, §5.5). Every recorded field has a fixture
+# that changes only that field; every must-not-fire case is a legitimate change made
+# while a gate runs. Assertions read the MESSAGE, not only the exit status.
+WG="$TMP/wguard"; mkrepo "$WG"
+( cd "$WG" && mkdir -p d/e && printf 'a\n' > a && printf 'b\n' > b && printf 'c\n' > d/e/c \
+    && git add -A && git commit -qm base && git branch -M main ) >/dev/null 2>&1
+WG0="$(git -C "$WG" rev-parse HEAD)"
+WGC="$(git -C "$WG" rev-parse --path-format=absolute --git-common-dir)"
+WS="$TMP/wguard.snap"
+# Some fixtures can hang a naive guard (a FIFO is read forever), so every guard call runs
+# under `timeout` where the machine has one: a hang then fails its assertion, not the suite.
+wto() { if command -v timeout >/dev/null 2>&1; then timeout 30 "$@"; else "$@"; fi; }
+# wsnap: snapshot the fixture at its live HEAD. Sets wsrc and wserr.
+wsnap() {
+  local h; h="$(git -C "$WG" rev-parse HEAD)"
+  ( cd "$WG" && wto "$GUARD" snapshot "$h" ) > "$WS" 2>"$TMP/wguard.err"; wsrc=$?
+  wserr="$(cat "$TMP/wguard.err")"
+}
+# wcheck [dir]: check the fixture from <dir> (default its root). Sets wrc and wout.
+wcheck() { wout="$( cd "${1:-$WG}" && wto "$GUARD" check "$WS" 2>&1 )"; wrc=$?; }
+# wfires <label> <line fragment>: the check exits 1 and prints that line.
+wfires() {
+  wcheck
+  case "$wout" in
+    *"$2"*) [ "$wrc" = 1 ] && { ok "$1 -> exit 1 and names it"; return 0; } ;;
+  esac
+  nok "$1" "rc=$wrc out='$wout'"
+}
+# wquiet <label>: the check exits 0 and prints nothing.
+wquiet() {
+  wcheck
+  { [ "$wrc" = 0 ] && [ -z "$wout" ]; } && ok "$1 -> exit 0" || nok "$1 must not fire" "rc=$wrc out='$wout'"
+}
+# wcannot <label> <message fragment>: the check exits 2 and names the cause.
+wcannot() {
+  case "$wout" in
+    *"$2"*) [ "$wrc" = 2 ] && { ok "$1 -> exit 2 and names the cause"; return 0; } ;;
+  esac
+  nok "$1" "rc=$wrc out='$wout'"
+}
+wg() { git -C "$WG" "$@" >/dev/null 2>&1; }
+
+# --- Detection: each changes one recorded field. ---
+wsnap; printf 'x\n' > "$WG/new.txt"
+wfires "W1: a new path" "new path: new.txt"; rm -f "$WG/new.txt"
+wsnap; printf 'edited\n' >> "$WG/b"
+wfires "W1b: a clean tracked file edited" "changed: b (was clean, now ' M')"
+case "$wout" in *"new path"*|*'rm -rf'*) nok "W1c: an edited tracked file is called a new path" "out='$wout'" ;;
+  *) ok "W1c: an edited tracked file is not called a new path, and no rm advice is printed" ;; esac
+printf 'b\n' > "$WG/b"
+printf 'dirty\n' >> "$WG/a"; wsnap; printf 'a\n' > "$WG/a"
+wfires "W2: a path leaving the dirty set" "left the dirty set: a"
+printf 'dirty\n' >> "$WG/a"; wsnap; printf 'more\n' >> "$WG/a"
+wfires "W3: changed content in an already-dirty tracked file" "changed content: a"
+case "$wout" in *"git diff shows what is there now"*) ok "W3b: the dirty-file advice is printed" ;;
+  *) nok "W3b: the dirty-file advice is missing" "out='$wout'" ;; esac
+printf 'a\n' > "$WG/a"
+printf 'u\n' > "$WG/u.txt"; wsnap; printf 'u2\n' > "$WG/u.txt"
+wfires "W4: changed content in an untracked file" "changed content: u.txt"; rm -f "$WG/u.txt"
+wsnap; wg commit -q --allow-empty -m moved
+wfires "W5: HEAD moving" "HEAD moved or switched branch"
+wsnap; wg checkout -q -b wsib
+wfires "W6: a switch to a sibling branch at the same commit" "HEAD moved or switched branch"
+wg checkout -q main
+printf 'dirty\n' >> "$WG/a"; wsnap; wg add a
+wfires "W7: the index, via git add of an already-dirty file" "the index changed"
+wg reset -q -- a; printf 'a\n' > "$WG/a"
+wsnap; wg update-index --skip-worktree b
+wfires "W8: skip-worktree set on a clean tracked file" "the index changed"; wg update-index --no-skip-worktree b
+wsnap; wg update-index --assume-unchanged b
+wfires "W9: assume-unchanged set on a clean tracked file" "the index changed"; wg update-index --no-assume-unchanged b
+# The stash ref is moved with update-ref: the property is "refs/stash changed", and this
+# needs no stash entry to exist.
+wsnap; wg update-ref refs/stash "$WG0"
+wfires "W10: the stash" "the stash changed"; wg update-ref -d refs/stash
+wsnap; wg config core.hooksPath .hk
+wfires "W11: core.hooksPath" "core.hooksPath changed"; wg config --unset core.hooksPath
+printf '#!/bin/sh\n' > "$WG/.git/hooks/pre-push"; wsnap; printf '#!/bin/sh\nexit 0\n' > "$WG/.git/hooks/pre-push"
+wfires "W12: the pre-push hook's content" "hook file changed: pre-push"
+wsnap; printf '#!/bin/sh\n' > "$WG/.git/hooks/pre-push.local"
+wfires "W13: pre-push.local appearing (gstack's wrapper owns pre-push)" "new hook file: pre-push.local"
+wsnap; printf '#!/bin/sh\nexit 0\n' > "$WG/.git/hooks/pre-push.local"
+wfires "W14: pre-push.local changing" "hook file changed: pre-push.local"
+rm -f "$WG/.git/hooks/pre-push" "$WG/.git/hooks/pre-push.local"
+wg config forgeward.gate enabled; wsnap; wg config --unset forgeward.gate
+wfires "W15: forgeward.gate unset" "forgeward.gate changed (was 'enabled', now absent)"
+# The run file, written the way a reviewer holding Bash would: the real writer's --revoke.
+wsnap; ( cd "$WG" && "$WRITE" --revoke "$(git rev-parse HEAD)" ) >/dev/null 2>&1
+wfires "W16: this commit's run file" "gate run file changed"
+mkdir -p "$WGC/forgeward-gate-markers"
+wsnap; printf '{}\n' > "$WGC/forgeward-gate-markers/main.json"
+wfires "W17: this branch's marker appearing" "a PASS marker appeared for main"
+rm -f "$WGC/forgeward-gate-markers/main.json"
+wg branch wsib2; wsnap; printf '{}\n' > "$WGC/forgeward-gate-markers/wsib2.json"
+wfires "W18: a sibling branch's marker, at the same commit, appearing" "a PASS marker appeared for wsib2"
+rm -f "$WGC/forgeward-gate-markers/wsib2.json"
+
+# --- Must NOT fire: legitimate changes during a gate run. ---
+wsnap; wg config branch.main.remote origin
+wquiet "W19: a config write to branch.<name>.remote"; wg config --unset branch.main.remote
+wg branch wfar "$WG0"; wsnap; printf '{}\n' > "$WGC/forgeward-gate-markers/wfar.json"
+wquiet "W20: a marker for a branch at another commit (another worktree's gate run)"
+rm -f "$WGC/forgeward-gate-markers/wfar.json"
+wsnap; touch -t 200101010000 "$WG/b"
+wquiet "W21: touch on a clean tracked file"
+printf 'o1\n' > "$TMP/wguard-outside.txt"; ln -s "$TMP/wguard-outside.txt" "$WG/lnk"
+wsnap; printf 'o2\n' > "$TMP/wguard-outside.txt"
+wquiet "W22: a change to the file an in-repo symlink points at, outside the repo"
+rm -f "$WG/lnk"
+
+# --- Where it runs: the worktree root, whatever the caller's directory. ---
+( cd "$WG/d/e" && wto "$GUARD" snapshot "$(git rev-parse HEAD)" ) > "$WS" 2>/dev/null
+wquiet "W23: snapshot from a subdirectory, check from the root"
+wsnap; wcheck "$WG/d/e"
+{ [ "$wrc" = 0 ] && [ -z "$wout" ]; } && ok "W24: snapshot from the root, check from a subdirectory -> exit 0" \
+  || nok "W24: check from a subdirectory" "rc=$wrc out='$wout'"
+( cd "$WG/d/e" && wto "$GUARD" snapshot "$(git rev-parse HEAD)" ) > "$WS" 2>/dev/null
+printf 'n\n' > "$WG/d/new.txt"; wcheck "$WG/d/e"
+case "$wout" in *"new path: d/new.txt"*) [ "$wrc" = 1 ] && ok "W25: from a subdirectory, an edit in a sibling directory is seen" \
+  || nok "W25: sibling-directory edit" "rc=$wrc" ;; *) nok "W25: sibling-directory edit" "rc=$wrc out='$wout'" ;; esac
+rm -f "$WG/d/new.txt"
+
+# --- The frozen commit. ---
+wout="$( cd "$WG" && "$GUARD" snapshot "$WG0" 2>&1 >/dev/null )"; wrc=$?
+wcannot "W26: snapshot when HEAD is not <HEAD_SHA>" "HEAD moved since Step 0"
+wout="$( cd "$WG" && "$GUARD" snapshot "$(git rev-parse --short HEAD)" 2>&1 >/dev/null )"; wrc=$?
+case "$wout" in *"is not a full commit id that resolves to itself"*) [ "$wrc" = 64 ] && ok "W27: a short id -> exit 64" \
+  || nok "W27: short id" "rc=$wrc" ;; *) nok "W27: short id" "rc=$wrc out='$wout'" ;; esac
+wout="$( cd "$WG" && "$GUARD" snapshot main 2>&1 >/dev/null )"; wrc=$?
+case "$wout" in *"is not a full commit id that resolves to itself"*) [ "$wrc" = 64 ] && ok "W28: a symbolic name -> exit 64" \
+  || nok "W28: symbolic name" "rc=$wrc" ;; *) nok "W28: symbolic name" "rc=$wrc out='$wout'" ;; esac
+
+# --- Wedge controls: each shape is present at snapshot; both commands must exit 0. ---
+wwedge() { # wwedge <label>: snapshot and check both exit 0 on the unchanged tree
+  wsnap; wcheck
+  { [ "$wsrc" = 0 ] && [ "$wrc" = 0 ]; } && ok "$1 -> snapshot and check exit 0" \
+    || nok "$1 wedged the guard" "snapshot=$wsrc check=$wrc err='$wserr' out='$wout'"
+}
+ln -s nowhere "$WG/dangling"; wwedge "W29: a dangling symlink"; rm -f "$WG/dangling"
+ln -s b "$WG/tofile"; wwedge "W30: a symlink to a file"; rm -f "$WG/tofile"
+if command -v mkfifo >/dev/null 2>&1; then
+  rm -f "$WG/b"; mkfifo "$WG/b"; wwedge "W31: a FIFO replacing a tracked file"
+  case "$wserr" in *"recorded without its content"*"b ( M special)"*) ok "W31b: the coverage note names the FIFO" ;;
+    *) nok "W31b: no coverage note for the FIFO" "err='$wserr'" ;; esac
+  rm -f "$WG/b"; printf 'b\n' > "$WG/b"
+else
+  ok "W31: SKIPPED (no mkfifo on this machine) -- the FIFO wedge is unverified here, not verified"
+fi
+WSUB="$TMP/wguard-sub"; mkrepo "$WSUB"; ( cd "$WSUB" && git commit -q --allow-empty -m s ) >/dev/null 2>&1
+wg -c protocol.file.allow=always submodule add -q "$WSUB" sm; wg commit -qm sub
+# The submodule is a fresh clone with no repo-local identity, so the commit names one itself:
+# CI has no global identity, and without it the commit fails silently and the fixture is clean.
+git -C "$WG/sm" -c user.email=t@t.t -c user.name=t -c commit.gpgsign=false \
+  commit -q --allow-empty -m dirty >/dev/null 2>&1
+case "$(git -C "$WG" status --porcelain)" in *" M sm"*) wwedge "W32: a dirty submodule" ;;
+  *) nok "W32: the fixture did not produce a dirty submodule" "$(git -C "$WG" status --porcelain | tr '\n' ' ')" ;; esac
+mkrepo "$WG/nested"; ( cd "$WG/nested" && git commit -q --allow-empty -m n ) >/dev/null 2>&1
+wwedge "W33: an untracked nested repository"
+case "$(cat "$WS")" in *"nested/"*"?? repo:"*) ok "W33b: the nested repository is recorded by its commit" ;;
+  *) nok "W33b: nested repository record" "$(grep -a nested "$WS")" ;; esac
+rm -rf "$WG/nested"
+# A submodule whose gitfile is broken: git status itself fails (exit 128, measured), so the
+# guard cannot record the workspace. That is exit 2 -- fail closed -- and never a hang.
+cp "$WG/sm/.git" "$TMP/wguard-gitfile"; printf 'gitdir: /nonexistent\n' > "$WG/sm/.git"
+wsnap; wout="$wserr"; wrc="$wsrc"
+wcannot "W34: a submodule with a broken gitfile" "git failed while the workspace was being recorded"
+cp "$TMP/wguard-gitfile" "$WG/sm/.git"
+if [ "$(id -u)" != 0 ]; then
+  printf 's\n' > "$WG/noread"; chmod 000 "$WG/noread"; wwedge "W35: an unreadable file"
+  case "$wserr" in *"recorded without its content"*"noread (?? unreadable)"*) ok "W35b: the coverage note names it" ;;
+    *) nok "W35b: no coverage note for the unreadable file" "err='$wserr'" ;; esac
+  chmod 600 "$WG/noread"; rm -f "$WG/noread"
+else
+  ok "W35: SKIPPED as root, where nothing is unreadable -- unverified here, not verified"
+fi
+
+# --- The guard writes nothing: no index rewrite, no object. ---
+# Control leg first: on this same stale-stat tree a plain `git status` DOES rewrite the
+# index. Without that, the byte-identity below would pass with --no-optional-locks gone.
+touch -t 200201010000 "$WG/a"; cp "$WG/.git/index" "$TMP/wguard-index"
+git -C "$WG" status --porcelain >/dev/null 2>&1
+if cmp -s "$WG/.git/index" "$TMP/wguard-index"; then
+  nok "W36: control -- a plain git status did not rewrite the index, so W37 would be vacuous"
+else
+  ok "W36: control -- a plain git status rewrites the index on a stale-stat tree"
+fi
+touch -t 200301010000 "$WG/a"; cp "$WG/.git/index" "$TMP/wguard-index"
+wobj="$(git -C "$WG" count-objects | sed 's/ .*//')"
+wsnap; wcheck
+if cmp -s "$WG/.git/index" "$TMP/wguard-index" && [ "$(git -C "$WG" count-objects | sed 's/ .*//')" = "$wobj" ]; then
+  ok "W37: snapshot and check leave the index byte-identical and write no object"
+else
+  nok "W37: the guard wrote to the repository" "index-identical=$(cmp -s "$WG/.git/index" "$TMP/wguard-index" && echo y || echo n)"
+fi
+
+# --- Exit 2: never read as clean, and the message names the cause. ---
+wsnap
+wout="$( cd "$WG" && "$GUARD" check "$TMP/wguard.missing" 2>&1 )"; wrc=$?
+wcannot "W38: a missing snapshot" "is missing or unreadable"
+printf 'a\nb\n' > "$TMP/wguard.v1"
+wout="$( cd "$WG" && "$GUARD" check "$TMP/wguard.v1" 2>&1 )"; wrc=$?
+wcannot "W39: a v1 path-list snapshot" "is not a v2 workspace snapshot"
+sed '$d' "$WS" > "$TMP/wguard.noend"
+wout="$( cd "$WG" && "$GUARD" check "$TMP/wguard.noend" 2>&1 )"; wrc=$?
+wcannot "W40: a snapshot with its end line removed" "is truncated or corrupt"
+awk 'NR != 3' "$WS" > "$TMP/wguard.norec"
+wout="$( cd "$WG" && "$GUARD" check "$TMP/wguard.norec" 2>&1 )"; wrc=$?
+wcannot "W41: a snapshot with a record removed" "is truncated or corrupt"
+wout="$( cd "$TMP" && "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W42: a run outside a repository" "not a git repository"
+# git failing mid-build: a stub that fails only `status`, so the run gets past the repo
+# check and fails where the manifest is built.
+WGBIN="$TMP/wguard-gitstub"; mkdir -p "$WGBIN"
+printf '#!/bin/sh\ncase " $* " in *" status "*) exit 128 ;; esac\nexec %s "$@"\n' "$(command -v git)" > "$WGBIN/git"
+chmod +x "$WGBIN/git"
+wout="$( cd "$WG" && PATH="$WGBIN:$PATH" "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W43: git failing while the manifest is built" "git failed while the workspace was being recorded"
+
+# --- Paths that must round-trip without forging or hiding a record. ---
+WNL="$(printf 'n\nl')"; WTAB="$(printf 't\tab')"; WCR="$(printf 'cr\r')"
+printf '1\n' > "$WG/$WNL"; printf '2\n' > "$WG/$WTAB"; printf '3\n' > "$WG/pre"; printf '4\n' > "$WG/pre-x"
+printf '5\n' > "$WG/cr"; printf '6\n' > "$WG/$WCR"; printf '7\n' > "$WG/plain"; printf '8\n' > "$WG/\"plain\""
+wwedge "W44: newline, tab, prefix, CR and quote paths round-trip unchanged"
+printf '1b\n' > "$WG/$WNL"; printf '2b\n' > "$WG/$WTAB"; printf '3b\n' > "$WG/pre"
+printf '6b\n' > "$WG/$WCR"; printf '8b\n' > "$WG/\"plain\""
+wcheck
+wlines="$(printf '%s\n' "$wout" | grep -c '^  changed content: ')"
+case "$wout" in
+  *'changed content: n\nl '*'changed content: t\tab '*)
+    { [ "$wrc" = 1 ] && [ "$wlines" = 5 ]; } && ok "W45: a changed newline or tab path is named in its encoded form, five changes, five lines" \
+      || nok "W45: newline/tab paths" "rc=$wrc lines=$wlines out='$wout'" ;;
+  *) nok "W45: newline/tab paths" "rc=$wrc out='$wout'" ;;
+esac
+# `pre` changed and `pre-x` did not; `cr<CR>` changed and its twin `cr` did not; `"plain"`
+# changed and `plain` did not. Raw, `git hash-object --stdin-paths` would hash `cr` for
+# `cr<CR>` and `plain` for `"plain"`, with status 0 (measured), so those changes would be
+# invisible. Pins the C-quoting.
+case "$wout" in
+  *'changed content: pre-x '*|*'changed content: cr '*|*'changed content: plain '*)
+    nok "W46: an unchanged twin was reported" "out='$wout'" ;;
+  *'changed content: \"plain\" '*) case "$wout" in *'changed content: cr\r '*'changed content: pre '*)
+    ok "W46: CR and quote twins, and a prefix, are told apart" ;;
+    *) nok "W46: CR twin or prefix not seen" "out='$wout'" ;; esac ;;
+  *) nok "W46: the quoted path's change was not seen" "out='$wout'" ;;
+esac
+rm -f "$WG/$WNL" "$WG/$WTAB" "$WG/pre" "$WG/pre-x" "$WG/cr" "$WG/$WCR" "$WG/plain" "$WG/\"plain\""
+
+# --- Agreement: the guard records exactly the markers --revoke withdraws. ---
+# W47: the shared implementation is byte-identical, on F1's pattern, with a floor.
+_rn_body() { awk '/^revoke_names\(\)/{f=1;next} f{print} f&&/^\}$/{exit}' "$1"; }
+_rn_a="$(_rn_body "$WRITE")"; _rn_b="$(_rn_body "$GUARD")"
+if [ -n "$_rn_a" ] && [ -n "$_rn_b" ] && [ "$_rn_a" = "$_rn_b" ]; then
+  ok "W47: revoke_names is byte-identical in the marker writer and the workspace guard"
+else
+  nok "W47: revoke_names has drifted between the writer and the guard" \
+      "$({ [ -z "$_rn_a" ] || [ -z "$_rn_b" ]; } && echo 'extraction returned nothing -- the function shape changed' || diff <(printf '%s\n' "$_rn_a") <(printf '%s\n' "$_rn_b") | tr '\n' ' ')"
+fi
+# W48: derived, never copied. A branch, a branch with a same-named tag (two spellings), a
+# detached HEAD at the commit, and a branch at another commit. Every candidate gets a
+# marker; the guard's marker records must equal the names --revoke then withdraws.
+wg checkout -q main; wg branch -f wa; wg branch -f wdup; wg tag -f wdup; wg checkout -q --detach
+WGH="$(git -C "$WG" rev-parse HEAD)"
+for n in wa wdup heads/wdup HEAD main wfar; do
+  mkdir -p "$(dirname "$WGC/forgeward-gate-markers/$n.json")"; printf '{}\n' > "$WGC/forgeward-gate-markers/$n.json"
+done
+wguard_names="$( ( cd "$WG" && "$GUARD" snapshot "$WGH" 2>/dev/null ) | awk -F'\t' '$1 == "marker" { print $2 }' | sort)"
+wwriter_names="$( ( cd "$WG" && "$WRITE" --revoke "$WGH" 2>/dev/null ) \
+  | sed -n "s/^forgeward gate: withdrew the earlier PASS marker for '\(.*\)'; .*/\1/p" | sort)"
+wn="$(printf '%s\n' "$wguard_names" | grep -c .)"
+if [ "$wn" -ge 5 ] && [ "$wguard_names" = "$wwriter_names" ]; then
+  case "$wguard_names" in *wfar*) nok "W48: a marker at another commit was recorded" ;;
+    *) ok "W48: the guard records exactly the $wn markers --revoke withdraws (derived on a same-named tag and a detached HEAD)" ;; esac
+else
+  nok "W48: the guard's marker list and --revoke's disagree" \
+      "guard=[$(echo $wguard_names)] writer=[$(echo $wwriter_names)]"
+fi
+wg checkout -q main
+
+# --- Tools: only git, bash, sort, comm, awk and readlink on PATH. ---
+WGT="$TMP/wguard-tools"; mkdir -p "$WGT"
+for t in git bash sort comm awk readlink; do ln -sf "$(command -v "$t")" "$WGT/$t"; done
+wh="$(git -C "$WG" rev-parse HEAD)"
+( cd "$WG" && PATH="$WGT" "$GUARD" snapshot "$wh" ) > "$WS" 2>/dev/null; wtsrc=$?
+printf 'x\n' > "$WG/tool.txt"
+wout="$( cd "$WG" && PATH="$WGT" "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+rm -f "$WG/tool.txt"; sed '$d' "$WS" > "$TMP/wguard.tnoend"
+wout2="$( cd "$WG" && PATH="$WGT" "$GUARD" check "$TMP/wguard.tnoend" 2>&1 )"; wrc2=$?
+case "$wout|$wout2" in
+  *"new path: tool.txt"*"|"*"is truncated or corrupt"*)
+    { [ "$wtsrc" = 0 ] && [ "$wrc" = 1 ] && [ "$wrc2" = 2 ]; } \
+      && ok "W49: detection and exit 2 work with PATH holding only git, bash, sort, comm, awk and readlink" \
+      || nok "W49: restricted PATH" "snapshot=$wtsrc check=$wrc truncated=$wrc2" ;;
+  *) nok "W49: restricted PATH" "snapshot=$wtsrc out='$wout' out2='$wout2'" ;;
+esac
+
+# --- W50..W59: the holes the final whole-branch reviews found. ---
+# W50 (final review, A1): `$(…)` strips a trailing newline and git does not, so a
+# core.hooksPath that gains a LF runs hooks from another directory. Pin: it fires.
+wg config core.hooksPath .hk; wsnap; wg config core.hooksPath $'.hk\n'
+wfires "W50: core.hooksPath gaining a trailing newline" "core.hooksPath changed"
+wg config --unset core.hooksPath
+# W51/W52: an entry flagged BEFORE the snapshot is invisible to `git status`, and the index
+# hash does not move when it is edited. W51 skip-worktree, W52 assume-unchanged.
+wg update-index --skip-worktree b; wsnap; printf 'edited\n' >> "$WG/b"
+wfires "W51: a file flagged skip-worktree before the snapshot, edited" "changed: b (flagged skip-worktree or assume-unchanged, so git status does not show it)"
+wg update-index --no-skip-worktree b; printf 'b\n' > "$WG/b"
+wg update-index --assume-unchanged a; wsnap; printf 'edited\n' >> "$WG/a"
+wfires "W52: a file flagged assume-unchanged before the snapshot, edited" "changed: a (flagged skip-worktree or assume-unchanged, so git status does not show it)"
+wg update-index --no-assume-unchanged a; printf 'a\n' > "$WG/a"
+# W53: a flagged entry ABSENT at snapshot gets no record (a sparse checkout's normal state),
+# so the unchanged tree is quiet; creating the file reads as new.
+wg update-index --skip-worktree d/e/c; rm -f "$WG/d/e/c"; wsnap
+{ [ "$wsrc" = 0 ] && [ "$(awk -F'\t' '$1 == "flagged"' "$WS" | grep -c .)" = 0 ]; } \
+  && ok "W53a: an absent flagged entry has no record" || nok "W53a: an absent flagged entry was recorded" "snapshot=$wsrc"
+wquiet "W53b: a flagged entry absent at snapshot, tree unchanged"
+printf 'c\n' > "$WG/d/e/c"
+wfires "W53c: a flagged entry created after the snapshot" "new: d/e/c (flagged skip-worktree or assume-unchanged"
+wg update-index --no-skip-worktree d/e/c
+# W54: a failed stash lookup is a git failure, not "no stash". The stub fails only the
+# refs/stash lookup; the control leg is the real git on an unchanged tree.
+wsnap
+WGSB="$TMP/wguard-stashstub"; mkdir -p "$WGSB"
+printf '#!/bin/sh\ncase " $* " in *" refs/stash "*) exit 128 ;; esac\nexec %s "$@"\n' "$(command -v git)" > "$WGSB/git"
+chmod +x "$WGSB/git"
+wout="$( cd "$WG" && PATH="$WGSB:$PATH" wto "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W54: git failing the stash lookup" "git failed while the workspace was being recorded"
+wquiet "W54b (control): the real git on the unchanged tree"
+# W55: after `git rm --cached` git lists the path twice (`D ` and `??`). An unchanged tree
+# must still check clean (the wedge), and an edit is a content change, not a new path.
+wg rm -q --cached b; wwedge "W55: git rm --cached on a tracked file, unchanged tree"
+printf 'edited\n' >> "$WG/b"
+wfires "W55b: an untracked-from-index file edited" "changed content: b"
+case "$wout" in *"new path"*|*'rm -rf'*) nok "W55c: a file untracked from the index is called a new path" "out='$wout'" ;;
+  *) ok "W55c: no new-path report and no rm advice for a file untracked from the index" ;; esac
+wg add b; printf 'b\n' > "$WG/b"
+# W56: a check run from another linked worktree is not the snapshot's worktree.
+wg checkout -q --detach; wsnap
+wg worktree add -q --detach "$TMP/wguard-wt2" HEAD
+wcheck "$TMP/wguard-wt2"
+case "$wout" in *"this check ran in another worktree than the snapshot"*)
+  [ "$wrc" != 0 ] && ok "W56: a check from another linked worktree differs" || nok "W56: exit status" "rc=$wrc out='$wout'" ;;
+  *) nok "W56: another worktree was not noticed" "rc=$wrc out='$wout'" ;; esac
+wg worktree remove --force "$TMP/wguard-wt2"; wg checkout -q main
+# W57: PINNED BLIND SPOT, ruling C2. The hooks record covers the entries DIRECTLY in the
+# effective hooks directory; a subdirectory is one `dir` record and the files below it are
+# not followed. This repo owns that rule, so the day this reddens, design §5.4 and the
+# guard's header must change with it.
+mkdir -p "$WG/.git/hooks/sub"; printf 'x\n' > "$WG/.git/hooks/sub/helper"; wsnap
+printf 'y\n' > "$WG/.git/hooks/sub/helper"; wcheck
+{ [ "$wrc" = 0 ] && [ -z "$wout" ] && [ "$(awk -F'\t' '$1 == "hook" && $2 == "sub" && $3 == "dir"' "$WS" | grep -c .)" = 1 ]; } \
+  && ok "W57: a file below a hooks subdirectory is not followed (pinned blind spot): one 'dir' record, check exits 0" \
+  || nok "W57: the hooks-subdirectory ruling changed" "rc=$wrc out='$wout'"
+rm -rf "$WG/.git/hooks/sub"
+# W58 (final review F5): an untracked directory holding a file at snapshot, and a new file
+# written inside it. Pins --untracked-files=all (the default collapses it to `dir/`).
+mkdir -p "$WG/udir"; printf '1\n' > "$WG/udir/one"; wsnap; printf '2\n' > "$WG/udir/two"
+wfires "W58: a new file inside an already-untracked directory" "new path: udir/two"
+rm -rf "$WG/udir"
+# W59 (final review F5): submodule.<name>.ignore=all hides a submodule's new commit from a
+# default `git status`. Pins --ignore-submodules=none. Own repo: it adds a submodule.
+WGSAVE="$WG"; WG="$TMP/wguard-sm"; WGSRC="$TMP/wguard-smsrc"
+mkrepo "$WGSRC"; ( cd "$WGSRC" && printf 's\n' > s && git add s && git commit -qm s ) >/dev/null 2>&1
+mkrepo "$WG"; ( cd "$WG" && printf 'a\n' > a && git add a && git commit -qm base \
+  && git -c protocol.file.allow=always submodule add -q "$WGSRC" sm && git commit -qm sm \
+  && git config submodule.sm.ignore all ) >/dev/null 2>&1
+wsnap; git -C "$WG/sm" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m inner >/dev/null 2>&1
+wfires "W59: a commit inside a submodule marked ignore=all" "changed: sm"
+WG="$WGSAVE"
+
+# --- W60..W62: the holes the gstack /review outside pass found (2026-11-17). ---
+# W60: a worktree whose path ENDS in a newline, beside a sibling without it at the same
+# commit. `$(…)` strips trailing newlines, so a toplevel read without a sentinel enters the
+# sibling and checks the wrong tree. Own repos.
+WGSAVE="$WG"; WG="$TMP/wguard-nl"$'\n'; mkrepo "$WG"
+( cd "$WG" && printf 'a\n' > a && git add a && git commit -qm base ) >/dev/null 2>&1
+git clone -q "$WG" "$TMP/wguard-nl" >/dev/null 2>&1
+wsnap; printf 'x\n' > "$WG/leak"
+wfires "W60: a write in a worktree whose path ends in a newline, beside a sibling without it" "new path: leak"
+# W60b: the same stripping in the nested-repository test read a nested repo whose name ends
+# in a newline as unreadable, so a commit inside it was not seen.
+rm -f "$WG/leak"; mkrepo "$WG/nest"$'\n'
+( cd "$WG/nest"$'\n' && printf 'n\n' > n && git add n && git commit -qm inner ) >/dev/null 2>&1; wsnap
+case "$(cat "$WS")" in
+  *"repo:unreadable"*) nok "W60b: a nested repo whose name ends in a newline was recorded as unreadable" "snapshot=$wsrc" ;;
+  *" repo:$(git -C "$WG/nest"$'\n' rev-parse HEAD)"*) ok "W60b: a nested repo whose name ends in a newline is recorded by its commit" ;;
+  *) nok "W60b: no record of the nested repo's commit" "snapshot=$wsrc" ;;
+esac
+WG="$WGSAVE"
+# W61a/b: a config value spelling the placeholder for "not set" (`unset` for core.hooksPath,
+# `absent` for forgeward.gate) must not read as not set. Both hooks directories hold the
+# same entries and the new one is excluded, so only the config record can see the change.
+mkdir -p "$WG/unset" "$WG/.git/info"; cp -pR "$WG/.git/hooks/." "$WG/unset/"
+cp "$WG/.git/info/exclude" "$TMP/wguard-exclude" 2>/dev/null || : > "$TMP/wguard-exclude"
+printf 'unset\n' >> "$WG/.git/info/exclude"
+wsnap; wg config core.hooksPath unset
+wfires "W61a: core.hooksPath set to the literal value 'unset'" "core.hooksPath changed"
+wg config --unset core.hooksPath
+wsnap; wg config forgeward.gate absent
+wfires "W61b: forgeward.gate set to the literal value 'absent'" "forgeward.gate changed"
+wg config --unset forgeward.gate; rm -rf "$WG/unset"; cat "$TMP/wguard-exclude" > "$WG/.git/info/exclude"
+# W62: the comparison itself failing is exit 2, never a clean check. The stub fails only the
+# comparison's awk (four arguments, the last `-`); the snapshot is valid, so validation
+# passes and the comparison is what fails. W40 cannot see this: a truncated snapshot stops
+# at validation, before the comparison runs.
+wsnap
+WGAW="$TMP/wguard-awkstub"; mkdir -p "$WGAW"
+printf '#!/bin/sh\n[ "$#" = 4 ] && [ "$4" = - ] && exit 2\nexec %s "$@"\n' "$(command -v awk)" > "$WGAW/awk"
+chmod +x "$WGAW/awk"
+wout="$( cd "$WG" && PATH="$WGAW:$PATH" wto "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W62: the comparison failing on a valid snapshot" "the two manifests could not be compared"
+wquiet "W62b (control): the real awk on the unchanged tree"
+
+# P9c (B1): the directory handed out is checked, not only the root. A symlinked
+# <root>/forgeward-artifacts that points into the repo must not be returned.
+_p9c="$TMP/p9c-root"; mkdir -p "$_p9c"; ln -s "$R" "$_p9c/forgeward-artifacts"
+_rt="$(repo_tree "$R")"
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_p9c" "$ARTDIR" )"; _adrc=$?; AD_OUT+=("$_ad")
+_adp="$(cd "$_ad" 2>/dev/null && pwd -P)"
+case "${_adp:-/}/" in
+  "$_rp"/*|//) nok "P9c: a symlinked forgeward-artifacts into the repo must not be handed out" "rc=$_adrc got '$_ad' -> '$_adp'" ;;
+  *) [ "$_adrc" = 0 ] && ok "P9c: a symlinked <root>/forgeward-artifacts into the repo is refused" \
+       || nok "P9c: exit status" "rc=$_adrc" ;;
+esac
+# ...and refused BEFORE the mkdir: without the pre-mkdir refusal the per-process directory
+# is created inside the repo through the symlink, then refused, and left there.
+_new="$(comm -13 <(printf '%s\n' "$_rt") <(repo_tree "$R"))"
+[ -z "$_new" ] && ok "P9c: nothing is created inside the repo through the symlink" \
+  || nok "P9c: a path was created inside the repo through the symlink" "${_new//$'\n'/ }"
+# P9d: a nonexistent root falls back under /tmp (the documented fallback, now pinned).
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$TMP/p9d-nonexistent" "$ARTDIR" )"; AD_OUT+=("$_ad")
+case "$_ad" in /tmp/*) [ -d "$_ad" ] && ok "P9d: a nonexistent root falls back under /tmp" || nok "P9d: fallback dir missing" "$_ad" ;;
+  *) nok "P9d: a nonexistent root did not fall back under /tmp" "got '$_ad'" ;; esac
 
 # P11/P12: the LIVE filesystem behaviour, with a stub that writes its report exactly
 # the way a scanner's -o does (makedirs + open on the path it was handed). Real
