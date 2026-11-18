@@ -417,11 +417,12 @@ code whatever their extension:
   (authorization, a cap, a redaction, a verdict). A tests-only diff fires the gate class
   when it does this.
 - a **file a tool executes as instructions**: a reviewer or agent prompt, a skill or gate
-  procedure, a lint or scanner rule file, including its allowlist or ignore file. In
-  forgeward's own repository that is `agents/*.md`, `skills/*/SKILL.md` and everything
-  under `rules/`: the two Semgrep packs (`*.yml`) and the push-time Gitleaks config and
-  ignore file (`gitleaks-pre-push.toml`, `gitleaks-pre-push.ignore`). An entry added to
-  that ignore file is an allowlist change.
+  procedure, a lint or scanner rule file, including its allowlist or ignore file, and a
+  repo's `CLAUDE.md` or `AGENTS.md`, which Claude Code and Codex load as project
+  instructions. In forgeward's own repository that is `CLAUDE.md`, `agents/*.md`,
+  `skills/*/SKILL.md` and everything under `rules/`: the two Semgrep packs (`*.yml`) and
+  the push-time Gitleaks config and ignore file (`gitleaks-pre-push.toml`,
+  `gitleaks-pre-push.ignore`). An entry added to that ignore file is an allowlist change.
 - **CI configuration, its mute lists, and the hook registrations that wire a check into a
   runtime.** In forgeward's own repository that is `.github/workflows/*.yml`;
   `ci/relanded-prs.txt`, the acknowledgement list `ci/check-merged-prs-landed.sh` skips;
@@ -433,8 +434,8 @@ code whatever their extension:
 Ordinary documentation does not fire the gate class, and neither do tests that only add
 inert fixtures or new cases. **That exemption is from the gate class only.** A fixture that
 holds a credential, or a test that makes a paid call, fires secret or money exactly as any
-other file does. A repo's `CLAUDE.md` or `AGENTS.md` counts as documentation here: it
-instructs whoever next edits the repo, and no gate or check reads it as instructions.
+other file does. A repo's `CLAUDE.md` or `AGENTS.md` is not ordinary documentation: it is
+gate code, above, because the agent sessions that work in the repo run under it.
 
 **When you fire `targeted` but cannot tell which class applies, pass all four**, as
 `targeted(money,gate,auth,secret)`. That is "when unsure, fire it" applied to the classes,
@@ -455,7 +456,8 @@ other entry.
 
 - a stylesheet of design tokens, `tokens.css`;
 - marketing copy on a pricing page, `pricing.mdx`;
-- README or CHANGELOG prose, and a repo's `CLAUDE.md` or `AGENTS.md`;
+- README or CHANGELOG prose, for the gate class only. Prose that holds a credential is
+  secret code like any other file.
 - a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case
   that makes a paid call, reads a secret or checks an identity is money, secret or auth
   code like any other, and a fixture holding a credential is not inert.
@@ -478,9 +480,10 @@ other entry.
 - a diff that only bumps a gitlink. It shows two commit ids and none of the submodule's
   lines, so this step cannot classify it, and it fires `targeted` only when something else
   in the diff does. Where `targeted` fires and the submodule's objects are present, the
-  reviewer reads the range (`git -C <path> diff <old> <new>`). Where they are not, it says
-  so, and that range is outside what it reviewed. Step 1b's submodule disclosure is the
-  user's notice.
+  reviewer reads the range
+  (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). Where they are
+  not, it says so, and that range is outside what it reviewed. Step 1b's submodule
+  disclosure is the user's notice.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 

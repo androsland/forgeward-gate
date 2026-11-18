@@ -707,7 +707,7 @@ untested path they cannot prove untested, an endpoint they cannot prove publishe
 
 ### Run B — the positive control
 
-Run A is an assertion that five reviewers stayed quiet, and a reviewer that never fires is
+Run A is an assertion that five quality reviewers stayed quiet, and a reviewer that never fires is
 also quiet. Run B is what separates the two.
 
 ```bash
@@ -762,7 +762,7 @@ itself a Run A finding. Run **`/forgeward:gate`** again.
   include the new `currency` column. If `performance` or `api-contract` also turns red on
   the migration commit, that is a scope leak worth recording.
 
-If Run B passes cleanly, Run A's five PASSes mean nothing and the section is void — say
+If Run B passes cleanly, Run A's five quality PASSes mean nothing and the section is void — say
 so rather than stamping it.
 
 ### Run C — `targeted`'s positive control

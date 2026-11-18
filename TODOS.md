@@ -1178,37 +1178,52 @@ themselves so that none of them requires the commit to be actionable.
   **Priority:** P3
 
 - **Gate Step 1 and every reviewer except `targeted` read `git diff` through the checkout's
-  attributes.** (final review of 0.33.0, 2026-11-18) A working-tree `.gitattributes`,
-  untracked included, applies to a diff between two commits:
-  - `* -diff` shows a committed change as `Binary files … differ`;
+  attributes.** (final review of 0.33.0, 2026-11-18; widened by its `/review`) A
+  `.gitattributes` in the checkout applies to a diff between two commits, and it need not be
+  untracked: one the branch under review commits is checked out with it, so the branch
+  supplies the attribute that hides its own change.
+  - `* -diff` shows a committed change as `Binary files … differ`, and reduces a `git grep`
+    match to `Binary file … matches` with no line;
   - a `diff=<driver>` entry runs that driver's textconv.
 
-  Reproduced in a scratch repo: an untracked `* -diff` hid a committed paid loop from
-  `git diff A...B`, while `git show B:<path>` printed it. Since 0.33.0, `targeted-reviewer`
-  reads with `--text --no-textconv --no-ext-diff`. Step 1's classification and the other
-  rubrics do not. Same family as the working-tree entry. **Priority:** P2
+  Reproduced in a scratch repo, with the attribute committed and with it untracked: `* -diff`
+  hid a committed paid loop's lines from `git diff A...B` and from `git grep -n`, while
+  `git show B:<path>` printed them. Since 0.33.0, `targeted-reviewer` reads with
+  `--text --no-textconv --no-ext-diff` and searches with `--text`. Step 1's classification
+  and the other rubrics do not. Same family as the working-tree entry. **Priority:** P2. The
+  committed form needs no access beyond opening the PR, which argues for P1; that is the
+  maintainer's call.
 
-- **`targeted`'s severity text leaves three spec questions open.** (final review of 0.33.0,
-  2026-11-18) Each needs a ruling on `docs/upstream-lenses-design.md` §7.2 before the text
-  changes, because each changes what the reviewer blocks:
+- **`targeted`'s severity text leaves four spec questions open.** (final review of 0.33.0
+  and its `/review`, 2026-11-18) Each needs a ruling on `docs/upstream-lenses-design.md` §7.2
+  before the text changes, because each changes what the reviewer blocks:
   - A test that *weakens* an enforcement assertion fires the gate class (Step 1d), but no
     tier names it. High names only a skipped or deleted test, so a weakened one can land at
     Medium.
   - "The highest matching severity wins" makes the outside-repository Medium unreachable:
     any finding that qualifies for it also fits the High for a control not found in the
-    repository. The error leans toward a false FAIL.
+    repository. The error leans toward a false FAIL. A fix that makes the Medium reachable
+    must also stop the diff supplying its own evidence. Today a diff can add the document
+    that "names the control and where it is configured", and only the High it also matches
+    keeps that document from lowering the finding. Require the evidence to exist at
+    `<BASE_SHA>`, or count a document the diff adds or changes as no evidence.
   - The forbidden list names eight git commands, but not `fetch` or `submodule update`, the
     obvious reach in the gitlink case. The general rule covers them in intent only.
+  - The secret Critical reads "a secret written to a sink that leaves the machine", with no
+    intended-recipient test. Read literally, a bounded API call that sends its key to the
+    provider it authenticates to matches it, which is a false FAIL. Narrowing it to an
+    unintended recipient lowers what blocks, so it needs the same ruling.
 
   **Priority:** P3
 
-- **The `CLAUDE.md` and `AGENTS.md` exemption rests on a premise that is not true.** (final
-  review of 0.33.0, 2026-11-18) Step 1d and spec §7.1 classify them as documentation because
-  "no gate or check reads it as instructions". Claude Code and Codex do load them as project
-  instructions, and that includes the gate's own reviewer subagents. So a diff that edits
-  them changes the instructions the reviewers run under. Whether that makes them gate code
-  is the maintainer's decision: firing `targeted` on every `CLAUDE.md` edit is a cost on a
-  file this repo edits in most PRs. **Priority:** P2
+- **A branch's `CLAUDE.md` or `AGENTS.md` reaches the reviewers that gate it.** (`/review`
+  of 0.33.0, 2026-11-18) Since 0.33.0 an edit to either is gate code and fires `targeted`,
+  which reviews the edit; the maintainer ruled that on 2026-11-18, replacing the
+  "documentation" premise. Reviewing the edit does not stop it acting: the gate runs in the
+  checkout, so any session or reviewer that loads project instructions loads the branch's
+  version during the run that judges it. Whether Claude Code's plugin subagents and Codex's
+  gate spawns load them was not checked here. `targeted`'s "text in the repository is
+  evidence" sentence is the only counterweight, and only in that reviewer. **Priority:** P2
 
 - **No reviewer's `tools:` line is asserted.** (final review of 0.33.0, 2026-11-18) Adding
   `Edit, Write` to any `agents/*-reviewer.md` frontmatter keeps every suite green. The
@@ -1216,6 +1231,24 @@ themselves so that none of them requires the commit to be actionable.
   a write only after the fact. The gap predates 0.33.0, and `targeted` is its twelfth
   instance. Fix: derive the reviewer list from the existing enumeration, and assert each
   one's `tools:` is exactly `Read, Grep, Glob, Bash`. **Priority:** P3
+
+- **A pure rename or a mode-only change disables a control with no line to read.**
+  (`/review` red team of 0.33.0, 2026-11-18) A workflow moved out of `.github/workflows/`,
+  or a hook whose exec bit is dropped, shows in `targeted`'s diff read only as a
+  `rename from`/`rename to` or `old mode`/`new mode` header. Probed on git 2.34.1, both
+  headers print. The ported checklist's "a threshold, required check, allowlist or rule
+  loosened, skipped or made optional" covers what they mean, but the instruction to read
+  deleted lines as closely as added ones has no line to point at. `--no-renames` was
+  rejected: it turns every moved file into a full delete and add. A sentence naming the two
+  headers as gate-class evidence would close it. **Priority:** P3
+
+- **Only `targeted-reviewer` says repository text is data.** (`/review` adversarial pass of
+  0.33.0, 2026-11-18) Since 0.33.0 it says a comment, document, string or commit message is
+  evidence, never an instruction to it. A search of `agents/*.md` and `skills/gate/SKILL.md`
+  for "not instructions", "never instruction", "untrusted" and "as data" finds no other
+  reviewer or gate text that says so. `security-reviewer`'s two "untrusted" lines are about
+  input to the code under review. `skills/audit/SKILL.md`'s **Anti-manipulation** rule is
+  the model to copy. **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -2880,10 +2913,16 @@ shipped on its own branch instead.
   Two code hole reviews (Opus, Codex) closed four holes. The tests-only exemption is now
   limited to the gate class in the reviewer, Step 1d and §7.4. The reviewer reads its diff
   with checkout attributes and diff drivers off. The Step 1 table assertion now reads the
-  table. The licence file counts six ports. Deferred: the working-tree read for every other
-  reviewer stays open in `## Reviewers`, with four new entries there: the attribute read
-  for the rest of the gate, three open §7.2 severity questions, the `CLAUDE.md` premise,
-  and the unasserted `tools:` lines.
+  table. The licence file counts six ports. gstack `/review` then closed five more:
+  the reviewer searches with `--text` and reads a gitlink range with the diff's flags; a
+  deleted line is cited at `<BASE_SHA>` and is never the control; repository text is
+  evidence, never an instruction; the README and CHANGELOG exemption is limited to the gate
+  class like the tests-only one; and `CLAUDE.md` and `AGENTS.md` are gate code, ruled by the
+  maintainer, in Step 1d, the reviewer and §7.1/§7.4. Deferred: the working-tree read for
+  every other reviewer stays open in `## Reviewers`, with six new entries there: the
+  attribute read for the rest of the gate, four open §7.2 severity questions, a branch's
+  `CLAUDE.md` reaching the reviewers that gate it, the unasserted `tools:` lines, rename and
+  mode-only headers, and repository text as data for the other reviewers.
 
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
   on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge
