@@ -60,7 +60,20 @@ denies()  { case "$1" in *'"permissionDecision": "deny"'*) return 0 ;; *) return
 
 # --- scratch repo on the same shape as the demo (main + feature) ---
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forgeward-test.XXXXXX")"
-cleanup() { rm -rf "$TMP"; }
+# AD_OUT: directories forgeward-artifact-dir.sh handed out (P9..P9d). Its fallbacks are
+# hard-coded under the real /tmp, outside $TMP, so the trap removes them too. Only one path
+# component below /tmp is ever removed; anything with a further `/` is left alone.
+AD_OUT=()
+cleanup() {
+  local d
+  for d in ${AD_OUT[@]+"${AD_OUT[@]}"}; do
+    case "$d" in
+      /tmp/forgeward-artifacts/*/*|/tmp/forgeward-artifacts.*/*) ;;
+      /tmp/forgeward-artifacts/[0-9]*|/tmp/forgeward-artifacts.??????) rm -rf -- "$d" ;;
+    esac
+  done
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 R="$TMP/repo"
 git init -q "$R"; cd "$R"
@@ -2171,7 +2184,7 @@ _p8r_got="$(printf '%s\n' "${_p8r_at[@]}" | sort -n)"
   || nok "audit P8r: the recipe census" "$_p8r_bad"
 
 # P9: the artifact dir is POSIX-absolute, exists, and is OUTSIDE the repo.
-ad="$( cd "$R" && "$ARTDIR" )"
+ad="$( cd "$R" && "$ARTDIR" )"; AD_OUT+=("$ad")
 case "$ad" in
   /*) ok "artifact dir: POSIX-absolute ('$ad')" ;;
   *)  nok "artifact dir posix-absolute" "got: '$ad'" ;;
@@ -2187,13 +2200,22 @@ esac
 # the gate's own workspace snapshot would read as a new path on every run.
 _rp="$(cd "$R" && pwd -P)"
 ln -s "$R" "$TMP/repo-alias"; mkdir -p "$TMP/walk"
+# repo_tree <dir>: every path below <dir> except .git, sorted. `git status` lists no empty
+# directory, so it cannot witness that a call created nothing inside the repo; this can.
+repo_tree() { find "$1" -path "$1/.git" -prune -o -print | sort; }
+_rt="$(repo_tree "$R")"
 for _root in "$TMP/repo-alias" "$TMP/walk/../repo"; do
-  _ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_root" "$ARTDIR" )"
+  _ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_root" "$ARTDIR" )"; AD_OUT+=("$_ad")
   _adp="$(cd "$_ad" 2>/dev/null && pwd -P)"
   case "${_adp:-/}/" in
     "$_rp"/*|//) nok "artifact dir: a root of '${_root#"$TMP"/}' must resolve outside the repo" "got '$_ad' -> '$_adp'" ;;
     *) ok "artifact dir: a root of '${_root#"$TMP"/}' that resolves into the repo is refused" ;;
   esac
+  # Handing out a directory outside is not enough: one created inside on the way (a root
+  # compared as text, not by physical path, mkdirs through the alias first) is left behind.
+  _new="$(comm -13 <(printf '%s\n' "$_rt") <(repo_tree "$R"))"
+  [ -z "$_new" ] && ok "artifact dir: a root of '${_root#"$TMP"/}' creates nothing inside the repo" \
+    || nok "artifact dir: a root of '${_root#"$TMP"/}' created a path inside the repo" "${_new//$'\n'/ }"
 done
 
 # P10: the workspace guard catches ANY new untracked path a reviewer leaves behind —
@@ -2313,7 +2335,7 @@ wsnap; printf '#!/bin/sh\nexit 0\n' > "$WG/.git/hooks/pre-push.local"
 wfires "W14: pre-push.local changing" "hook file changed: pre-push.local"
 rm -f "$WG/.git/hooks/pre-push" "$WG/.git/hooks/pre-push.local"
 wg config forgeward.gate enabled; wsnap; wg config --unset forgeward.gate
-wfires "W15: forgeward.gate unset" "forgeward.gate changed (was enabled, now absent)"
+wfires "W15: forgeward.gate unset" "forgeward.gate changed (was 'enabled', now absent)"
 # The run file, written the way a reviewer holding Bash would: the real writer's --revoke.
 wsnap; ( cd "$WG" && "$WRITE" --revoke "$(git rev-parse HEAD)" ) >/dev/null 2>&1
 wfires "W16: this commit's run file" "gate run file changed"
@@ -2594,18 +2616,67 @@ wsnap; git -C "$WG/sm" -c user.email=t@t.t -c user.name=t commit -q --allow-empt
 wfires "W59: a commit inside a submodule marked ignore=all" "changed: sm"
 WG="$WGSAVE"
 
+# --- W60..W62: the holes the gstack /review outside pass found (2026-11-17). ---
+# W60: a worktree whose path ENDS in a newline, beside a sibling without it at the same
+# commit. `$(…)` strips trailing newlines, so a toplevel read without a sentinel enters the
+# sibling and checks the wrong tree. Own repos.
+WGSAVE="$WG"; WG="$TMP/wguard-nl"$'\n'; mkrepo "$WG"
+( cd "$WG" && printf 'a\n' > a && git add a && git commit -qm base ) >/dev/null 2>&1
+git clone -q "$WG" "$TMP/wguard-nl" >/dev/null 2>&1
+wsnap; printf 'x\n' > "$WG/leak"
+wfires "W60: a write in a worktree whose path ends in a newline, beside a sibling without it" "new path: leak"
+# W60b: the same stripping in the nested-repository test read a nested repo whose name ends
+# in a newline as unreadable, so a commit inside it was not seen.
+rm -f "$WG/leak"; mkrepo "$WG/nest"$'\n'
+( cd "$WG/nest"$'\n' && printf 'n\n' > n && git add n && git commit -qm inner ) >/dev/null 2>&1; wsnap
+case "$(cat "$WS")" in
+  *"repo:unreadable"*) nok "W60b: a nested repo whose name ends in a newline was recorded as unreadable" "snapshot=$wsrc" ;;
+  *" repo:$(git -C "$WG/nest"$'\n' rev-parse HEAD)"*) ok "W60b: a nested repo whose name ends in a newline is recorded by its commit" ;;
+  *) nok "W60b: no record of the nested repo's commit" "snapshot=$wsrc" ;;
+esac
+WG="$WGSAVE"
+# W61a/b: a config value spelling the placeholder for "not set" (`unset` for core.hooksPath,
+# `absent` for forgeward.gate) must not read as not set. Both hooks directories hold the
+# same entries and the new one is excluded, so only the config record can see the change.
+mkdir -p "$WG/unset" "$WG/.git/info"; cp -pR "$WG/.git/hooks/." "$WG/unset/"
+cp "$WG/.git/info/exclude" "$TMP/wguard-exclude" 2>/dev/null || : > "$TMP/wguard-exclude"
+printf 'unset\n' >> "$WG/.git/info/exclude"
+wsnap; wg config core.hooksPath unset
+wfires "W61a: core.hooksPath set to the literal value 'unset'" "core.hooksPath changed"
+wg config --unset core.hooksPath
+wsnap; wg config forgeward.gate absent
+wfires "W61b: forgeward.gate set to the literal value 'absent'" "forgeward.gate changed"
+wg config --unset forgeward.gate; rm -rf "$WG/unset"; cat "$TMP/wguard-exclude" > "$WG/.git/info/exclude"
+# W62: the comparison itself failing is exit 2, never a clean check. The stub fails only the
+# comparison's awk (four arguments, the last `-`); the snapshot is valid, so validation
+# passes and the comparison is what fails. W40 cannot see this: a truncated snapshot stops
+# at validation, before the comparison runs.
+wsnap
+WGAW="$TMP/wguard-awkstub"; mkdir -p "$WGAW"
+printf '#!/bin/sh\n[ "$#" = 4 ] && [ "$4" = - ] && exit 2\nexec %s "$@"\n' "$(command -v awk)" > "$WGAW/awk"
+chmod +x "$WGAW/awk"
+wout="$( cd "$WG" && PATH="$WGAW:$PATH" wto "$GUARD" check "$WS" 2>&1 )"; wrc=$?
+wcannot "W62: the comparison failing on a valid snapshot" "the two manifests could not be compared"
+wquiet "W62b (control): the real awk on the unchanged tree"
+
 # P9c (B1): the directory handed out is checked, not only the root. A symlinked
 # <root>/forgeward-artifacts that points into the repo must not be returned.
 _p9c="$TMP/p9c-root"; mkdir -p "$_p9c"; ln -s "$R" "$_p9c/forgeward-artifacts"
-_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_p9c" "$ARTDIR" )"; _adrc=$?
+_rt="$(repo_tree "$R")"
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$_p9c" "$ARTDIR" )"; _adrc=$?; AD_OUT+=("$_ad")
 _adp="$(cd "$_ad" 2>/dev/null && pwd -P)"
 case "${_adp:-/}/" in
   "$_rp"/*|//) nok "P9c: a symlinked forgeward-artifacts into the repo must not be handed out" "rc=$_adrc got '$_ad' -> '$_adp'" ;;
   *) [ "$_adrc" = 0 ] && ok "P9c: a symlinked <root>/forgeward-artifacts into the repo is refused" \
        || nok "P9c: exit status" "rc=$_adrc" ;;
 esac
+# ...and refused BEFORE the mkdir: without the pre-mkdir refusal the per-process directory
+# is created inside the repo through the symlink, then refused, and left there.
+_new="$(comm -13 <(printf '%s\n' "$_rt") <(repo_tree "$R"))"
+[ -z "$_new" ] && ok "P9c: nothing is created inside the repo through the symlink" \
+  || nok "P9c: a path was created inside the repo through the symlink" "${_new//$'\n'/ }"
 # P9d: a nonexistent root falls back under /tmp (the documented fallback, now pinned).
-_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$TMP/p9d-nonexistent" "$ARTDIR" )"
+_ad="$( cd "$R" && FORGEWARD_ARTIFACT_ROOT="$TMP/p9d-nonexistent" "$ARTDIR" )"; AD_OUT+=("$_ad")
 case "$_ad" in /tmp/*) [ -d "$_ad" ] && ok "P9d: a nonexistent root falls back under /tmp" || nok "P9d: fallback dir missing" "$_ad" ;;
   *) nok "P9d: a nonexistent root did not fall back under /tmp" "got '$_ad'" ;; esac
 

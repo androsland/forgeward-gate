@@ -715,7 +715,9 @@ and say that the earlier PASS it names may still authorize a push.
   flags refused) and take any scratch directory from `scripts/forgeward-artifact-dir.sh`.
   A `PreToolUse` deny and the workspace guard back that up, because the same reviewer
   broke this contract twice — the second time with a spawn prompt that explicitly
-  forbade it. Do not treat an instruction as a control. The guard records more than
+  forbade it. Do not treat an instruction as a control, and do not treat the guard as
+  complete either: it does not see a gitignored write, an empty directory, or a write made
+  after its check, so the instruction still binds. The guard records more than
   paths: the index, `HEAD`, the stash, the hooks, the `forgeward.gate` switch, and this
   commit's run file and markers, so a change to any of them while reviewers ran halts the
   run too.

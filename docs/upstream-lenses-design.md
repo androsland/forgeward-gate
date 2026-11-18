@@ -665,9 +665,15 @@ The guard's entries go into its header list, which stays the only maintained cop
 
 - **Writes to gitignored paths.** Snapshotting ignored trees such as `node_modules` costs too
   much to do on every run.
-- **An ignore rule added outside the tree.** A pattern added to `.git/info/exclude`, or to the
-  file `core.excludesFile` names, hides every later write it matches. A change to a tracked
-  `.gitignore` is itself a dirty entry, so it is seen.
+- **An ignore rule that hides later writes.** A pattern added to `.git/info/exclude`, or to the
+  file `core.excludesFile` names, hides every later write it matches. So does a new untracked
+  `.gitignore` INSIDE the tree that matches itself (`*`, the shape `.pytest_cache/` ships): it
+  hides itself and every new file below its directory, and `git add -A` then skips the user's
+  own later files there too. A change to a tracked `.gitignore` is itself a dirty entry, so it
+  is seen. Filed in `TODOS.md`.
+- **An empty directory.** `git status` lists none, so a scanner that creates
+  `C:/Users/…/scratchpad` and then fails leaves the incident's shape on disk, unreported. It
+  cannot be committed.
 - **Writes outside the repo,** including the installed plugin's own files, the `PreToolUse`
   hook script and the run directory.
 - **An untracked FIFO, or an untracked directory holding only a broken `.git` file.**
@@ -732,12 +738,22 @@ The guard's entries go into its header list, which stays the only maintained cop
     interrupted run's snapshot is filed in `TODOS.md`.
 - **No gate-imposed deadline.** A reviewer that hangs holds the gate until the user cancels or
   interrupts it.
+- **A process a returned reviewer left running.** "Returned" describes the agent, not its
+  processes: a reviewer can start a command in the background and return its verdict while
+  that command still writes. Nothing re-checks after 2d, so on the all-PASS row such a write
+  reaches `/ship`, which stages and commits it. After a stopped reviewer it becomes the next
+  run's baseline. Whether Claude Code or Codex end a finished subagent's background shells was
+  not verified. Filed in `TODOS.md`.
 
 **Cost.** `snapshot` and `check` each read every dirty and untracked file once, in one
 `hash-object` batch. Measured twice on WSL2 with git 2.34.1: 5,000 small untracked files took 1.1–1.4 s
 each for `snapshot` and `check`, and one 200 MB untracked file 0.6–0.8 s each. A checkout
 with large files that are untracked but not ignored pays for them on every run; ignoring them
-removes the cost. On Git Bash, process creation dominates the run time.
+removes the cost. On Git Bash, process creation dominates the run time. The flagged-entry pass
+walks every `git ls-files -v` entry in a bash loop once any entry is flagged: the /review
+adversarial pass measured about 5–7.5 s per pass for 200,000 skip-worktree entries on WSL2,
+paid at `snapshot` and again at `check`, linear in the entry count. A repo with no flagged
+entry pays one counting `ls-files`.
 
 ### 5.5 Tests
 
@@ -778,6 +794,15 @@ removes the cost. On Git Bash, process creation dominates the run time.
   - a commit inside a submodule under `submodule.<name>.ignore=all`, which pins
     `--ignore-submodules=none` (W59).
   P9c pins the symlinked `forgeward-artifacts` and P9d the nonexistent-root fallback.
+- **Found by the gstack `/review` outside pass (W60–W62).**
+  - a write in a worktree whose path ends in a newline, beside a sibling without it at the same
+    commit (W60), and a nested repository whose name ends in one, recorded by its commit (W60b);
+  - `core.hooksPath` set to the literal `unset` and `forgeward.gate` to `absent`, the spellings
+    of "not set" (W61a, W61b);
+  - a PATH stub `awk` that fails only the comparison of a valid snapshot must give exit 2, with
+    the real awk as the control leg (W62).
+  P9b and P9c also assert that nothing is created inside the repo, empty directories included,
+  which `git status` cannot show.
 - **Must-NOT-fire controls.** Each must exit 0:
   - a config write to `branch.<name>.remote`;
   - a marker written for a branch at another commit, which is another worktree's gate run;
@@ -822,7 +847,8 @@ removes the cost. On Git Bash, process creation dominates the run time.
 - **Artifact directory.** With `FORGEWARD_ARTIFACT_ROOT` set to a symlink into the repo, the
   helper hands back a directory outside it.
 - **Mutation controls.** Each one must redden its named assertion:
-  - restore `|| true` on the comparison: the truncated-snapshot assertion;
+  - restore `|| true` on the comparison: W62. (Not the truncated-snapshot assertion, as an
+    earlier revision said: a truncated snapshot stops at validation, before the comparison.)
   - drop the `end` check: the same assertion;
   - follow symlinks when hashing: the symlink-target control;
   - drop `--no-optional-locks`: the index byte-identity assertion;
@@ -835,6 +861,9 @@ removes the cost. On Git Bash, process creation dominates the run time.
   - lose the sentinel on `core.hooksPath`: W50; skip the flagged-entry pass: W51, W52, W53c; read
     a failed stash lookup as `absent`: W54; stop folding records that share a key: W55; drop the
     worktree record: W56; skip the final-directory containment: P9c.
+  - lose the sentinel on the toplevel: W60, and on the nested-repository test: W60b; record a
+    set config value unquoted: W61a, W61b; compare the artifact root as text: P9b's
+    nothing-created assertion; drop the pre-mkdir refusal: P9c's.
   - In `test/dual-client-test.sh`: the launch-failed paragraph rewritten to return early, Step 3
     row 2 without its did-not-run clause, and 2d without its denied-or-timed-out clause each
     redden their own assertion.
@@ -860,9 +889,9 @@ removes the cost. On Git Bash, process creation dominates the run time.
   - both runtimes' rules: the receipt sentence and TaskStop for Claude Code, and `wait_agent`'s
     timeout sentence and both stop calls for Codex.
 - `allowed-tools` lists TaskStop and ToolSearch.
-- Step 3's rows appear in the §5.3 order, with FAIL before incomplete, and the existing
-  per-outcome revoke assertions (halt, refused, FAIL) keep passing. The incomplete and
-  launch-failed rows each carry their own revoke, cut out between their own anchors.
+- Step 3's rows appear in the §5.3 order, with FAIL before incomplete. Each of rows 1–5 carries
+  its own revoke, cut out between consecutive row labels, and so does the refused write in row
+  6. These replaced the earlier per-outcome assertions (halt, refused, FAIL).
 
 **`live-test/LIVE-TEST.md`** gains one manual step that no suite can exercise. On a Claude Code
 gate run where the reviewers come back as receipts:
@@ -934,6 +963,17 @@ after the above):
 - **Tests.** W50–W59, P9c, P9d, and the exact pin of the launch-failed paragraph.
 - **Withdrawn:** "Cancelling stops them and still checks the workspace" covers a cancel, not an
   interrupt (Ctrl-C), which skips the check (§5.4).
+
+**What the gstack `/review` pass changed** (specialists, a Red Team, a Claude adversarial pass
+and Codex's adversarial and structured reviews, run last):
+
+- **Guard.** The worktree root and the nested-repository test keep a trailing newline, and a
+  set `core.hooksPath` or `forgeward.gate` is recorded in single quotes, so a value that spells
+  "not set" is not read as not set.
+- **Tests.** W60–W62, and P9b and P9c assert that nothing is created inside the repo.
+- **§5.4.** Three blind spots added: a self-matching `.gitignore` inside the tree, an empty
+  directory, and a process a returned reviewer left running. The flagged-entry pass's cost is
+  stated.
 
 **Not taken:**
 
@@ -1796,7 +1836,7 @@ Each PR updates, in the same commit as the behaviour:
 | Security Critical on a 20-line diff | Stage 1 FAILs. Red-team fires anyway, because the trigger is the FAIL. The gate reports both, the guard runs, and the branch's marker is revoked. The re-run after the fix has no trigger (§8.7, accepted asymmetry). |
 | No gstack on the machine | Every reviewer is a port, and no classification or check needs a gstack binary: the matrix checker and line counter are forgeward's. The drift check is silent, the existing non-goal. |
 | Codex runtime | Stage 2 is its own paragraph with the three literals, asserted inside that sub-range. Each Codex subagent is awaited with `wait_agent` until it has a final status, and a timed-out wait is waited again. A reviewer is stopped only on a launch failure or a cancel, with whichever of `close_agent` and `interrupt_agent` the session exposes, and the stop is confirmed through `list_agents` (§5.3). |
-| A reviewer writes into the repo | Guard v2 reports a new path, a path leaving the dirty set, an already-dirty or untracked file's content, `HEAD` or its branch, the index and its `skip-worktree`/`assume-unchanged` flags, the stash, any hook file (`pre-push.local` included), `core.hooksPath`, `forgeward.gate`, the frozen commit's run file, or a marker under a name revoke withdraws. Every path that gets past the snapshot and is not interrupted ends at one check, a crashed or stopped reviewer included, and an error is exit 2, not clean. A marker under a name revoke withdraws is reported and then revoked. **Not seen:** gitignored writes, writes outside the repo, other refs and other `.git/` writes, a symlink's target, a change undone before the check, a hand-written marker under the destination name, and anything after an interrupt (§5.4). |
+| A reviewer writes into the repo | Guard v2 reports a new path, a path leaving the dirty set, an already-dirty or untracked file's content, `HEAD` or its branch, the index and its `skip-worktree`/`assume-unchanged` flags, the stash, any hook file (`pre-push.local` included), `core.hooksPath`, `forgeward.gate`, the frozen commit's run file, or a marker under a name revoke withdraws. Every path that gets past the snapshot and is not interrupted ends at one check, a crashed or stopped reviewer included, and an error is exit 2, not clean. A marker under a name revoke withdraws is reported and then revoked. **Not seen:** gitignored writes (a self-matching `.gitignore` inside the tree included), an empty directory, a write after the check by a process a reviewer left running, writes outside the repo, other refs and other `.git/` writes, a symlink's target, a change undone before the check, a hand-written marker under the destination name, and anything after an interrupt (§5.4). |
 | Upstream adds a specialist the day after release | The first gate run whose selected root holds it prints it, worded for installers and naming the root. A machine with no gstack, or whose selected root is older, prints nothing (§11.5 non-goal 8). |
 
 ## 14. Decided at spec review

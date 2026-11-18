@@ -41,19 +41,26 @@
 #     that exists in the worktree, by content, as a `flagged` record: `git status` never
 #     looks at those entries and the index hash does not move when one is edited. An
 #     absent flagged entry has no record (a sparse checkout's normal state);
-#   - core.hooksPath (read with a sentinel, so a trailing newline is kept) and every entry
+#   - core.hooksPath (read with a sentinel, so a trailing newline is kept; a set value is
+#     recorded in single quotes, so a value spelled `unset` is not read as not set) and every entry
 #     DIRECTLY in the effective hooks directory, the files git runs (gstack's wrapper owns
 #     `pre-push`; forgeward's enforcer is `pre-push.local` beside it). A subdirectory is
 #     recorded as `dir`; the files below it, and anything a hook sources or runs, are not
 #     followed;
-#   - forgeward.gate, the switch the pre-push hook reads;
+#   - forgeward.gate, the switch the pre-push hook reads, quoted the same way;
 #   - the absolute git dir, as a `worktree` record, so a check run from another linked
 #     worktree than the snapshot differs;
 #   - this commit's run file, and the marker of every name `--revoke` withdraws for it.
 #
 # WHAT IT STRUCTURALLY CANNOT SEE (design §5.4):
-#   - a write to a gitignored path, or an ignore rule added outside the tree
-#     (.git/info/exclude, core.excludesFile) that hides later writes;
+#   - a write to a gitignored path, or an ignore rule that hides later writes: one added
+#     outside the tree (.git/info/exclude, core.excludesFile), AND a new untracked
+#     .gitignore inside it that matches itself (`*`), which hides itself and every new file
+#     below its directory (a .pytest_cache/ shape). `git add -A` then skips those files too;
+#   - an empty directory: `git status` lists none, so `mkdir -p 'C:/Users/x'` is not seen.
+#     It cannot be committed either;
+#   - a write after `check`, by a process a reviewer left running in the background after
+#     it returned. Nothing re-checks on the all-PASS path;
 #   - a write OUTSIDE this repo, the run directory holding the snapshot included;
 #   - a symlink's target; inside a submodule or nested repository, anything but its
 #     checked-out commit; the content of `special` and `unreadable` entries, which
@@ -155,7 +162,9 @@ classify() {
   elif [ -d "$p" ]; then
     if [ -e "$p/.git" ]; then
       case "$p" in /*) want="$p" ;; *) want="$TOP/$p" ;; esac
-      if sub="$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" && [ "$sub" = "$want" ]; then
+      # Sentinel: `$(…)` would strip a name's trailing newline and the paths would differ.
+      if sub="$(git -C "$p" rev-parse --show-toplevel 2>/dev/null && printf x)" \
+         && [ "${sub%?x}" = "$want" ]; then
         VAL="repo:$(git -C "$p" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || printf no-commit)"
       else
         VAL=repo:unreadable
@@ -238,11 +247,13 @@ state_records() {
   # gains a trailing LF runs hooks from another directory. A sentinel keeps the bytes: strip
   # the one newline git appends, then the sentinel. (forgeward.gate below is read WITHOUT
   # one on purpose: its consumer, the pre-push hook, reads it through `$(…)` too.)
+  # A set value is recorded in single quotes and "not set" bare, so a value that spells the
+  # placeholder (`git config core.hooksPath unset`) is not read as not set.
   v="$(git config --get core.hooksPath && printf x)"; rc=$?
-  case "$rc" in 0) v="${v%?x}"; enc "$v"; v="$ENC" ;; 1) v='unset' ;; *) return 1 ;; esac
+  case "$rc" in 0) v="${v%?x}"; enc "$v"; v="'$ENC'" ;; 1) v='unset' ;; *) return 1 ;; esac
   printf 'hookspath\t-\t%s\n' "$v"
   v="$(git config --get forgeward.gate)"; rc=$?
-  case "$rc" in 0) enc "$v"; v="$ENC" ;; 1) v=absent ;; *) return 1 ;; esac
+  case "$rc" in 0) enc "$v"; v="'$ENC'" ;; 1) v=absent ;; *) return 1 ;; esac
   printf 'switch\t-\t%s\n' "$v"
   hooks="$(git rev-parse --git-path hooks && printf x)" || return 1
   hooks="${hooks%?x}"
@@ -316,8 +327,9 @@ manifest() {
   case "$common" in /*|[A-Za-z]:/*) ;; *) common="$TOP/$common" ;; esac
   # --no-optional-locks: without it `git status` refreshes and REWRITES the index.
   # The awk folds records that share a key (after `git rm --cached` git lists a path twice,
-  # `D ` and `??`) into one, values joined by `|`; no value holds `|` or a tab, and sorting
-  # makes them adjacent.
+  # `D ` and `??`) into one, values joined by `|`. Only `path` keys repeat, no path record's
+  # value holds `|` (other records' values can, and are never folded), no field holds a tab,
+  # and sorting makes them adjacent.
   recs="$( { state_records "$1" "$common" \
              && { [ "$nflag" -eq 0 ] || git ls-files -v -z | flag_records; } \
              && git --no-optional-locks status --porcelain -z --no-renames \
@@ -399,7 +411,10 @@ mode="${1:-}"
 case "$mode" in snapshot|check) ;; *) usage ;; esac
 [ "$#" -eq 2 ] && [ -n "$2" ] || usage
 
-TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
+# Sentinel, as for core.hooksPath: `$(…)` strips a trailing newline, and a worktree named
+# `repo<LF>` would then be checked as its sibling `repo`, missing every write in the real one.
+TOP="$(git rev-parse --show-toplevel 2>/dev/null && printf x)" || TOP=""
+TOP="${TOP%?x}"
 [ -n "$TOP" ] || cannot 'this is not a git repository'
 file="$2"
 case "$file" in /*|[A-Za-z]:[\\/]*) ;; *) file="$PWD/$file" ;; esac

@@ -50,6 +50,12 @@
 - Step 3's "could not be checked" row and 2d now also cover a check that was denied, timed
   out or never ran, and the repository root is printed and carried as `<REPOSITORY_ROOT>`
   because a shell variable does not survive between tool calls.
+- In a worktree whose path ends in a newline the guard checked the sibling directory
+  without it, and missed every write in the real one. A nested repository with such a name
+  was recorded as unreadable. Both paths are read with a sentinel now.
+- Setting `core.hooksPath` to the literal `unset`, or `forgeward.gate` to `absent`, read as
+  not set. A set value is now recorded in single quotes, which the guard's change message
+  shows (`forgeward.gate changed (was 'enabled', now absent)`).
 
 ## 0.31.0 — 2026-11-16
 
