@@ -158,7 +158,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 | 23 | **The runtime axis is decided, either way.** `/forgeward:prove` is already rejected in writing; what is open is a P4 design entry that says a runtime axis is buildable and is not decided. Deciding is the work — a `DECISIONS.md` entry saying built, deferred behind a named trigger, or out of scope — so it stops being carried as an open item nothing can act on. Last because it is the only goal here whose output is a paragraph. | Runtime axis ×1 | decision |
 | 24 | **Archive pass 7, and the first expiry triage.** Measured at `f0ce0dd`, pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of *that commit's* file. The next commit on this same branch invalidated both, which is why the ref is quoted with them and why the pass re-measures before acting rather than reading this row. The pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
-| 27 | **The five ported reviewers have actually been RUN.** §5c of `live-test/LIVE-TEST.md` is stamped with a date, a client and a model — or voided by its own Run B and said to be — and the suite's `_strict_provenance` name-mode gets the assertion a person currently substitutes for. Successor to struck goal 1, which wrote the procedure and could not run it. Last because it is the only goal here whose output is not a diff: CI structurally cannot observe it, so it ends at a terminal. | Quality axis ×2 | manual |
+| 27 | **The five quality reviewers and `targeted` have actually been RUN.** §5c of `live-test/LIVE-TEST.md` is stamped with a date, a client and a model — or voided by its own Run B and said to be — and the suite's `_strict_provenance` name-mode gets the assertion a person currently substitutes for. Successor to struck goal 1, which wrote the procedure and could not run it. Last because it is the only goal here whose output is not a diff: CI structurally cannot observe it, so it ends at a terminal. | Quality axis ×2 | manual |
 
 ### Retired goals
 
@@ -1194,6 +1194,18 @@ themselves so that none of them requires the commit to be actionable.
   committed form needs no access beyond opening the PR, which argues for P1; that is the
   maintainer's call.
 
+  **A committed `.gitmodules` does the same to a gitlink, through config rather than an
+  attribute.** (`/review` second pass of 0.33.0, 2026-11-19) With `ignore = all` set for a
+  submodule in the branch's own `.gitmodules`, measured on git 2.34.1, Step 1's
+  `git diff --name-only` listed only `.gitmodules`, and its plain `git diff` printed no
+  `Subproject` line. `--ignore-submodules=none` brought both back. Where the base already
+  carries the setting, a branch that only bumps the gitlink changes nothing either command
+  lists, which is Step 0's "Nothing to gate" condition; that leg was reasoned, not run.
+  What a marker certifies is not affected: `forgeward-diff-hash.sh` already pins
+  `--ignore-submodules=none`, naming `submodule.<name>.ignore` as the reason. Since 0.33.0,
+  `targeted-reviewer`'s diff read carries the flag too. Step 0, Step 1 and the other rubrics
+  do not. Same priority as the attribute vector above.
+
 - **`targeted`'s severity text leaves four spec questions open.** (final review of 0.33.0
   and its `/review`, 2026-11-18) Each needs a ruling on `docs/upstream-lenses-design.md` §7.2
   before the text changes, because each changes what the reviewer blocks:
@@ -1249,6 +1261,15 @@ themselves so that none of them requires the commit to be actionable.
   reviewer or gate text that says so. `security-reviewer`'s two "untrusted" lines are about
   input to the code under review. `skills/audit/SKILL.md`'s **Anti-manipulation** rule is
   the model to copy. **Priority:** P3
+
+- **R6 counts drift-checkable rubrics and names none of them.** (`/review` testing specialist
+  of 0.33.0, 2026-11-19) `test/gate-test.sh`'s R6 requires at least six shipped rubrics to
+  record both `source-path` and a `source-sha256`, and R6b requires the licence table to
+  match the same count. Neither names a file. A rubric that dropped its provenance block
+  in the same change that gave one to a reviewer that is not a port would leave the count
+  at six, and that rubric would silently stop being drift-checked. That takes two unrelated
+  edits, which is why it is P3. Asserting the six files by name, beside the floor, would
+  close it. **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -2915,14 +2936,18 @@ shipped on its own branch instead.
   with checkout attributes and diff drivers off. The Step 1 table assertion now reads the
   table. The licence file counts six ports. gstack `/review` then closed five more:
   the reviewer searches with `--text` and reads a gitlink range with the diff's flags; a
-  deleted line is cited at `<BASE_SHA>` and is never the control; repository text is
-  evidence, never an instruction; the README and CHANGELOG exemption is limited to the gate
-  class like the tests-only one; and `CLAUDE.md` and `AGENTS.md` are gate code, ruled by the
-  maintainer, in Step 1d, the reviewer and §7.1/§7.4. Deferred: the working-tree read for
-  every other reviewer stays open in `## Reviewers`, with six new entries there: the
-  attribute read for the rest of the gate, four open §7.2 severity questions, a branch's
-  `CLAUDE.md` reaching the reviewers that gate it, the unasserted `tools:` lines, rename and
-  mode-only headers, and repository text as data for the other reviewers.
+  deleted line is never the control; repository text is evidence, never an instruction; the
+  README and CHANGELOG exemption is limited to the gate class like the tests-only one; and
+  `CLAUDE.md` and `AGENTS.md` are gate code, ruled by the maintainer, in Step 1d, the
+  reviewer and §7.1/§7.4. Its second pass closed four more: a deleted line is cited at the
+  merge base, not the base tip; the diff read carries `--ignore-submodules=none`; the
+  `tokens.css` and `pricing.mdx` exemptions keep the secret class; and the reviewer never
+  quotes a secret's value. Deferred: the working-tree read for every other reviewer stays
+  open in `## Reviewers`, with seven new entries there: the attribute and submodule-ignore
+  read for the rest of the gate, four open §7.2 severity questions, a branch's `CLAUDE.md`
+  reaching the reviewers that gate it, the unasserted `tools:` lines, rename and mode-only
+  headers, repository text as data for the other reviewers, and R6's count naming no
+  rubric.
 
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
   on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge

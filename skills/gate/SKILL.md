@@ -454,8 +454,9 @@ other entry.
 
 **Must NOT fire on:**
 
-- a stylesheet of design tokens, `tokens.css`;
-- marketing copy on a pricing page, `pricing.mdx`;
+- a stylesheet of design tokens, `tokens.css`, or marketing copy on a pricing page,
+  `pricing.mdx`, for every class but secret. Either one that holds a credential is secret
+  code like any other file.
 - README or CHANGELOG prose, for the gate class only. Prose that holds a credential is
   secret code like any other file.
 - a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case
@@ -479,8 +480,10 @@ other entry.
   nothing there, so the reviewer reports a control not found: High, or Critical for spend.
 - a diff that only bumps a gitlink. It shows two commit ids and none of the submodule's
   lines, so this step cannot classify it, and it fires `targeted` only when something else
-  in the diff does. Where `targeted` fires and the submodule's objects are present, the
-  reviewer reads the range
+  in the diff does. Under an `ignore = all` setting for the submodule, which the branch's
+  own `.gitmodules` can carry, this step's two `git diff` commands do not show the bump at
+  all, while the reviewer's diff read, which carries `--ignore-submodules=none`, does. Where
+  `targeted` fires and the submodule's objects are present, the reviewer reads the range
   (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). Where they are
   not, it says so, and that range is outside what it reviewed. Step 1b's submodule
   disclosure is the user's notice.

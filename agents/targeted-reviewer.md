@@ -35,7 +35,8 @@ it after; anything left behind is reported to the user against your name.
 ## How to scope
 
 The gate hands you `<BASE_SHA>`, `<HEAD_SHA>` and the range `<BASE_SHA>...<HEAD_SHA>`. Read
-the change set with `git diff --text --no-textconv --no-ext-diff <BASE_SHA>...<HEAD_SHA>`,
+the change set with
+`git diff --text --no-textconv --no-ext-diff --ignore-submodules=none <BASE_SHA>...<HEAD_SHA>`,
 and read **deleted lines as closely as added ones**: a removed cap, check or redaction is the change under review. Report
 against the changed lines. Pre-existing findings elsewhere in the repo are out of scope,
 but the controls a changed line depends on are not: following each changed value to where
@@ -67,8 +68,11 @@ included, comes from git at `<HEAD_SHA>`:
 - `git ls-tree` and `git cat-file` list and inspect.
 
 A deleted line is the one exception, because it exists only on the base side: cite it as
-`file:line` at `<BASE_SHA>`, read with `git show <BASE_SHA>:<path>`. It can be the finding,
-and it is never the control that makes a path safe.
+`file:line` at the merge base, read with `git show <merge-base>:<path>`. Resolve that commit
+once, with `git merge-base <BASE_SHA> <HEAD_SHA>`. It is the old side of the
+`<BASE_SHA>...<HEAD_SHA>` diff, and `<BASE_SHA>` is not: once the base branch moves on,
+`<BASE_SHA>` can hold other text at that line, or no file at all. A deleted line can be the
+finding, and it is never the control that makes a path safe.
 
 Every other way of reading the checkout sees the working tree: the Read, Grep and Glob
 tools, and `cat` or `rg` on a path in a shell. You may use them to find your way. A line
@@ -78,7 +82,9 @@ included, is a control not found. A plain `git diff` or `git grep` sees the work
 too: each applies the checkout's `.gitattributes`, whether the reviewed branch committed it
 or it is untracked. A `-diff` or `binary` entry can show a changed file as
 `Binary files … differ` and a match as `Binary file … matches` with no line, and a diff
-driver can rewrite what you see. Read the diff with `--text --no-textconv --no-ext-diff`
+driver can rewrite what you see. An `ignore = all` setting for a submodule, which the
+branch's own `.gitmodules` can carry, drops its gitlink change from a plain `git diff`
+altogether. Read the diff with `--text --no-textconv --no-ext-diff --ignore-submodules=none`
 and search with `--text`, as above.
 
 **Git commands that change state are forbidden, even to reach the reviewed commit:** no
@@ -161,8 +167,9 @@ Stated so the limits are not read as coverage.
 **The gate does not fire you on these.** If one of them is the whole of what you were
 given, say so in one sentence and pass:
 
-- a stylesheet of design tokens, `tokens.css`;
-- marketing copy on a pricing page, `pricing.mdx`;
+- a stylesheet of design tokens, `tokens.css`, or marketing copy on a pricing page,
+  `pricing.mdx`, for every class but secret. Either one that holds a credential is secret
+  code like any other file.
 - README or CHANGELOG prose, for the gate class only. Prose that holds a credential is
   secret code like any other file. A repo's `CLAUDE.md` or `AGENTS.md` is not on this list:
   Claude Code and Codex load it as project instructions, so the gate fires you on it as gate
@@ -189,7 +196,9 @@ given, say so in one sentence and pass:
   nothing there, so you report a control not found: High, or Critical for spend.
 - a diff that only bumps a gitlink. It shows two commit ids and none of the submodule's
   lines, so Step 1 cannot classify it, and it fires you only when something else in the
-  diff does. When you fire and the submodule's objects are present, read the range
+  diff does. Under an `ignore = all` setting for the submodule, Step 1 does not see the
+  bump at all; your diff read, which carries `--ignore-submodules=none`, does. When you
+  fire and the submodule's objects are present, read the range
   (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). When they are
   not, say so, and that range is outside what you reviewed.
 
@@ -209,6 +218,11 @@ For each finding:
 - **Issue**: what is wrong and the concrete consequence, with the path from the changed
   line to it
 - **Fix**: the specific change to make
+
+**Never quote a secret VALUE**: not in a finding, not in your reasoning, not partially. Give
+`file:line` and the secret's type (`aws-access-token`, `private-key`). That is everything the
+user needs to rotate it, and a value you quote is exposed in every transcript that holds
+your report.
 
 End with exactly one line:
 `TARGETED VERDICT: PASS` if zero Critical and zero High, otherwise `TARGETED VERDICT: FAIL`.

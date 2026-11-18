@@ -879,8 +879,9 @@ over-read:
   in the agent frontmatter, Codex Gate spawns pin `gpt-5.6-terra` / `medium`. A stamp
   taken on one of those does not carry to the other, and re-running on both is the
   stronger test.
-- **The fixture is JavaScript.** Three of the five rubrics are language-agnostic prose;
-  the other two are the two this fixture starves. `data-migration` reads SQL DDL and
+- **The fixture is JavaScript.** Three of the five quality rubrics are language-agnostic
+  prose; the other two are the two this fixture starves. `targeted` is not starved: Run A's
+  pricing route is its negative control. `data-migration` reads SQL DDL and
   `performance` reasons about queries it will not find here. A stamp on this fixture does not carry to a Rails or Django repo, where those two
   axes have far more to look at.
 
