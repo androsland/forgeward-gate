@@ -18,8 +18,9 @@ The checklist body of each file below — everything after upstream's first `---
 line, to end of file: from the `## Categories` heading for the five quality reviewers, and
 from the preamble that begins "Read-only:" for `targeted-reviewer` — is copied verbatim
 from the corresponding `review/specialists/*.md` in that repo, at the commit in the table.
-The files are re-ported one at a time as upstream moves, so they need not share a commit. Each file's own provenance comment carries the exact `source-path`,
-`source-commit` and `source-sha256`, and is the authority if this table ever disagrees.
+The files are re-ported one at a time as upstream moves, so they need not share a commit.
+Each file's own provenance comment carries the exact `source-path`, `source-commit` and
+`source-sha256`, and is the authority if this table ever disagrees.
 
 | File in this repo | Upstream path | Ported at commit |
 |---|---|---|
@@ -108,7 +109,7 @@ generated from a lockfile and nothing scans for it. It lists source that was **c
 this tree**, which is the only category a lockfile cannot see.
 
 Nothing keeps it current automatically. `forgeward-rubric-drift.sh` notices when the
-*content* of a ported rubric moves — for the five files under `agents/` and for
+*content* of a ported rubric moves — for the six files under `agents/` and for
 `skills/audit/SKILL.md`. It does not notice a new port, a removed port, or an upstream
 **relicensing**. Adding or dropping a ported file means editing this table by hand, in the
 same commit.

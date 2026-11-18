@@ -1177,6 +1177,46 @@ themselves so that none of them requires the commit to be actionable.
   root inside a repo whose name ends in a newline. Deliberately not widened in 0.32.0.
   **Priority:** P3
 
+- **Gate Step 1 and every reviewer except `targeted` read `git diff` through the checkout's
+  attributes.** (final review of 0.33.0, 2026-11-18) A working-tree `.gitattributes`,
+  untracked included, applies to a diff between two commits:
+  - `* -diff` shows a committed change as `Binary files … differ`;
+  - a `diff=<driver>` entry runs that driver's textconv.
+
+  Reproduced in a scratch repo: an untracked `* -diff` hid a committed paid loop from
+  `git diff A...B`, while `git show B:<path>` printed it. Since 0.33.0, `targeted-reviewer`
+  reads with `--text --no-textconv --no-ext-diff`. Step 1's classification and the other
+  rubrics do not. Same family as the working-tree entry. **Priority:** P2
+
+- **`targeted`'s severity text leaves three spec questions open.** (final review of 0.33.0,
+  2026-11-18) Each needs a ruling on `docs/upstream-lenses-design.md` §7.2 before the text
+  changes, because each changes what the reviewer blocks:
+  - A test that *weakens* an enforcement assertion fires the gate class (Step 1d), but no
+    tier names it. High names only a skipped or deleted test, so a weakened one can land at
+    Medium.
+  - "The highest matching severity wins" makes the outside-repository Medium unreachable:
+    any finding that qualifies for it also fits the High for a control not found in the
+    repository. The error leans toward a false FAIL.
+  - The forbidden list names eight git commands, but not `fetch` or `submodule update`, the
+    obvious reach in the gitlink case. The general rule covers them in intent only.
+
+  **Priority:** P3
+
+- **The `CLAUDE.md` and `AGENTS.md` exemption rests on a premise that is not true.** (final
+  review of 0.33.0, 2026-11-18) Step 1d and spec §7.1 classify them as documentation because
+  "no gate or check reads it as instructions". Claude Code and Codex do load them as project
+  instructions, and that includes the gate's own reviewer subagents. So a diff that edits
+  them changes the instructions the reviewers run under. Whether that makes them gate code
+  is the maintainer's decision: firing `targeted` on every `CLAUDE.md` edit is a cost on a
+  file this repo edits in most PRs. **Priority:** P2
+
+- **No reviewer's `tools:` line is asserted.** (final review of 0.33.0, 2026-11-18) Adding
+  `Edit, Write` to any `agents/*-reviewer.md` frontmatter keeps every suite green. The
+  read-only posture rests on the prompt text and on Step 2's workspace guard, which reports
+  a write only after the fact. The gap predates 0.33.0, and `targeted` is its twelfth
+  instance. Fix: derive the reviewer list from the existing enumeration, and assert each
+  one's `tools:` is exactly `Read, Grep, Glob, Bash`. **Priority:** P3
+
 ## Standalone posture (no gstack installed)
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
@@ -1664,8 +1704,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 - **`live-test/LIVE-TEST.md` §5c is written and has never been run.** (goal 1;
   quality-axis verification pass, 2026-09-04) The section that closes "the five ported
-  quality reviewers have never been run live" specifies the fixture, both runs and the five
-  per-axis severity floors; nothing in it is stamped, and it ends `**NOT TESTED YET**` for
+  quality reviewers have never been run live" specifies the fixture, its runs and its
+  per-axis severity floors (three runs and six floor rows since 0.33.0 added `targeted`); nothing in it is stamped, and it ends `**NOT TESTED YET**` for
   that reason. The three questions the entry it replaces named — whether the floors hold,
   what always-on `maintainability` + `testing` cost on a large diff, and whether five more
   reviewers overlap enough to be worth deduplicating in Step 3 — are all still open, and
@@ -2837,7 +2877,13 @@ shipped on its own branch instead.
   reviewed-commit rule and override sentence, each with a mutation check; R6 and R6b floors
   are six. LIVE-TEST §5c gains `targeted`'s negative control (Run A), a positive control
   and a dirty-tree leg (Run C). Spec reconciled first, with two hole reviews (§7.5, §7.6).
-  Deferred: the working-tree read for every other reviewer stays open in `## Reviewers`.
+  Two code hole reviews (Opus, Codex) closed four holes. The tests-only exemption is now
+  limited to the gate class in the reviewer, Step 1d and §7.4. The reviewer reads its diff
+  with checkout attributes and diff drivers off. The Step 1 table assertion now reads the
+  table. The licence file counts six ports. Deferred: the working-tree read for every other
+  reviewer stays open in `## Reviewers`, with four new entries there: the attribute read
+  for the rest of the gate, three open §7.2 severity questions, the `CLAUDE.md` premise,
+  and the unasserted `tools:` lines.
 
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
   on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge

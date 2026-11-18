@@ -456,8 +456,9 @@ other entry.
 - a stylesheet of design tokens, `tokens.css`;
 - marketing copy on a pricing page, `pricing.mdx`;
 - README or CHANGELOG prose, and a repo's `CLAUDE.md` or `AGENTS.md`;
-- a tests-only diff adding inert fixtures or new cases. A fixture holding a credential is
-  not inert.
+- a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case
+  that makes a paid call, reads a secret or checks an identity is money, secret or auth
+  code like any other, and a fixture holding a credential is not inert.
 
 **Structurally cannot see:**
 

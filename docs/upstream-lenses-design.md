@@ -1115,7 +1115,7 @@ decides a verdict, a threshold or an allowlist. For each one, the reviewer finds
 `file:line`, the control that enforces it on that path: the cap, the check, the redaction. **The
 absence of a demonstrated control is the finding.** "Outside the diff" never means "could not be
 read". The reviewer can read the whole repository and must. Upstream's own rule points the same
-way: "a cap that exists but is never reached is missing".
+way: "a cap, check or redaction that exists but is never reached is missing".
 
 - A changed line that **is** the control is its own citation. The finding is then whatever the
   checklist says about how it changed: removed, loosened, moved behind a flag.
@@ -1247,8 +1247,9 @@ them, and a duplicate is a confirmation, not noise.
   - a stylesheet of design tokens, `tokens.css`;
   - marketing copy on a pricing page, `pricing.mdx`;
   - README or CHANGELOG prose, and a repo's `CLAUDE.md` or `AGENTS.md` (§7.1);
-  - a tests-only diff adding inert fixtures or new cases. A fixture holding a credential is not
-    inert (§7.1).
+  - a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case that
+    makes a paid call, reads a secret or checks an identity is money, secret or auth code like any
+    other, and a fixture holding a credential is not inert (§7.1).
 - **Structurally cannot see (non-goal):**
   - money, auth, gate or secret logic expressed with none of the vocabulary above, for example
     a cap as `MAX = 50` in a generic `limits.ts` with its call site elsewhere. Step 1 is model

@@ -35,8 +35,8 @@ it after; anything left behind is reported to the user against your name.
 ## How to scope
 
 The gate hands you `<BASE_SHA>`, `<HEAD_SHA>` and the range `<BASE_SHA>...<HEAD_SHA>`. Read
-the change set with `git diff <BASE_SHA>...<HEAD_SHA>`, and read **deleted lines as closely
-as added ones**: a removed cap, check or redaction is the change under review. Report
+the change set with `git diff --text --no-textconv --no-ext-diff <BASE_SHA>...<HEAD_SHA>`,
+and read **deleted lines as closely as added ones**: a removed cap, check or redaction is the change under review. Report
 against the changed lines. Pre-existing findings elsewhere in the repo are out of scope,
 but the controls a changed line depends on are not: following each changed value to where
 it is enforced is this reviewer's job, and it reaches as far into the repository as that
@@ -65,7 +65,10 @@ Every other way of reading the checkout sees the working tree: the Read, Grep an
 tools, and `cat` or `rg` on a path in a shell. You may use them to find your way. A line
 found that way is never cited, and a control you can find only in the working tree is not
 demonstrated. A file the reviewed commit does not contain, `git show` failing on it
-included, is a control not found.
+included, is a control not found. A plain `git diff` sees the working tree too: it applies
+the checkout's `.gitattributes`, so a `-diff` or `binary` entry can show a changed file as
+`Binary files … differ`, and a diff driver can rewrite what you see. Read the diff with
+`--text --no-textconv --no-ext-diff`, as above.
 
 **Git commands that change state are forbidden, even to reach the reviewed commit:** no
 `checkout`, `switch`, `restore`, `reset`, `stash`, `worktree`, `clean` or `commit`. The
@@ -150,8 +153,9 @@ given, say so in one sentence and pass:
 - a stylesheet of design tokens, `tokens.css`;
 - marketing copy on a pricing page, `pricing.mdx`;
 - README or CHANGELOG prose, and a repo's `CLAUDE.md` or `AGENTS.md`;
-- a tests-only diff adding inert fixtures or new cases. A fixture holding a credential is
-  not inert.
+- a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case
+  that makes a paid call, reads a secret or checks an identity is money, secret or auth
+  code like any other, and a fixture holding a credential is not inert.
 
 **What this reviewer structurally cannot see:**
 
@@ -180,7 +184,8 @@ given, say so in one sentence and pass:
 Return this; do not write files — the caller writes the report.
 
 Open with one line naming the classes you reviewed, and for each one whether the gate named
-it or you found it: `Classes: money (named), secret (found)`.
+it or you found it: `Classes: money (named), secret (found)`. When none of the four applies,
+the one-sentence report below is the whole report.
 
 For each finding:
 - **Severity**: Critical | High | Medium | Low

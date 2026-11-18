@@ -337,6 +337,9 @@ tr_own="$(awk '/^---$/ { c++ } c >= 3 { exit } { print }' "$TARGETED" 2>/dev/nul
 [ "${#tr_own}" -ge 2000 ] && has "$tr_own" '`git show <HEAD_SHA>:<path>` reads a file' \
   && ok "targeted-reviewer reads every line it cites with git show at <HEAD_SHA>" \
   || nok "targeted reviewed-commit read instruction" "own-bytes=${#tr_own}"
+has "$tr_own" '`git diff --text --no-textconv --no-ext-diff <BASE_SHA>...<HEAD_SHA>`' \
+  && ok "targeted-reviewer reads the diff with checkout attributes and diff drivers switched off" \
+  || nok "targeted diff read ignores checkout attributes"
 has "$tr_own" 'not the working tree, inside the diff and outside it.' \
   && ok "targeted-reviewer's reviewed-commit rule covers the changed files, not only the rest of the repo" \
   || nok "targeted reviewed-commit scope"
@@ -348,15 +351,19 @@ has "$tr_own" "$tr_override" \
   && ok "targeted-reviewer carries the severity override sentence word for word" \
   || nok "targeted severity override sentence"
 has "$tr_own" '`TARGETED VERDICT: PASS` if zero Critical and zero High, otherwise `TARGETED VERDICT: FAIL`.' \
-  && has "$tr_own" 'return `TARGETED VERDICT: FAIL`' \
+  && has "$tr_own" 'if you could not read the diff or the reviewed commit at all, say so and return `TARGETED VERDICT: FAIL`' \
   && ok "targeted-reviewer ends on one TARGETED VERDICT line, and an unreadable diff or commit is FAIL" \
   || nok "targeted verdict line"
+has "$tr_own" 'When none of the four applies, the one-sentence report below is the whole report.' \
+  && ok "targeted-reviewer's one-sentence pass replaces its Classes line" \
+  || nok "targeted classes-line exception"
 has "$tr_own" '## Reading the ported checklist' && has "$tr_own" 'the Severity section wins.' \
   && ok "targeted-reviewer maps the ported body's vocabulary and says its own Severity section wins" \
   || nok "targeted reading-the-checklist section"
 tr_ng_ok=true; tr_ng_miss=""
 for needle in '`tokens.css`' '`pricing.mdx`' 'a repo'"'"'s `CLAUDE.md` or `AGENTS.md`' \
-    '`MAX = 50`' '**nothing**' 'not checked out' 'gitlink'; do
+    '`MAX = 50`' '**nothing**' 'not checked out' 'gitlink' \
+    'for the gate class only. A new case that makes a paid call, reads a secret or checks an identity is money, secret or auth code like any other'; do
   has "$tr_own" "$needle" || { tr_ng_ok=false; tr_ng_miss="$tr_ng_miss [$needle]"; }
 done
 [ "$tr_ng_ok" = true ] \
@@ -374,11 +381,23 @@ ro_t="$(ro_para "$TARGETED" 2>/dev/null)"
 # Step 1d, which sits after Step 1c's subsections and directly before Step 2. 2b hands
 # the classes to that reviewer only, and privacy's posture to privacy only; the marker and
 # the PASS report carry the bare name (docs/upstream-lenses-design.md §7.1).
-gate_step1="$(sed -n '/^## Step 1 — /,/^## Step 2 — /p' "$SKILL_GATE")"
-gate_1d="$(sed -n '/^### Step 1d — targeted classes$/,/^## Step 2 — /p' "$SKILL_GATE")"
-has "$gate_step1" '| `targeted-reviewer` |' \
+# The table cut starts at its header row and stops at the first line that is not a row, so a
+# row-shaped line elsewhere in Step 1 cannot satisfy the assertion; the floor is the twelve
+# reviewers, so an empty or truncated cut fails.
+gate_tbl="$(awk '/^\| Reviewer \| Fire when/ { f = 1 } f && !/^\|/ { exit } f { print }' "$SKILL_GATE")"
+gate_tbl_rows="$(printf '%s\n' "$gate_tbl" | /usr/bin/grep -c -- '^| `')"
+gate_1d="$(sed -n '/^### Step 1d — targeted classes$/,/^## Step 2 — /p' "$SKILL_GATE" | flat)"
+[ "$gate_tbl_rows" -ge 12 ] && has "$gate_tbl" '| `targeted-reviewer` |' \
   && ok "Step 1's table fires targeted-reviewer" \
-  || nok "Step 1 table fires targeted-reviewer"
+  || nok "Step 1 table fires targeted-reviewer" "table-rows=$gate_tbl_rows"
+# Derived, never copied: the tests-only exemption bullet must read the same in Step 1d and
+# in the reviewer. Each extraction has a floor so two empty cuts cannot agree.
+exempt() { awk '/^- a tests-only diff adding inert fixtures/ { f = 1; print; next } f && (/^- / || /^\*\*/ || /^$/) { exit } f { print }' "$1" 2>/dev/null | flat; }
+ex_g="$(exempt "$SKILL_GATE")"
+ex_t="$(exempt "$TARGETED")"
+[ "${#ex_g}" -ge 150 ] && [ "${#ex_t}" -ge 150 ] && [ "$ex_g" = "$ex_t" ] \
+  && ok "Step 1d and targeted-reviewer carry the same tests-only exemption" \
+  || nok "tests-only exemption agrees" "gate-bytes=${#ex_g} targeted-bytes=${#ex_t}"
 n1d="$(grep -c -- '^### Step 1d — targeted classes$' "$SKILL_GATE")"
 at1d="$(awk 'index($0, "### Step 1d — targeted classes") == 1 { print NR; exit }' "$SKILL_GATE")"
 atcfg="$(awk 'index($0, "### The config was read") == 1 { print NR; exit }' "$SKILL_GATE")"
@@ -393,7 +412,8 @@ for needle in '**added and deleted**' '- **money:**' '- **gate:**' '- **auth:**'
     'by what it does, not by its extension' 'That exemption is from the gate class only.' \
     '`targeted(money,gate,auth,secret)`' '`targeted(money,secret)`' '**scope hint**' \
     'the bare `targeted`' '**Must NOT fire on:**' '`tokens.css`' '`pricing.mdx`' \
-    '**Structurally cannot see:**' '`MAX = 50`' 'gitlink'; do
+    '**Structurally cannot see:**' '`MAX = 50`' 'gitlink' \
+    'for the gate class only. A new case that makes a paid call, reads a secret or checks an identity is money, secret or auth code like any other'; do
   has "$gate_1d" "$needle" || { d1_ok=false; d1_miss="$d1_miss [$needle]"; }
 done
 [ "$d1_ok" = true ] \
@@ -403,6 +423,9 @@ fire_example="$(grep -m1 -F -- '`Surfaces: ' "$SKILL_GATE")"
 has "$fire_example" 'targeted(money,secret)' \
   && ok "the Step 1 firing-decision example prints targeted with its classes" \
   || nok "firing-decision example prints targeted's classes" "line=$fire_example"
+# Non-goal: this pins the sentence that gives the classes to targeted-reviewer and
+# privacy its posture. A sentence elsewhere handing them to every reviewer would not
+# redden it, and nothing here asserts that absence.
 b_open="$(between "$gate_2b" 'The launch context is intentionally small.' 'For each fired reviewer' | flat)"
 has "$b_open" 'The reviewer each one concerns also gets its Step 1 classification, and no other reviewer does: `privacy-reviewer` the site posture of each route group it covers (Step 1a), and `targeted-reviewer` its classes (Step 1d).' \
   && ok "2b's opening paragraph gives privacy its posture and targeted its classes, and no other reviewer either" \

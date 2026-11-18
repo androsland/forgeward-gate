@@ -22,8 +22,10 @@ reviewer spawn pins `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
 
 The isolation is deliberate: a Gate reviewer receives its complete authoritative rubric,
 the absolute repository and Forgeward roots, the exact base ref, the base and head commits
-the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, and the
-read-only/verdict instructions—nothing from the parent conversation. In concrete terms, a
+the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, the
+read-only and verdict instructions and, for `privacy-reviewer` and `targeted-reviewer`
+only, their Step 1 classification (the site posture, and the classes)—nothing from the
+parent conversation. In concrete terms, a
 Claude agent definition contains:
 
 ```yaml
