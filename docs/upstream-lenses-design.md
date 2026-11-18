@@ -1292,10 +1292,13 @@ them, and a duplicate is a confirmation, not noise.
     does. Under an `ignore = all` setting for the submodule, which the branch's own
     `.gitmodules` can carry, Step 1's two `git diff` commands do not show the bump at all,
     while the reviewer's diff read, which carries `--ignore-submodules=none`, does (measured on
-    git 2.34.1). Where `targeted` fires and the submodule's objects are present, the reviewer reads the
-    range (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). Where they are
-    not, it says so, and that range is outside what it reviewed. Step 1b's submodule disclosure
-    is the user's notice.
+    git 2.34.1). Where `targeted` fires and the submodule's objects are present, the reviewer
+    reads the range
+    (`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`),
+    and each gitlink that range bumps the same way: the outer submodule's own `.gitmodules`
+    can set `ignore = all` for the nested one, measured the same way. Where the objects are
+    not present, it says so, and that range is outside what it reviewed. Step 1b's submodule
+    disclosure is the user's notice.
 
 Both non-goal lists are written into Step 1d and into the reviewer as non-goals, in these words.
 The must-NOT-fire rows stay model judgement, and no suite assertion or live-test leg exercises

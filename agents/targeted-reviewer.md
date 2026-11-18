@@ -199,8 +199,9 @@ given, say so in one sentence and pass:
   diff does. Under an `ignore = all` setting for the submodule, Step 1 does not see the
   bump at all; your diff read, which carries `--ignore-submodules=none`, does. When you
   fire and the submodule's objects are present, read the range
-  (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). When they are
-  not, say so, and that range is outside what you reviewed.
+  (`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`),
+  and read each gitlink that range bumps the same way. When the objects are not present,
+  say so, and that range is outside what you reviewed.
 
 ## Output format
 
@@ -213,7 +214,7 @@ the one-sentence report below is the whole report.
 For each finding:
 - **Severity**: Critical | High | Medium | Low
 - **Class**: money | gate | auth | secret
-- **Location**: `file:line`
+- **Location**: `file:line`, or for a deleted line `file:line` at the merge base, saying so
 - **Control**: the control you cited, as `file:line` at `<HEAD_SHA>`, or `not found`
 - **Issue**: what is wrong and the concrete consequence, with the path from the changed
   line to it

@@ -2942,7 +2942,10 @@ shipped on its own branch instead.
   reviewer and §7.1/§7.4. Its second pass closed four more: a deleted line is cited at the
   merge base, not the base tip; the diff read carries `--ignore-submodules=none`; the
   `tokens.css` and `pricing.mdx` exemptions keep the secret class; and the reviewer never
-  quotes a secret's value. Deferred: the working-tree read for every other reviewer stays
+  quotes a secret's value. Its third pass carried the flag into the gitlink range read,
+  which now follows each nested gitlink the same way, and named the merge base in a deleted
+  line's `Location`. That pass hit `/review`'s three-cycle cap, so no `/review` pass re-read
+  its fixes. Deferred: the working-tree read for every other reviewer stays
   open in `## Reviewers`, with seven new entries there: the attribute and submodule-ignore
   read for the rest of the gate, four open §7.2 severity questions, a branch's `CLAUDE.md`
   reaching the reviewers that gate it, the unasserted `tools:` lines, rename and mode-only

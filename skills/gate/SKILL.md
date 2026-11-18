@@ -484,8 +484,9 @@ other entry.
   own `.gitmodules` can carry, this step's two `git diff` commands do not show the bump at
   all, while the reviewer's diff read, which carries `--ignore-submodules=none`, does. Where
   `targeted` fires and the submodule's objects are present, the reviewer reads the range
-  (`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`). Where they are
-  not, it says so, and that range is outside what it reviewed. Step 1b's submodule
+  (`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`),
+  and each gitlink that range bumps the same way. Where the objects are not present, it
+  says so, and that range is outside what it reviewed. Step 1b's submodule
   disclosure is the user's notice.
 
 ## Step 2 — Run the fired reviewers (read-only, in parallel)

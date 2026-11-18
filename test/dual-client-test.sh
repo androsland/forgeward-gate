@@ -349,6 +349,7 @@ has "$tr_own" 'A deleted line is the one exception, because it exists only on th
   && has "$tr_own" '`git merge-base <BASE_SHA> <HEAD_SHA>`' \
   && ! has "$tr_own" 'cite it as `file:line` at `<BASE_SHA>`' \
   && has "$tr_own" 'it is never the control that makes a path safe.' \
+  && has "$tr_own" '- **Location**: `file:line`, or for a deleted line `file:line` at the merge base, saying so' \
   && ok "targeted-reviewer cites a deleted line at the merge base, and never as the control" \
   || nok "targeted deleted-line citation"
 has "$tr_own" '**Never quote a secret VALUE**: not in a finding, not in your reasoning, not partially.' \
@@ -386,7 +387,8 @@ for needle in "$TOKENS_ROW" \
     'A repo'"'"'s `CLAUDE.md` or `AGENTS.md` is not on this list' \
     '`MAX = 50`' '**nothing**' 'not checked out' 'gitlink' \
     'your diff read, which carries `--ignore-submodules=none`, does.' \
-    '`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`' \
+    '`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`' \
+    'each gitlink that range bumps the same way.' \
     'for the gate class only. A new case that makes a paid call, reads a secret or checks an identity is money, secret or auth code like any other'; do
   has "$tr_own" "$needle" || { tr_ng_ok=false; tr_ng_miss="$tr_ng_miss [$needle]"; }
 done
@@ -439,7 +441,8 @@ for needle in '**added and deleted**' '- **money:**' '- **gate:**' '- **auth:**'
     'the bare `targeted`' '**Must NOT fire on:**' "$TOKENS_ROW" \
     '**Structurally cannot see:**' '`MAX = 50`' 'gitlink' \
     'while the reviewer'"'"'s diff read, which carries `--ignore-submodules=none`, does.' \
-    '`git -C <path> diff --text --no-textconv --no-ext-diff <old> <new>`' \
+    '`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`' \
+    'each gitlink that range bumps the same way.' \
     'README or CHANGELOG prose, for the gate class only. Prose that holds a credential is secret code like any other file.' \
     'repo'"'"'s `CLAUDE.md` or `AGENTS.md`, which Claude Code and Codex load as project instructions' \
     'for the gate class only. A new case that makes a paid call, reads a secret or checks an identity is money, secret or auth code like any other'; do
