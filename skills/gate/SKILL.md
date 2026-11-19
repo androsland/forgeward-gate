@@ -144,6 +144,7 @@ ALSO self-skips if its surface turns out absent, so when unsure, fire it.
 | `seo-reviewer` | any publicly reachable page — indexed **or** deliberately unindexed-but-shareable | marketing/landing/public routes, `<head>`/meta, `sitemap`, `robots.txt`, OG/Twitter Card tags — NOT behind-auth app pages. It detects the posture itself and switches ruleset |
 | `supply-chain-reviewer` | a dependency manifest | `package.json`, lockfiles, `*.csproj`/`packages.lock.json`, `composer.json`, `requirements.txt`, `go.mod`, `Cargo.toml` |
 | `security-reviewer` | executable code (the broad surface — fire on any code that could carry a vuln) | DB queries (`$wpdb->`, raw SQL, string-built queries), request/AJAX/route handlers, auth/capability/nonce logic, `exec`/`eval`/shell, deserialization, file paths built from input, network fetch from input, `.sql` files, template/HTML output of dynamic data |
+| `targeted-reviewer` | money, gate, auth or secret code: classified by what a file does, on added **and** deleted lines (Step 1d) | paid calls, spend caps and billing; CI conditions, thresholds, verdict and marker logic, test skips, reviewer prompts and rule files; login, session and permission checks; secret env reads, credential files, logging and redaction |
 | `maintainability-reviewer` | **any code at all** (always-on) | dead code, magic numbers, stale comments/docstrings, duplicated behaviour with defects, conditional side effects, module-boundary leaks |
 | `testing-reviewer` | **any code or test at all** (always-on) | negative paths, edge cases, negative assertions, test isolation, flaky patterns, security-enforcement coverage, deleted or assertion-free tests, low-value tests |
 | `performance-reviewer` | backend or frontend code | N+1 queries, missing indexes on new filters/joins, unbounded queries or reads, missing pagination, bundle size, blocking work in async contexts |
@@ -151,12 +152,16 @@ ALSO self-skips if its surface turns out absent, so when unsure, fire it.
 | `data-migration-reviewer` | a schema migration, backfill, or DDL | `migrations/`, `db/migrate/`, `*.sql` DDL, Prisma/Alembic/Rails/Laravel migration files, backfill scripts and rake tasks |
 
 Print the firing decision, e.g.:
-`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes, api=no, migrations=no → firing: accessibility, privacy, security, maintainability, testing`.
+`Surfaces: UI=yes, personal-data=yes, llm=no, public-pages=no, deps=no, code-security=yes, api=no, migrations=no, targeted=yes → firing: accessibility, privacy, security, targeted(money,secret), maintainability, testing`.
 
 `maintainability` and `testing` are in that example because they are in **every** example:
 both fire on any diff that changes code, so a firing line that omits them is describing a
 run that did not happen. The example is the thing people copy, and it shipped for one
 version listing only the conditional three.
+
+`targeted(money,secret)` is how `targeted` always appears on the firing line: with the
+classes Step 1d found, in parentheses. They reach the reviewer in Step 2b's launch context.
+The marker and the PASS report carry the bare `targeted` (Step 3).
 
 ### Step 1a — classify posture per route group (it changes which reviewers fire and how)
 
@@ -272,10 +277,11 @@ gstack as the owner of this axis, and do not tell the user to run `/review` befo
 merging.** All three were correct until this release and all three are now false.
 
 Their checklists are ports of gstack's Review Army specialists, taken under MIT with the
-source commit and a sha256 recorded in each `agents/*-reviewer.md`. That is a fork, so it
-drifts. Run the drift check — it is a handful of sha256 comparisons against files already
-on disk (the five reviewers and `/forgeward:audit`), it prints nothing when there is no
-news, and it always exits 0:
+source commit and a sha256 recorded in each `agents/*-reviewer.md`. So is
+`targeted-reviewer`'s, which sits outside this axis: it owns money, gate, auth and secret
+code. A port is a fork, so it drifts. Run the drift check — it is a handful of sha256
+comparisons against files already on disk (the ported reviewers and `/forgeward:audit`),
+it prints nothing when there is no news, and it always exits 0:
 
 ```bash
 "<forgeward-root>/scripts/forgeward-rubric-drift.sh"
@@ -381,6 +387,108 @@ better, and 0.19.0 did the same for `deep-audit`. **What survives the port is a 
 and more honest claim:** the axis has an owner that is always here, and nothing checks
 that the owner ran. The `deep-audit` clause above says exactly that and nothing more.
 
+### Step 1d — targeted classes
+
+`targeted-reviewer` fires when the diff touches **money**, **gate**, **auth** or **secret**
+code, the four classes where one miss costs most. Decide which of them apply, and read
+**added and deleted** lines alike: a removed cap, check or redaction is the change. The
+signals are adapted to prose from gstack's lists in `lib/review-risk.ts` and
+`lib/review-targeted.ts`.
+
+- **money:** a paid call (model SDK constructors and `.messages.create` /
+  `.chat.completions.create` shapes, cloud-VM or paid-search APIs); spend caps, budgets,
+  quotas and ledgers; billing, pricing, invoice, fee, charge, credit and metering code;
+  `*_usd` or cents fields; a retry, loop or fan-out around any of these.
+- **gate:** CI workflow conditions and `continue-on-error`; required checks; thresholds,
+  allowlists and ratchets; hook or middleware allow and deny decisions; verdict, marker and
+  pass/fail logic; rule hashes and pins; test skips (`.skip`, `xit`, `@pytest.mark.skip`,
+  `t.Skip`).
+- **auth:** login, session, token, JWT and OAuth code; role, permission and capability
+  checks; guard middleware; callback `state` handling.
+- **secret:** reads of env names matching `*_KEY`, `*SECRET*`, `*TOKEN*`, `*PASSWORD*` or
+  `*CREDENTIAL*`; credential files (`.env*` other than example, sample or template,
+  `*.pem`, `*.key`, `id_*`, `.netrc`); keychain and credential helpers; logging, redaction,
+  masking and file-mode code.
+
+**Classify a file by what it does, not by its extension.** Three kinds of file are gate
+code whatever their extension:
+
+- a **test** whose change skips, deletes or weakens an assertion on an enforcement path
+  (authorization, a cap, a redaction, a verdict). A tests-only diff fires the gate class
+  when it does this.
+- a **file a tool executes as instructions**: a reviewer or agent prompt, a skill or gate
+  procedure, a lint or scanner rule file, including its allowlist or ignore file, and a
+  repo's `CLAUDE.md` or `AGENTS.md`, which Claude Code and Codex load as project
+  instructions. In forgeward's own repository that is `CLAUDE.md`, `agents/*.md`,
+  `skills/*/SKILL.md` and everything under `rules/`: the two Semgrep packs (`*.yml`) and
+  the push-time Gitleaks config and ignore file (`gitleaks-pre-push.toml`,
+  `gitleaks-pre-push.ignore`). An entry added to that ignore file is an allowlist change.
+- **CI configuration, its mute lists, and the hook registrations that wire a check into a
+  runtime.** In forgeward's own repository that is `.github/workflows/*.yml`;
+  `ci/relanded-prs.txt`, the acknowledgement list `ci/check-merged-prs-landed.sh` skips;
+  `hooks/hooks.json` and `hooks/codex-hooks.json`; and the `hooks` key in
+  `.codex-plugin/plugin.json` that points Codex at the second file. Dropping a hook entry
+  or its pointer removes an allow-or-deny decision without touching the script that makes
+  it.
+
+Ordinary documentation does not fire the gate class, and neither do tests that only add
+inert fixtures or new cases. **That exemption is from the gate class only.** A fixture that
+holds a credential, or a test that makes a paid call, fires secret or money exactly as any
+other file does. A repo's `CLAUDE.md` or `AGENTS.md` is not ordinary documentation: it is
+gate code, above, because the agent sessions that work in the repo run under it.
+
+**When you fire `targeted` but cannot tell which class applies, pass all four**, as
+`targeted(money,gate,auth,secret)`. That is "when unsure, fire it" applied to the classes,
+and upstream's classifier fails closed the same way: on any input it cannot read, it
+returns all four.
+
+**Print the classes in the firing decision**, as `targeted(money,secret)`, and pass them
+to `targeted-reviewer` in Step 2b's launch context as a **scope hint**, to that reviewer
+only. A scope hint is a classification, like privacy's site posture, not a finding. The
+reviewer reviews the named classes in full, also reviews any other class it finds the diff
+touching, and passes itself with one sentence if none applies. The classes are not part of
+its name: Step 3's marker writer and the PASS report carry the bare `targeted`, like every
+other entry.
+
+**Non-goals, stated so they are not read as coverage.**
+
+**Must NOT fire on:**
+
+- a stylesheet of design tokens, `tokens.css`, or marketing copy on a pricing page,
+  `pricing.mdx`, for every class but secret. Either one that holds a credential is secret
+  code like any other file.
+- README or CHANGELOG prose, for the gate class only. Prose that holds a credential is
+  secret code like any other file.
+- a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case
+  that makes a paid call, reads a secret or checks an identity is money, secret or auth
+  code like any other, and a fixture holding a credential is not inert.
+
+**Structurally cannot see:**
+
+- money, auth, gate or secret logic expressed with none of the vocabulary above, for
+  example a cap as `MAX = 50` in a generic `limits.ts` with its call site elsewhere. Step 1
+  is model judgement, and the reviewer's self-skip cannot recover a missed classification,
+  because the reviewer never ran. What backstops a missed classification differs by class:
+  - auth and secret logic: `security-reviewer`'s broader firing;
+  - spend on an LLM call: `ai-output-reviewer`;
+  - non-LLM spend (a cloud VM, a paid search) and gate logic: **nothing**.
+    `security-reviewer` carries no spend-cap rule, and `ai-output-reviewer` fires only on
+    an LLM call.
+- a procedure whose instructions live where nothing recognizes them as one, such as a wiki
+  page a CI job fetches.
+- a control in a submodule that is not checked out. `git grep --recurse-submodules` finds
+  nothing there, so the reviewer reports a control not found: High, or Critical for spend.
+- a diff that only bumps a gitlink. It shows two commit ids and none of the submodule's
+  lines, so this step cannot classify it, and it fires `targeted` only when something else
+  in the diff does. Under an `ignore = all` setting for the submodule, which the branch's
+  own `.gitmodules` can carry, this step's two `git diff` commands do not show the bump at
+  all, while the reviewer's diff read, which carries `--ignore-submodules=none`, does. Where
+  `targeted` fires and the submodule's objects are present, the reviewer reads the range
+  (`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`),
+  and each gitlink that range bumps the same way. Where the objects are not present, it
+  says so, and that range is outside what it reviewed. Step 1b's submodule
+  disclosure is the user's notice.
+
 ## Step 2 — Run the fired reviewers (read-only, in parallel)
 
 Step 2 has four parts: **2a** starts the run, **2b** launches the reviewers, **2c**
@@ -457,9 +565,12 @@ The launch context is intentionally small. Every reviewer gets its complete appl
 rubric, the absolute repository root, the resolved forgeward root when the rubric needs
 it, `<base>` exactly as Step 0 returned it, `<BASE_SHA>` and `<HEAD_SHA>` exactly as
 Step 0 printed them, the review range `<BASE_SHA>...<HEAD_SHA>`, the read-only
-instruction, and the required verdict format. Do not pass the parent conversation,
-implementation discussion, suspected findings, or a summary of the rubric. Those add
-anchoring and cost without adding review evidence.
+instruction, and the required verdict format. The reviewer each one concerns also gets
+its Step 1 classification, and no other reviewer does: `privacy-reviewer` the site
+posture of each route group it covers (Step 1a), and `targeted-reviewer` its classes
+(Step 1d). Do not pass the parent conversation, implementation discussion, suspected
+findings, or a summary of the rubric. Those add anchoring and cost without adding review
+evidence.
 
 For each fired reviewer, spawn it in parallel. Select the runtime path automatically:
 
@@ -470,6 +581,7 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `forgeward:accessibility-reviewer`,
 `forgeward:ai-output-reviewer`, `forgeward:seo-reviewer`,
 `forgeward:supply-chain-reviewer`, `forgeward:security-reviewer`,
+`forgeward:targeted-reviewer`,
 `forgeward:maintainability-reviewer`, `forgeward:testing-reviewer`,
 `forgeward:performance-reviewer`, `forgeward:api-contract-reviewer`,
 `forgeward:data-migration-reviewer`). The selected plugin agent supplies the complete
@@ -484,9 +596,9 @@ For each fired reviewer, spawn it in parallel. Select the runtime path automatic
   `<forgeward-root>` in the prompt and tell the reviewer to substitute it literally for
   any plugin-root expression in the rubric; normal Codex shell commands do not inherit
   the plugin hook environment. The prompt must also carry `<REPOSITORY_ROOT>`, `<base>`,
-  `<BASE_SHA>`, `<HEAD_SHA>`, `<BASE_SHA>...<HEAD_SHA>`, the read-only instruction, and
-  the rubric's verdict format. Do not paraphrase or copy only part of the rubric into the
-  prompt.
+  `<BASE_SHA>`, `<HEAD_SHA>`, `<BASE_SHA>...<HEAD_SHA>`, the read-only instruction, the
+  rubric's verdict format, and, for `privacy-reviewer` and `targeted-reviewer` only, that
+  classification. Do not paraphrase or copy only part of the rubric into the prompt.
 
 In either runtime, tell each reviewer to review the diff of `<BASE_SHA>...<HEAD_SHA>`,
 and that wherever its rubric names the range `<base>...HEAD` it means that frozen range;
@@ -669,6 +781,9 @@ and say that the earlier PASS it names may still authorize a push.
   ```
 
   Pass the two full names Step 0 printed and the id 2a's revoke printed, literally.
+  Each entry in the fired list is a bare reviewer name, and so is each name in the PASS
+  report below: `targeted`, never `targeted(money,secret)`, whose comma would split it
+  into two entries that name no reviewer.
   If the writer exits non-zero, nothing was certified: run
   `"<forgeward-root>/scripts/forgeward-write-marker.sh" --revoke "<HEAD_SHA>"`, print
   the writer's message, and stop with no handoff. If that `--revoke` also exits non-zero,

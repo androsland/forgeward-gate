@@ -15,15 +15,17 @@ and standalone Git enforcement hook are shared.
 ### Reviewer runtime policy
 
 Reviewer selection is explicit per runtime so a costly parent session cannot silently
-raise the cost of every parallel review. Under Claude Code, all eleven plugin agents pin
+raise the cost of every parallel review. Under Claude Code, all twelve plugin agents pin
 `model: sonnet` and `effort: medium` in their native frontmatter. Under Codex, every
 reviewer spawn pins `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
 `fork_turns: none`. Audit's independent finding verifiers use the same selections.
 
 The isolation is deliberate: a Gate reviewer receives its complete authoritative rubric,
 the absolute repository and Forgeward roots, the exact base ref, the base and head commits
-the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, and the
-read-only/verdict instructions—nothing from the parent conversation. In concrete terms, a
+the gate froze before scoping the diff, their `<BASE_SHA>...<HEAD_SHA>` range, the
+read-only and verdict instructions and, for `privacy-reviewer` and `targeted-reviewer`
+only, their Step 1 classification (the site posture, and the classes)—nothing from the
+parent conversation. In concrete terms, a
 Claude agent definition contains:
 
 ```yaml
@@ -76,7 +78,7 @@ might not be installed.*
 
 ## What it adds (and what it deliberately doesn't)
 
-Eleven read-only reviewers, each firing **only** when the diff touches its surface:
+Twelve read-only reviewers, each firing **only** when the diff touches its surface:
 
 | Reviewer | Fires when the diff touches | Why it's here (not redundant with gstack) |
 |----------|------------------------------|-------------------------------------------|
@@ -86,6 +88,7 @@ Eleven read-only reviewers, each firing **only** when the diff touches its surfa
 | `seo-reviewer` | public, indexable pages | no SEO/crawlability/metadata coverage anywhere in gstack |
 | `supply-chain-reviewer` | a dependency manifest | typosquatted/hallucinated packages and copyleft-license conflicts, which gstack's `/cso` does not cover — **plus** CVEs/install-scripts/lockfiles, which it now owns unconditionally rather than deferring |
 | `security-reviewer` | executable code (queries, handlers, auth, file/shell/network I/O, `.sql`) | gstack's `/cso` covers this axis but is **opt-in and manual** — see below |
+| `targeted-reviewer` | money, gate, auth or secret code | ported from gstack's `targeted` specialist, and not a quality reviewer — see below |
 | `maintainability-reviewer` | any code (always-on) | ported from gstack's Review Army — see below |
 | `testing-reviewer` | any code or test (always-on) | ported from gstack's Review Army — see below |
 | `performance-reviewer` | backend or frontend code | ported from gstack's Review Army — see below |
@@ -130,6 +133,18 @@ gstack it prints nothing, which is the whole point. Since 0.20.0 it iterates
 block — is monitored on the same instrument. Neither glob is a claim of completeness: a
 ported artefact placed outside both is unchecked with nobody told, which is stated as a
 non-goal in the script's header.
+
+**`targeted-reviewer` is a port with a different job (0.33.0).** It is ported the same way,
+from gstack's `targeted` specialist, and the same drift check covers it, but it is not a
+quality reviewer. It owns money, gate, auth and secret code: a paid call and its cap, a CI
+condition or a verdict, an identity or permission check, a secret and its redaction. It
+overlaps `security-reviewer` and `ai-output-reviewer` on purpose, as a second, isolated
+read on the four classes where one miss costs most, and nothing dedupes their findings.
+Two of its rules are stricter than anywhere else in the gate. Every control it relies on
+is cited from the reviewed commit, never from the working tree, so a cap that exists only
+in an uncommitted edit does not count. And uncapped spend is Critical even where a
+provider-side budget exists, because a console limit does not demonstrate a cap on the
+changed path.
 
 **No reviewer here defers to gstack any more.** The table's third column is a *delta* — it says
 what each reviewer adds that gstack does not. Scoping by delta means every deferral becomes a hole

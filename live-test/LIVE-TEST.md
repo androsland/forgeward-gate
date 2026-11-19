@@ -47,7 +47,7 @@ cp -R <PLUGIN_DIR> ~/.claude/skills/forgeward-gate
 ```
 
 **Verify it actually loaded (all four):**
-- `/plugin` → `forgeward` is enabled and its detail view lists 11 reviewer agents (five of them the ported quality reviewers §5c exercises), the `gate`, `audit` and `ci-gate` skills, and hooks.
+- `/plugin` → `forgeward` is enabled and its detail view lists 12 reviewer agents (six of them ports, which §5c exercises: the five quality reviewers and `targeted`), the `gate`, `audit` and `ci-gate` skills, and hooks.
 - `claude plugin list` → shows `forgeward`.
 - `claude plugin details forgeward` → lists a **PreToolUse / Bash** hook and a **UserPromptExpansion / ship** hook.
 - Type `/forgeward:gate` → it autocompletes.
@@ -538,7 +538,7 @@ Two caveats on how it was run, so the next person does not over-read this:
 
 ---
 
-## 5c. The five ported quality reviewers, on a real diff
+## 5c. The ported reviewers on a real diff: the five quality reviewers and `targeted`
 
 0.17.0 ported gstack's five Review Army specialists — `maintainability`, `testing`,
 `performance`, `api-contract`, `data-migration` — and forgeward has owned the `quality`
@@ -561,6 +561,12 @@ the only instrument for three questions a suite structurally cannot answer:
    Whether that is tolerable on a large diff is a wall-clock fact, not a design opinion.
 3. **Do five more reviewers repeat each other?** If the same defect comes back from three
    axes, Step 3 needs deduplication. If it does not, it must not grow one.
+
+0.33.0 ported a sixth specialist, `targeted`, and it is not a quality reviewer: it owns
+money, gate, auth and secret code. It is exercised here because Run A's pricing route fires
+its money class whether or not anything is added for it. No line of that route spends,
+caps or records spend, so `targeted` must PASS there, and that is its live negative
+control. Run C is its positive control.
 
 ### Build the fixture (a purpose-built scratch repo, not the §2 scaffold)
 
@@ -594,6 +600,7 @@ promoting it to High:
 
 ```bash
 # maintainability: a magic number, a stale comment, and dead code that is NOT load-bearing.
+# targeted: money vocabulary with nothing spent and nothing to cap. It fires and must PASS.
 cat > src/pricing.js <<'EOF'
 const { TIERS } = require("./tiers");
 
@@ -646,8 +653,8 @@ git add -A && git commit -qm "feat: pricing endpoint, report summary, one test"
 
 In Claude Code, in `$Q`, type **`/forgeward:gate`**.
 
-- The firing decision must **account for all five** ported reviewers, and must name four
-  of them — `maintainability`, `testing`, `performance`, `api-contract` — as FIRED.
+- The firing decision must **account for all five** ported quality reviewers, and must name
+  four of them — `maintainability`, `testing`, `performance`, `api-contract` — as FIRED.
   `maintainability` and `testing` are always-on: a firing line that omits either is
   describing a run that did not happen.
 - **`data-migration` has no surface in Run A, and that is the point of checking it here.**
@@ -661,6 +668,13 @@ In Claude Code, in `$Q`, type **`/forgeward:gate`**.
 - **Every reviewer that fired must return PASS.** Every item in the fixture is real and
   every one is below the blocking bar. A FAIL here is the finding — record which axis
   promoted what, and against which of its own High bullets it claimed to be acting.
+- **`targeted` must fire, and must PASS.** Its money class fires on the pricing
+  vocabulary, and the firing line prints it with its classes, as `targeted(money)` or
+  wider. No line in the fixture spends, records spend, checks an identity, reads a secret
+  or decides a verdict, so its burden of proof has nothing to apply to, and the expected
+  report is one sentence saying so. A FAIL is the finding: record which line it called
+  enforcement-bearing. This is `targeted`'s live negative control, and Run C is its
+  positive one.
 - **No quality disclosure of any kind.** No `NOT COVERED: quality`, no naming gstack as
   the axis owner, no suggestion to run `/review` before merging. All three were correct
   before 0.17.0 and all three are now false.
@@ -684,6 +698,7 @@ not by the reviewer's sense of how bad it sounds:
 | `performance` | an unbounded query or in-memory read whose size is driven by **user input** on a request path | a new N+1 over a user-growing collection; a new query filtering or joining on an unindexed column; a new list endpoint with no pagination and no cap | `summarise` is O(n·m) over a 3-element constant — bounded, so Medium/Low |
 | `api-contract` | **never** | a breaking change to an endpoint that **already has consumers**, with no version bump, no alias and no sunset path | a brand-new route, so no consumers exist to break; the error-shape inconsistency is Medium/Low |
 | `data-migration` | irreversible data loss with no deprecation and no stated backup | lock-taking DDL with no `CONCURRENTLY` on a plausibly-large table; an unbatched backfill; a schema change that breaks running code with no multi-phase plan | *nothing in Run A* — that is Run B |
+| `targeted` | the three Forced-CRITICAL classes, on a changed path: spend with no demonstrated cap; an auth or trust-boundary bypass from an unauthenticated or less-privileged entry point; a secret written to a sink that leaves the machine or the process owner. A provider-side budget never lowers one | any other checklist item **demonstrated** on a changed line, with a named path to the consequence; an enforcement path whose control is not found at the reviewed commit; a test on an enforcement path that is skipped or deleted | the pricing route is money vocabulary with nothing spent and nothing to cap → PASS, the live negative control. Its Critical is Run C |
 
 Two things the rubrics say that a verdict must not quietly drop: `performance` must not
 grade on a benchmark it did not run (it grades **one level down** instead), and both
@@ -692,7 +707,7 @@ untested path they cannot prove untested, an endpoint they cannot prove publishe
 
 ### Run B — the positive control
 
-Run A is an assertion that five reviewers stayed quiet, and a reviewer that never fires is
+Run A is an assertion that five quality reviewers stayed quiet, and a reviewer that never fires is
 also quiet. Run B is what separates the two.
 
 ```bash
@@ -742,11 +757,96 @@ itself a Run A finding. Run **`/forgeward:gate`** again.
   gone after it. A `reviewed_head` equal to Run A's commit means the withdrawal
   did not run. One equal to Run B's commit means the gate wrote a marker for a run it
   failed, and that is the most serious finding this section can produce.
-- The other four must be unaffected. If `performance` or `api-contract` also turns red on
+- The other four quality reviewers must be unaffected, and `targeted` must PASS again:
+  nothing in the migration spends, caps or records spend, whether or not its classes
+  include the new `currency` column. If `performance` or `api-contract` also turns red on
   the migration commit, that is a scope leak worth recording.
 
-If Run B passes cleanly, Run A's five PASSes mean nothing and the section is void — say
+If Run B passes cleanly, Run A's five quality PASSes mean nothing and the section is void — say
 so rather than stamping it.
+
+### Run C — `targeted`'s positive control
+
+Run A is `targeted`'s negative control, and a reviewer that never fails passes it too. Run C
+is what separates the two. Its second leg checks the one rule this reviewer has that no
+other has: every control it relies on is read from the reviewed commit, never from the
+working tree (`docs/upstream-lenses-design.md` §7.2).
+
+Branch from Run A's commit, so Run B's migration is not in the diff:
+
+```bash
+git switch -q -c feat/targeted-control HEAD~1
+cat > src/search.js <<'EOF'
+// A paid search API, billed per request. Retried until it answers: no bound on count or spend.
+async function search(q) {
+  for (;;) {
+    const res = await fetch("https://search.example.invalid/v1?q=" + encodeURIComponent(q), {
+      headers: { "x-api-key": process.env.SEARCH_API_KEY },
+    });
+    if (res.ok) return res.json();
+  }
+}
+module.exports = { search };
+EOF
+git add -A && git commit -qm "feat: paid search with retry"
+```
+
+Run **`/forgeward:gate`**.
+
+- The firing decision must name `targeted` with `money` among its classes.
+  `targeted(money,secret)` is the expected form, because the key is read from an env name
+  ending in `_KEY`.
+- `targeted` must **FAIL**, at **Critical**: a paid call in a loop with no bound on count or
+  spend, and no cap to cite at the reviewed commit. A High is a floor violation, and so is
+  a finding that names a provider-side budget and lowers the severity because of it.
+- `ai-output` must not fire: a paid search is not an LLM call. That is the §7.4 non-goal at
+  work. If `targeted` missed this, nothing else in the gate would block it.
+- No marker is written for this commit:
+
+  ```bash
+  M="$(git rev-parse --path-format=absolute --git-common-dir)/forgeward-gate-markers/$(git branch --show-current).json"
+  if [ -e "$M" ]; then echo "marker PRESENT: the gate certified a run it failed"; else echo "no marker"; fi
+  ```
+
+**Second leg: the same commit, gated from a dirty tree.** The uncommitted edit adds the
+missing cap to the changed file itself. Nothing is committed:
+
+```bash
+cat > src/search.js <<'EOF'
+const MAX_ATTEMPTS = 3;
+// A paid search API, billed per request. Bounded: three attempts, then give up.
+async function search(q) {
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const res = await fetch("https://search.example.invalid/v1?q=" + encodeURIComponent(q), {
+      headers: { "x-api-key": process.env.SEARCH_API_KEY },
+    });
+    if (res.ok) return res.json();
+  }
+  throw new Error("search: no answer after " + MAX_ATTEMPTS + " attempts");
+}
+module.exports = { search };
+EOF
+git status --porcelain   # must print ` M src/search.js` and nothing else
+```
+
+Run **`/forgeward:gate`** again.
+
+- `targeted` must still **FAIL** at **Critical**, and its report must cite nothing from the
+  working tree: no `MAX_ATTEMPTS`, no line of the uncommitted version. A PASS, or a finding
+  that cites the cap, means the reviewer read the checkout instead of the reviewed commit,
+  and that is the most serious finding this leg can produce.
+- The tree is unchanged afterwards: `git status --porcelain` still prints only
+  ` M src/search.js`.
+
+Put the committed file back when done:
+
+```bash
+git show HEAD:src/search.js > src/search.js
+git status --porcelain   # prints nothing
+```
+
+If the first leg passes, Run A's `targeted` PASS means nothing and that half of the section
+is void. Say so rather than stamping it.
 
 ### The two measurements this section exists to take
 
@@ -761,7 +861,10 @@ Neither is a pass/fail. Write the numbers down; there is nowhere else they can c
 - **Overlap.** List every finding by axis. `legacyPrice` is the deliberate bait: it is
   legitimately visible to `maintainability` (dead code) and to `testing` (untested). If
   three or more axes return substantially the same finding, Step 3 needs deduplication and
-  that is a filing. If they do not, it must not grow one.
+  that is a filing. If they do not, it must not grow one. On Run C, `security` may report
+  the retry too. A duplicate across `security` and `targeted` is a confirmation and
+  nothing dedupes it (`docs/upstream-lenses-design.md` §7.3), so it is not the signal this
+  measurement looks for.
 
 **NOT TESTED YET**
 
@@ -776,8 +879,9 @@ over-read:
   in the agent frontmatter, Codex Gate spawns pin `gpt-5.6-terra` / `medium`. A stamp
   taken on one of those does not carry to the other, and re-running on both is the
   stronger test.
-- **The fixture is JavaScript.** Three of the five rubrics are language-agnostic prose;
-  the other two are the two this fixture starves. `data-migration` reads SQL DDL and
+- **The fixture is JavaScript.** Three of the five quality rubrics are language-agnostic
+  prose; the other two are the two this fixture starves. `targeted` is not starved: Run A's
+  pricing route is its negative control. `data-migration` reads SQL DDL and
   `performance` reasons about queries it will not find here. A stamp on this fixture does not carry to a Rails or Django repo, where those two
   axes have far more to look at.
 

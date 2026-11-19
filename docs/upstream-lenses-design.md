@@ -1,7 +1,8 @@
 # Upstream lenses — design
 
 **Status:** approved 2026-11-16, after two hole reviews; §5 revised 2026-11-17 for PR 2,
-after two more (§5.6) ·
+after two more (§5.6); §6, §7 and §12 reconciled with the merged PRs 1 and 2 on 2026-11-18
+for PR 3, after two more (§7.5, §7.6); the §7 revision approved by the maintainer on 2026-11-18 ·
 **Date:** 2026-11-14 ·
 **Targets:** 0.31.0 – 0.37.0 (a seven-PR stack) · **Upstream pinned:** gstack
 `0ead11c8e20a82e249f36c3abf89599dfe602324`
@@ -992,7 +993,8 @@ Each follows the 0.17.0 port pattern. Departures are stated per reviewer.
 - **File and runtime.** The file is `agents/<name>-reviewer.md`, with frontmatter
   `tools: Read, Grep, Glob, Bash`, `model: sonnet` and `effort: medium`. The Codex launch
   passes `gpt-5.6-terra`, `reasoning_effort: medium` and `fork_turns: none`. The reviewer joins
-  both enumerations in `test/dual-client-test.sh` and the Step 2 `subagent_type` list.
+  both enumerations in `test/dual-client-test.sh` and the Step 2b `subagent_type` list (PR 2
+  split Step 2 into 2a–2d; the list and both runtime paths are in 2b).
 - **Read-only paragraph.** It is carried verbatim from the existing reviewers: no scratch
   files, `forgeward-artifact-dir.sh`, no drive-letter paths.
 - **Provenance block.** It records `source-path`, `source-commit 0ead11c8…` and
@@ -1022,7 +1024,8 @@ Each follows the 0.17.0 port pattern. Departures are stated per reviewer.
 ### 7.1 Firing
 
 A new Step 1 table row, `targeted-reviewer` (money, gate, auth or secret code), and a new
-**Step 1d — targeted classes** subsection listing the signals per class. The signals are adapted
+**Step 1d — targeted classes** subsection listing the signals per class. Step 1d sits after
+Step 1c and the three subsections that follow it, directly before Step 2. The signals are adapted
 to prose from gstack's lists in `lib/review-risk.ts` and `lib/review-targeted.ts`. Read **added
 and deleted** lines: a removed cap, check or redaction is the change.
 
@@ -1048,15 +1051,59 @@ whatever their extension:
   (authorization, a cap, a redaction, a verdict). A tests-only diff fires the gate class when it
   does this.
 - a **file a tool executes as instructions**: a reviewer or agent prompt, a skill or gate
-  procedure, a lint or scanner rule file. In this repo that is `agents/*.md`,
-  `skills/*/SKILL.md` and `rules/*.yml`.
-- **CI configuration.**
+  procedure, a lint or scanner rule file, including its allowlist or ignore file, and a repo's
+  `CLAUDE.md` or `AGENTS.md`, which Claude Code and Codex load as project instructions. In this
+  repo that is `CLAUDE.md`, `agents/*.md`, `skills/*/SKILL.md` and everything under `rules/`:
+  the two Semgrep packs (`*.yml`) and the push-time Gitleaks config and ignore file
+  (`gitleaks-pre-push.toml`, `gitleaks-pre-push.ignore`). An entry added to that ignore file
+  is an allowlist change.
+- **CI configuration, its mute lists, and the hook registrations that wire a check into a
+  runtime.** In this repo that is:
+  - `.github/workflows/*.yml`;
+  - `ci/relanded-prs.txt`, the acknowledgement list `ci/check-merged-prs-landed.sh` skips;
+  - `hooks/hooks.json` and `hooks/codex-hooks.json`;
+  - the `hooks` key in `.codex-plugin/plugin.json` that points Codex at the second file.
 
-Ordinary documentation, and tests that only add fixtures or new cases, do not fire it.
+  Dropping a hook entry or its pointer removes an allow-or-deny decision without touching the
+  script that makes it.
+
+Ordinary documentation does not fire the gate class, and neither do tests that only add inert
+fixtures or new cases. **That exemption is from the gate class only.** A fixture that holds a
+credential, or a test that makes a paid call, fires secret or money exactly as any other file
+does. A repo's `CLAUDE.md` or `AGENTS.md` is not ordinary documentation: it is gate code, above,
+because the agent sessions that work in the repo run under it. (Until the 0.33.0 `/review` this
+paragraph called them documentation, on the premise that no gate or check reads them as
+instructions. Claude Code and Codex do, and the maintainer ruled them gate code on 2026-11-18.)
+
+**When Step 1 fires `targeted` but cannot tell which class applies, it passes all four**, as
+`targeted(money,gate,auth,secret)`. That is "when unsure, fire it" applied to the classes, and
+upstream's classifier fails closed the same way: on any input it cannot read,
+`lib/review-targeted.ts` returns all four.
 
 The gate prints the classes in the firing decision, as `targeted(money,secret)`, and passes them
-in the launch context as a **scope hint**. That is a classification, like privacy's site
-posture, not a finding. The reviewer:
+in Step 2b's launch context as a **scope hint**, to `targeted-reviewer` only. That is a
+classification, like privacy's site posture, not a finding. Step 2b enumerates the launch
+context twice, in its opening paragraph and in the Codex prompt's "must also carry" list, and
+the classes join both. Neither list names privacy's site posture today, although Step 1a says
+"tell it the posture" and CLAUDE.md's reviewer-launch rule lists it. PR 3 adds the posture
+beside the classes, because a list that gains one per-reviewer hint and still omits the other
+reads as a deliberate exclusion. The opening paragraph's "Every reviewer gets…" must not read as
+handing either hint to every reviewer, so the sentence added after it is:
+
+> The reviewer each one concerns also gets its Step 1 classification, and no other reviewer
+> does: `privacy-reviewer` the site posture of each route group it covers (Step 1a), and
+> `targeted-reviewer` its classes (Step 1d).
+
+The Codex "must also carry" list gains "and, for `privacy-reviewer` and `targeted-reviewer`
+only, that classification".
+
+The classes are not part of a reviewer's name. Step 3's marker writer receives the bare
+`targeted` in its comma-separated fired list, like every other entry, and so does the PASS
+report. PR 4's writer cross-check matches whole comma-separated entries (§8.2), and
+`targeted(money,secret)` would split into `targeted(money` and `secret)`, two entries that name
+no reviewer.
+
+The reviewer:
 
 - reviews the named classes in full;
 - also reviews any other class it finds the diff touching, because the gate's classification
@@ -1065,11 +1112,76 @@ posture, not a finding. The reviewer:
 
 ### 7.2 Severity
 
-**Burden of proof.** For every changed line in a class, the reviewer finds and cites, as
+**Burden of proof.** It applies to every **enforcement-bearing** changed line in a class: a line
+that spends or records spend, checks an identity or a permission, reads or writes a secret, or
+decides a verdict, a threshold or an allowlist. For each one, the reviewer finds and cites, as
 `file:line`, the control that enforces it on that path: the cap, the check, the redaction. **The
 absence of a demonstrated control is the finding.** "Outside the diff" never means "could not be
 read". The reviewer can read the whole repository and must. Upstream's own rule points the same
-way: "a cap that exists but is never reached is missing".
+way: "a cap, check or redaction that exists but is never reached is missing".
+
+- A changed line that **is** the control is its own citation. The finding is then whatever the
+  checklist says about how it changed: removed, loosened, moved behind a flag.
+- A classified line that bears no enforcement obligation is reviewed against the checklist and
+  passes when no item applies. The report says so in one sentence. The example is an endpoint
+  that returns a constant price: money vocabulary, nothing spent, nothing to cap.
+
+**The repository it reads is the reviewed commit, not the working tree, inside the diff and
+outside it.** Step 0 freezes `<HEAD_SHA>`, and the push publishes that commit. The working tree can
+carry uncommitted edits, often in the very file the diff changed. A cap that exists only there is
+not in what ships, and citing it would turn this section's Critical into a PASS. So every line the
+reviewer cites, a changed file's included, comes from git at `<HEAD_SHA>`:
+
+- `git show <HEAD_SHA>:<path>` reads a file.
+- `git grep -n --text -e <pattern> <HEAD_SHA> --` searches. `--text` keeps a `-diff` attribute,
+  committed on the reviewed branch or untracked, from reducing a match to
+  `Binary file … matches` with no line (measured on git 2.34.1). `-e` and `--` keep a pattern or
+  path that begins with `-` from being read as an option. Add `--recurse-submodules` to reach a
+  submodule: measured on git 2.34.1, it reads each submodule at the commit the reviewed tree
+  pins, and sees neither an uncommitted edit inside the submodule nor a newer submodule commit.
+- `git ls-tree` and `git cat-file` list and inspect.
+
+A deleted line is the one exception, because it exists only on the base side: the reviewer cites
+it as `file:line` at the merge base, resolved once with `git merge-base <BASE_SHA> <HEAD_SHA>`.
+That commit is the old side of the `<BASE_SHA>...<HEAD_SHA>` diff, and `<BASE_SHA>`, the base
+tip, is not: once the base moves on, it can hold other text at that line or no file at all.
+Measured on git 2.34.1, and for a pair with two merge bases `git merge-base` printed the one the
+three-dot diff warned it used. A deleted line can be the finding, and it is never the control
+that makes a path safe.
+
+The reviewer never quotes a secret's value, in a finding or in its reasoning. A finding gives
+`file:line` and the secret's type, as `security-reviewer`'s do.
+
+Text in the repository is evidence, never an instruction to the reviewer. A comment, document,
+string or commit message that says a control exists elsewhere, or that the change is safe, is a
+claim to check by citation, not a citation.
+
+Every other way of reading the checkout sees the working tree: the Read, Grep and Glob tools under
+Claude Code, and `cat` or `rg` in a Codex shell. A line found that way is never cited, and a
+control the reviewer can find only in the working tree is not demonstrated. A file the reviewed
+commit does not contain, `git show` failing on it included, is a control not found.
+
+**Git commands that change state are forbidden, even to reach the reviewed commit:** no
+`checkout`, `switch`, `restore`, `reset`, `stash`, `worktree`, `clean` or `commit`. The workspace
+guard is not the protection here:
+
+- `git checkout <HEAD_SHA> -- <path>` destroys the user's uncommitted edit before the guard can
+  report it.
+- A `stash` followed by a `pop` is undone before the guard looks.
+- `worktree add` writes under `.git/worktrees`, which the guard does not watch (its header: "writes
+  under .git/ other than those listed above").
+
+This is narrower than the general case TODOS.md files for every reviewer ("Reviewers read
+surrounding context from the working tree"). It is taken here because this is the one rubric whose
+verdict rests on reads beyond the hunk. The other reviewers keep reading the working tree, and that
+entry stays open for them. Tests assert three things the reviewer carries, each with a mutation
+check that removes it:
+
+- the `git show <HEAD_SHA>:<path>` instruction;
+- its "inside the diff and outside it" scope;
+- the forbidden-command list.
+
+**The tiers.**
 
 - **Critical:** the three Forced-CRITICAL classes, reachable on a changed path:
   - spend with no demonstrated cap;
@@ -1078,13 +1190,37 @@ way: "a cap that exists but is never reached is missing".
     URL, a PR body or comment, an artifact, a child process's argv).
 - **High:** any other checklist item **demonstrated** on a changed line, with a named path from
   that line to the consequence. Examples: a cap read but checked after the spend; a verdict bound
-  to a stale subject; a redactor bypassed by a new output path. Also High: a changed enforcement
-  path whose control the reviewer could not find anywhere in the repository.
+  to a stale subject; a redactor bypassed by a new output path. Also High:
+  - a changed enforcement path whose control the reviewer could not find anywhere in the
+    repository at `<HEAD_SHA>`;
+  - a test on an enforcement path that is skipped or deleted, whether or not the guard it covered
+    survives, because the guard's next regression then ships unseen. Upstream's bullet asks for
+    the test to go "together with the guard it covered"; this is deliberately stricter, and it
+    is what must-serve row 3 needs.
 - **Medium:**
-  - enforcement that lives **outside the repository**, which the reviewer names together with
-    where it is configured (a provider-side budget, a hosting ruleset);
-  - a hypothetical with no call site in the repository.
+  - enforcement that lives **outside the repository**, for an item that would otherwise be High,
+    and only when three things hold:
+    - the repository at `<HEAD_SHA>` carries the evidence, cited as `file:line`: an
+      infrastructure definition, a ruleset export, or a document that names the control and
+      where it is configured;
+    - the cited control covers the changed path. A ruleset that requires a job does not cover a
+      job the diff made `continue-on-error`, because that job now reports success while its
+      steps fail;
+    - the diff weakened no in-repo control on the same path.
+
+    A named outside control with no such citation is a control not found (High).
+  - a hypothetical with no call site in the repository. An exported function, a registered
+    route, handler or webhook, a CLI entry point and a scheduled job are reachable, and each
+    counts as a call site.
 - **Low:** hygiene.
+
+**An outside-repository claim never lowers a Critical.** Upstream says uncapped spend is
+"CRITICAL on sight", and that "no lane, specialist, dedup step or saved decision downgrades it".
+A provider-side budget or console spend limit does not demonstrate a cap on this path, and an
+API gateway the repository does not configure does not demonstrate an auth check. The reviewer
+may name either in the finding, and the finding stays Critical.
+
+**The highest matching severity wins.** A finding that fits two tiers takes the higher one.
 
 **Override, written into the reviewer in these words:** "This Severity section overrides the
 checklist body's own severity sentences, its CRITICAL-floor paragraph and its Forced-CRITICAL
@@ -1106,27 +1242,137 @@ them, and a duplicate is a confirmation, not noise.
 
 ### 7.4 Rule analysis
 
-- **Must serve:**
+- **Must serve, each one a FAIL:**
   1. A web app's payment-webhook handler loses its idempotency check, so a retried event double
-     counts (money).
-  2. A CI workflow marks a required job `continue-on-error: true` (gate).
-  3. A tests-only diff adds `.skip` to an authorization test (gate).
-  4. A plugin's Markdown reviewer prompt drops a severity rule (gate).
-  5. A service starts logging request headers, `Authorization` included (secret).
-  6. A 12-line retry loop around a paid call whose cap the reviewer cannot cite (money, and
-     Critical by the burden of proof).
+     counts (money). High: spend recorded wrong, a double count.
+  2. A CI workflow marks a required job `continue-on-error: true` (gate). High: a required
+     check made optional. A hosting ruleset that requires the job does not cover it (§7.2,
+     Medium).
+  3. A tests-only diff adds `.skip` to an authorization test (gate). High: a skipped test on an
+     enforcement path, whether or not the guard survives (§7.2).
+  4. A plugin's Markdown reviewer prompt drops a severity rule (gate). High: a rule loosened in
+     a file a tool executes as instructions.
+  5. A service starts logging request headers, `Authorization` included (secret). Critical when
+     those logs leave the machine or the process owner; High otherwise.
+  6. A 12-line retry loop around a paid call whose cap the reviewer cannot cite (money). Critical
+     by the burden of proof, and a provider-side budget does not lower it (§7.2).
+  7. Case 6 gated from a dirty tree whose uncommitted edit adds the missing cap, in the changed
+     file itself. The reviewer reads at `<HEAD_SHA>`, cites nothing from the working tree, and
+     still reports the Critical.
+- **Fires and must PASS:** a pricing endpoint that returns a constant price. The money class
+  fires on the vocabulary, no line bears an enforcement obligation, and the reviewer passes with
+  one sentence (§7.2). LIVE-TEST §5c Run A's pricing route is this case, and it is the live
+  negative control.
 - **Must NOT fire on (non-goal):**
-  - a stylesheet of design tokens, `tokens.css`;
-  - marketing copy on a pricing page, `pricing.mdx`;
-  - README or CHANGELOG prose;
-  - a tests-only diff adding fixtures or new cases.
+  - a stylesheet of design tokens, `tokens.css`, or marketing copy on a pricing page,
+    `pricing.mdx`, for every class but secret. Either one that holds a credential is secret
+    code like any other file.
+  - README or CHANGELOG prose, for the gate class only (§7.1). Prose that holds a credential is
+    secret code like any other file. A repo's `CLAUDE.md` or `AGENTS.md` is gate code (§7.1),
+    not on this list.
+  - a tests-only diff adding inert fixtures or new cases, for the gate class only. A new case that
+    makes a paid call, reads a secret or checks an identity is money, secret or auth code like any
+    other, and a fixture holding a credential is not inert (§7.1).
 - **Structurally cannot see (non-goal):**
   - money, auth, gate or secret logic expressed with none of the vocabulary above, for example
     a cap as `MAX = 50` in a generic `limits.ts` with its call site elsewhere. Step 1 is model
     judgement, and the reviewer's self-skip cannot recover a missed classification, because the
-    reviewer never ran. `security-reviewer`'s broader firing is the backstop. Nothing else is.
+    reviewer never ran. What backstops a missed classification differs by class:
+    - auth and secret logic: `security-reviewer`'s broader firing;
+    - spend on an LLM call: `ai-output-reviewer`;
+    - non-LLM spend (a cloud VM, a paid search) and gate logic: **nothing**. `grep` finds no
+      spend-cap rule in `agents/security-reviewer.md`, and `ai-output-reviewer` fires only on an
+      LLM call.
   - a procedure whose instructions live where nothing recognizes them as one, such as a wiki page
     a CI job fetches.
+  - a control in a submodule that is not checked out. `git grep --recurse-submodules` finds
+    nothing there, so the reviewer reports a control not found: High, or Critical for spend.
+  - a diff that only bumps a gitlink. It shows two commit ids and none of the submodule's lines,
+    so Step 1 cannot classify it, and it fires `targeted` only when something else in the diff
+    does. Under an `ignore = all` setting for the submodule, which the branch's own
+    `.gitmodules` can carry, Step 1's two `git diff` commands do not show the bump at all,
+    while the reviewer's diff read, which carries `--ignore-submodules=none`, does (measured on
+    git 2.34.1). Where `targeted` fires and the submodule's objects are present, the reviewer
+    reads the range
+    (`git -C <path> diff --text --no-textconv --no-ext-diff --ignore-submodules=none <old> <new>`),
+    and each gitlink that range bumps the same way: the outer submodule's own `.gitmodules`
+    can set `ignore = all` for the nested one, measured the same way. Where the objects are
+    not present, it says so, and that range is outside what it reviewed. Step 1b's submodule
+    disclosure is the user's notice.
+
+Both non-goal lists are written into Step 1d and into the reviewer as non-goals, in these words.
+The must-NOT-fire rows stay model judgement, and no suite assertion or live-test leg exercises
+them. The only live negative control is the must-PASS row above.
+
+### 7.5 Reconciled with the merged PRs 1 and 2 (2026-11-18)
+
+§7 was written before PR 1 (0.31.0) froze the review subject and PR 2 (0.32.0) rewrote Step 2 into
+2a–2d and Step 3 into six rows. It was re-read against the merged `skills/gate/SKILL.md`,
+`scripts/forgeward-write-marker.sh`, `test/dual-client-test.sh`, `test/gate-test.sh` and
+`live-test/LIVE-TEST.md`.
+
+**One change to behaviour.** The burden of proof reads the reviewed commit, not the working tree
+(§7.2, must-serve row 7). The gap is older than PR 1, which named the reviewed commit and filed
+working-tree reads for every reviewer (TODOS.md, P3). It becomes a behaviour question here
+because §7.2 makes reads outside the diff the basis of this reviewer's verdict, so a working-tree
+read can certify a control the reviewed commit lacks.
+
+**Facts and cross-references:**
+
+- The `subagent_type` list and both runtime paths are in Step 2b (§6).
+- The classes join both of Step 2b's launch-context enumerations, and privacy's site posture is
+  added beside them (§7.1). Step 1a and CLAUDE.md already pass the posture, but 2b's lists
+  omitted it.
+- The marker writer's fired list carries the bare `targeted` (§7.1). The writer stores
+  `<fired-csv>` raw and no hook reads it today, so this is for PR 4's whole-entry match.
+- The in-repo examples of gate code gain the Gitleaks config and ignore file under `rules/` and the
+  two hook registrations (§7.1).
+- Step 1d is placed directly before Step 2.
+- §12 states how the counts move: R6 and R6b literal, R14j derived, Step 1c's quality count
+  unchanged.
+
+**Checked and unchanged.** These match the merged code as §7 states them:
+
+- 2c's valid-verdict rule (exactly one `TARGETED VERDICT:` line);
+- Step 3 row 6's "a self-skipped reviewer counts as PASS";
+- the Codex path's generic `agents/<reviewer>.md` read and its three literals;
+- the writer's `fired` handling. Nothing in `scripts/` validates or reads reviewer names, so no
+  script's **behaviour** changes in PR 3. Two comments in `scripts/forgeward-rubric-drift.sh` do
+  go stale, and they are amended in place with the mode kept: the header's list of ported
+  rubrics (:8-9) and "the five reviewer rubrics" (:188).
+
+### 7.6 What the hole reviews of this revision changed
+
+Two independent reviews walked the 2026-11-18 revision on the same day: a Codex consult
+(`gpt-6.1-sol`, 4 findings) and a fresh Opus agent (2 blockers, 7 majors, 9 minors). Both judged
+it not ready to plan. The changes, all in §7:
+
+- **Severity:**
+  - an outside-repository claim never lowers a Critical;
+  - the outside-repository Medium needs an in-repo citation, coverage of the changed path, and
+    no weakened in-repo control;
+  - the highest matching severity wins;
+  - exports, routes, handlers, CLI entry points and jobs count as call sites;
+  - a skipped enforcement test is High.
+- **Burden of proof:** scoped to enforcement-bearing lines. A line that is the control is its own
+  citation, and a class line with nothing to enforce passes with a sentence.
+- **Reviewed commit:** the rule covers the changed file too. No Read, Grep or Glob line is cited,
+  `git grep` takes `-e` and `--`, and git commands that change state are forbidden, with the
+  reason the guard does not cover them.
+- **Firing:**
+  - the fixtures exemption is from the gate class only;
+  - `CLAUDE.md` and `AGENTS.md` are documentation, reversed during the 0.33.0 `/review` by the
+    maintainer's ruling that they are gate code (§7.1);
+  - an unsure classification passes all four classes;
+  - the in-repo gate-code lists gain `ci/relanded-prs.txt` and the Codex manifest's `hooks` key.
+- **§7.4:** every must-serve row states its verdict. The pricing endpoint becomes a must-PASS row
+  and the live negative control. The backstop claim is corrected per class, the submodule row no
+  longer offers a Medium, the gitlink bump is a stated blind spot, and the non-goals are written
+  into Step 1d and the reviewer.
+- **Launch context:** the exact 2b sentence is given, so the hints cannot read as going to every
+  reviewer.
+- **Records:** §12's test and count wording is corrected, and §16 records the two signal-source
+  hashes.
 
 ---
 
@@ -1796,28 +2042,52 @@ These go into the header's existing list. The header stays the only maintained c
 Each PR updates, in the same commit as the behaviour:
 
 - **Tests:**
-  - `test/dual-client-test.sh`: both reviewer lists, the launch-context assertions (PRs 3, 4
-    and 5), and the stage-2 sub-range (PR 4);
+  - `test/dual-client-test.sh`: the reviewer enumeration, the launch-context assertions (PRs 3,
+    4 and 5), and the stage-2 sub-range (PR 4). The file holds **one** literal list,
+    `expected_reviewers`, which two checks consume: the inventory check against
+    `agents/*-reviewer.md`, and the dispatch check that every `forgeward:<name>` appears in
+    Step 2. CLAUDE.md's "both enumerations" means those two checks. The existing launch-context
+    assertion still reads all of Step 2 (`gate_step2`). PR 2 added the `gate_2a`…`gate_2d` cuts
+    and did not move it. PR 3's new assertions read `gate_2b`, with separate coverage for the
+    opening paragraph and for the Codex "must also carry" list;
   - `test/gate-test.sh`: R6, R6b and R14j counts for each new port, plus each section's
-    assertions above;
+    assertions above. R6 and R6b carry the literal floor (`-ge 5`), which each port raises by
+    one. R14j has no literal: it derives its expected count from R6 and R14d, so it moves with
+    them and must stay green;
   - `live-test/LIVE-TEST.md` §5c: a fixture item, a positive-control leg and a floors-table row.
+    §5c is titled for the five quality reviewers, and its Run A fixture is a pricing endpoint,
+    so PR 3's `targeted` fires on Run A's money class whether or not a fixture item is added for
+    it. Run A's expected `targeted` verdict is PASS, and that is the live negative control (§7.4,
+    must-PASS row). The positive-control leg is a separate change carrying an uncapped retry
+    around a paid call, expected to FAIL at Critical. The section title is widened in PR 3;
 - **Docs:**
-  - the reviewer count in README;
+  - the reviewer counts in README, which states two (:18, "all eleven plugin agents", and :79,
+    "Eleven read-only reviewers");
   - the Step 1 firing-decision example;
-  - Step 1c's "five ported reviewers" prose and the drift paragraph;
+  - Step 1c's "five ported reviewers" prose and the drift paragraph. The prose counts the
+    owners of the `quality` axis. `targeted` is not a quality reviewer, so PR 3 leaves it at five,
+    and PRs 4–6 settle the same question for their own ports. What moves is the drift paragraph's
+    count of what the drift check hashes ("the five reviewers and `/forgeward:audit`"), and
+    the `### quality` subsection's "Their checklists are ports", which needs a sentence saying
+    the newer ports sit outside that axis;
   - `THIRD-PARTY-LICENSES.md`;
   - a `DECISIONS.md` entry. PR 4's entry also appends a superseded-in-part note to 0.17.0's
     clause "`red-team` depends on orchestration that was not ported", leaving the history intact.
 - **`CLAUDE.md` bullets that become false, amended in the PR that falsifies them:**
   - **The reviewer-launch rule** says prompts "carry only" rubric, roots, base and HEAD,
-    read-only and verdict format. It is already inaccurate, because privacy's site posture is
-    passed today. It gains, PR by PR:
+    read-only and verdict format. When this was written it omitted privacy's site posture.
+    CLAUDE.md now lists the posture, and it is Step 2b that omits it (§7.1). The rule gains, PR
+    by PR:
     - the frozen SHAs (PR 1);
     - targeted's classes (PR 3);
     - red-team's findings exception (PR 4);
     - state-machines' matrix path (PR 5).
   - **The marker bullets** gain revocation and the reviewed-commit arguments (PR 1).
-  - **The a11y "one place this repo has done that" bullet** gains state-machines (PR 5).
+  - **The a11y "one place this repo has done that" bullet** gains state-machines (PR 5). PR 3
+    already amends it once. Targeted's blocking surface is new, and its skipped-test High (§7.2)
+    is deliberately stricter than upstream's wording. Its no-downgrade Critical is upstream's own
+    rule. That is a new reviewer's remit, not an existing reviewer widened, and the bullet says
+    which.
   - **The enumerations of ported reviewers** (PRs 3–6).
 - **`TODOS.md`:**
   - marker policy compatibility across upgrades, folded into the existing unread-`schema`
@@ -1907,5 +2177,12 @@ such a file as `-`/`-`, so §8.3 checks content instead.
 | `review/specialists/simplification.md` | `f33846b1dcf2fdeef82d0744ab2ef48fb4a33b34a737dafc33dd0e891756689f` |
 | `review/specialists/security.md` (declined) | `17bfe813eb3de22835af048ec359770720f1d7f371a26460169f7e32b1bcac9f` |
 | `review/design-checklist.md` (§14) | `b9205f88313cc64902c0b13e9685722ab8138d3dcc58916154f47274abda7d83` |
+| `lib/review-risk.ts` (§7.1 signals, record only) | `25a7de61580398df96dca3651b10b2494825047e0898980406928b931b5f90af` |
+| `lib/review-targeted.ts` (§7.1 signals, record only) | `62c8a8d731c1f49ebda24912e5d800ce24b481019e26c04fd1177b37daadab12` |
 
-Hashed through stdin (`sha256sum < file`), the way the drift script hashes.
+Hashed through stdin (`sha256sum < file`), the way the drift script hashes. The two `lib/` rows
+were added on 2026-11-18, from `git -C <gstack> show 0ead11c8:<path> | sha256sum`. **They are a
+record, not a pin.** Step 1d's signals are prose adapted from those files, not a copy, so they
+carry no provenance block. The drift check compares only the first `source-path`/`source-sha256`
+pair in a ported file, so it will never report an upstream change to either file. Re-hashing
+them by hand is the only way to notice one.

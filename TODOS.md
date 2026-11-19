@@ -158,7 +158,7 @@ is keyed to HEAD, so an amend invalidates it.
 | 16 | **`/forgeward:properties` exists.** The on-demand property skill, per `docs/axis-proposals.md` Q1. | Property-based testing ×1 | new build |
 | 23 | **The runtime axis is decided, either way.** `/forgeward:prove` is already rejected in writing; what is open is a P4 design entry that says a runtime axis is buildable and is not decided. Deciding is the work — a `DECISIONS.md` entry saying built, deferred behind a named trigger, or out of scope — so it stops being carried as an open item nothing can act on. Last because it is the only goal here whose output is a paragraph. | Runtime axis ×1 | decision |
 | 24 | **Archive pass 7, and the first expiry triage.** Measured at `f0ce0dd`, pass 6 left the open half at 156,631 B and `## Completed` at 14,045 B — 8.2% of *that commit's* file. The next commit on this same branch invalidated both, which is why the ref is quoted with them and why the pass re-measures before acting rather than reading this row. The pass is a triage rather than a split: nothing expires an entry, and the sections below hold entries older than two rewrites of their own subject. Run the currency check first, as always. Struck on a re-measure, explicitly **not** on landing under 50KB, which it cannot do. | Docs hygiene ×1 | docs |
-| 27 | **The five ported reviewers have actually been RUN.** §5c of `live-test/LIVE-TEST.md` is stamped with a date, a client and a model — or voided by its own Run B and said to be — and the suite's `_strict_provenance` name-mode gets the assertion a person currently substitutes for. Successor to struck goal 1, which wrote the procedure and could not run it. Last because it is the only goal here whose output is not a diff: CI structurally cannot observe it, so it ends at a terminal. | Quality axis ×2 | manual |
+| 27 | **The five quality reviewers and `targeted` have actually been RUN.** §5c of `live-test/LIVE-TEST.md` is stamped with a date, a client and a model — or voided by its own Run B and said to be — and the suite's `_strict_provenance` name-mode gets the assertion a person currently substitutes for. Successor to struck goal 1, which wrote the procedure and could not run it. Last because it is the only goal here whose output is not a diff: CI structurally cannot observe it, so it ends at a terminal. | Quality axis ×2 | manual |
 
 ### Retired goals
 
@@ -1067,7 +1067,10 @@ themselves so that none of them requires the commit to be actionable.
   dirty tree, the context a finding rests on can be code that is not in the reviewed
   commit. **What would settle it:** tell reviewers to read context with
   `git show <HEAD_SHA>:<path>`, and check whether that costs the scanners anything (they
-  read files from disk). **Priority:** P3
+  read files from disk). **0.33.0:** `targeted-reviewer` already reads every line it cites
+  at `<HEAD_SHA>` and is forbidden git commands that change state (spec §7.2), because its
+  verdict rests on reads beyond the hunk. The entry stays open for every other reviewer,
+  which still reads the checkout. **Priority:** P3
 - **An interrupted gate run's leftovers become the next run's baseline.** (upstream-lenses
   spec §5.4, hole review of the PR 2 revision, 2026-11-17) The user interrupting a gate
   skips the workspace check, and a reviewer still running afterwards can write into the
@@ -1173,6 +1176,117 @@ themselves so that none of them requires the commit to be actionable.
   there it hid a reviewer's write. In the artifact-dir script it matters only for an artifact
   root inside a repo whose name ends in a newline. Deliberately not widened in 0.32.0.
   **Priority:** P3
+
+- **Gate Step 1 and every reviewer except `targeted` read `git diff` through the checkout's
+  attributes.** (final review of 0.33.0, 2026-11-18; widened by its `/review`) A
+  `.gitattributes` in the checkout applies to a diff between two commits, and it need not be
+  untracked: one the branch under review commits is checked out with it, so the branch
+  supplies the attribute that hides its own change.
+  - `* -diff` shows a committed change as `Binary files … differ`, and reduces a `git grep`
+    match to `Binary file … matches` with no line;
+  - a `diff=<driver>` entry runs that driver's textconv.
+
+  Reproduced in a scratch repo, with the attribute committed and with it untracked: `* -diff`
+  hid a committed paid loop's lines from `git diff A...B` and from `git grep -n`, while
+  `git show B:<path>` printed them. Since 0.33.0, `targeted-reviewer` reads with
+  `--text --no-textconv --no-ext-diff` and searches with `--text`. Step 1's classification
+  and the other rubrics do not. Same family as the working-tree entry. **Priority:** P2. The
+  committed form needs no access beyond opening the PR, which argues for P1; that is the
+  maintainer's call.
+
+  **A committed `.gitmodules` does the same to a gitlink, through config rather than an
+  attribute.** (`/review` second pass of 0.33.0, 2026-11-19) With `ignore = all` set for a
+  submodule in the branch's own `.gitmodules`, measured on git 2.34.1, Step 1's
+  `git diff --name-only` listed only `.gitmodules`, and its plain `git diff` printed no
+  `Subproject` line. `--ignore-submodules=none` brought both back. Where the base already
+  carries the setting, a branch that only bumps the gitlink changes nothing either command
+  lists, which is Step 0's "Nothing to gate" condition; that leg was reasoned, not run.
+  What a marker certifies is not affected: `forgeward-diff-hash.sh` already pins
+  `--ignore-submodules=none`, naming `submodule.<name>.ignore` as the reason. Since 0.33.0,
+  `targeted-reviewer`'s diff read carries the flag too. Step 0, Step 1 and the other rubrics
+  do not. Same priority as the attribute vector above.
+
+- **`targeted`'s severity text leaves four spec questions open.** (final review of 0.33.0
+  and its `/review`, 2026-11-18) Each needs a ruling on `docs/upstream-lenses-design.md` §7.2
+  before the text changes, because each changes what the reviewer blocks:
+  - A test that *weakens* an enforcement assertion fires the gate class (Step 1d), but no
+    tier names it. High names only a skipped or deleted test, so a weakened one can land at
+    Medium.
+  - "The highest matching severity wins" makes the outside-repository Medium unreachable:
+    any finding that qualifies for it also fits the High for a control not found in the
+    repository. The error leans toward a false FAIL. A fix that makes the Medium reachable
+    must also stop the diff supplying its own evidence. Today a diff can add the document
+    that "names the control and where it is configured", and only the High it also matches
+    keeps that document from lowering the finding. Require the evidence to exist at
+    `<BASE_SHA>`, or count a document the diff adds or changes as no evidence.
+  - The forbidden list names eight git commands, but not `fetch` or `submodule update`, the
+    obvious reach in the gitlink case. The general rule covers them in intent only.
+  - The secret Critical reads "a secret written to a sink that leaves the machine", with no
+    intended-recipient test. Read literally, a bounded API call that sends its key to the
+    provider it authenticates to matches it, which is a false FAIL. Narrowing it to an
+    unintended recipient lowers what blocks, so it needs the same ruling.
+
+  **Priority:** P3
+
+- **A branch's `CLAUDE.md` or `AGENTS.md` reaches the reviewers that gate it.** (`/review`
+  of 0.33.0, 2026-11-18) Since 0.33.0 an edit to either is gate code and fires `targeted`,
+  which reviews the edit; the maintainer ruled that on 2026-11-18, replacing the
+  "documentation" premise. Reviewing the edit does not stop it acting: the gate runs in the
+  checkout, so any session or reviewer that loads project instructions loads the branch's
+  version during the run that judges it. Whether Claude Code's plugin subagents and Codex's
+  gate spawns load them was not checked here. `targeted`'s "text in the repository is
+  evidence" sentence is the only counterweight, and only in that reviewer. **Priority:** P2
+
+- **No reviewer's `tools:` line is asserted.** (final review of 0.33.0, 2026-11-18) Adding
+  `Edit, Write` to any `agents/*-reviewer.md` frontmatter keeps every suite green. The
+  read-only posture rests on the prompt text and on Step 2's workspace guard, which reports
+  a write only after the fact. The gap predates 0.33.0, and `targeted` is its twelfth
+  instance. Fix: derive the reviewer list from the existing enumeration, and assert each
+  one's `tools:` is exactly `Read, Grep, Glob, Bash`. **Priority:** P3
+
+- **A pure rename or a mode-only change disables a control with no line to read.**
+  (`/review` red team of 0.33.0, 2026-11-18) A workflow moved out of `.github/workflows/`,
+  or a hook whose exec bit is dropped, shows in `targeted`'s diff read only as a
+  `rename from`/`rename to` or `old mode`/`new mode` header. Probed on git 2.34.1, both
+  headers print. The ported checklist's "a threshold, required check, allowlist or rule
+  loosened, skipped or made optional" covers what they mean, but the instruction to read
+  deleted lines as closely as added ones has no line to point at. `--no-renames` was
+  rejected: it turns every moved file into a full delete and add. A sentence naming the two
+  headers as gate-class evidence would close it. **Priority:** P3
+
+- **Only `targeted-reviewer` says repository text is data.** (`/review` adversarial pass of
+  0.33.0, 2026-11-18) Since 0.33.0 it says a comment, document, string or commit message is
+  evidence, never an instruction to it. A search of `agents/*.md` and `skills/gate/SKILL.md`
+  for "not instructions", "never instruction", "untrusted" and "as data" finds no other
+  reviewer or gate text that says so. `security-reviewer`'s two "untrusted" lines are about
+  input to the code under review. `skills/audit/SKILL.md`'s **Anti-manipulation** rule is
+  the model to copy. **Priority:** P3
+
+- **R6 counts drift-checkable rubrics and names none of them.** (`/review` testing specialist
+  of 0.33.0, 2026-11-19) `test/gate-test.sh`'s R6 requires at least six shipped rubrics to
+  record both `source-path` and a `source-sha256`, and R6b requires the licence table to
+  match the same count. Neither names a file. A rubric that dropped its provenance block
+  in the same change that gave one to a reviewer that is not a port would leave the count
+  at six, and that rubric would silently stop being drift-checked. That takes two unrelated
+  edits, which is why it is P3. Asserting the six files by name, beside the floor, would
+  close it. The gate's testing reviewer reported the same on 2026-11-19. **Priority:** P3
+
+- **R6 and R6b's floor is a bare `6`, written four times.** (gate maintainability reviewer
+  of 0.33.0, 2026-11-19; Medium, debt) `test/gate-test.sh` checks `-ge 6` in R6 and in R6b,
+  and prints `expected >= 6` in both failure messages. The comment ties the number to the
+  five quality reviewers and `targeted`, so every new port edits four places in step.
+  PR 4 (0.34.0) adds `red-team` and raises the floor to seven: name it once there, as one
+  variable carrying that comment, and use it in both assertions and both messages.
+  **Priority:** P3
+
+- **Step 1d names forgeward's own gate-code paths, and nothing checks they still exist.**
+  (gate maintainability reviewer of 0.33.0, 2026-11-19; Low) Each list is introduced as
+  "In forgeward's own repository that is…", so the paths are a worked instance of the
+  general rule, not the rule. All eight literal paths it names were tracked on 2026-11-19
+  (`git ls-files --error-unmatch`). After a rename, Step 1d would name a file that is gone
+  and read as coverage of a path nothing fires on. An assertion in
+  `test/dual-client-test.sh` that every literal path Step 1d names is tracked would turn
+  that red. **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -1661,8 +1775,8 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 - **`live-test/LIVE-TEST.md` §5c is written and has never been run.** (goal 1;
   quality-axis verification pass, 2026-09-04) The section that closes "the five ported
-  quality reviewers have never been run live" specifies the fixture, both runs and the five
-  per-axis severity floors; nothing in it is stamped, and it ends `**NOT TESTED YET**` for
+  quality reviewers have never been run live" specifies the fixture, its runs and its
+  per-axis severity floors (three runs and six floor rows since 0.33.0 added `targeted`); nothing in it is stamped, and it ends `**NOT TESTED YET**` for
   that reason. The three questions the entry it replaces named — whether the floors hold,
   what always-on `maintainability` + `testing` cost on a large diff, and whether five more
   reviewers overlap enough to be worth deduplicating in Step 3 — are all still open, and
@@ -2820,9 +2934,50 @@ Pass 4 (2026-08-18) cleared the deferral the 0.13.0 entry recorded: that split w
 back deliberately so a four-figure prose diff would not bury a script change, and it
 shipped on its own branch instead.
 
+- **`targeted` is ported: money, gate, auth and secret code get a reviewer of their own.**
+  (0.33.0, branch `feat/targeted-reviewer`, 2026-11-18; unmerged when this entry was
+  written, so check the tree before calling it merged.) PR 3 of the seven-PR
+  upstream-lenses stack (`docs/upstream-lenses-design.md` §7). `agents/targeted-reviewer.md`
+  carries gstack `0ead11c8`'s checklist verbatim under forgeward's own scope, severity and
+  output sections. Step 1 fires it from a table row; Step 1d classifies the diff into money,
+  gate, auth and secret on added and deleted lines, by what a file does, and fails closed to
+  all four. Step 2b passes the classes to this reviewer only and now passes privacy its
+  posture; the marker carries the bare `targeted`. The reviewer reads every cited line at
+  `<HEAD_SHA>` and is forbidden git commands that change state. `dual-client-test.sh` pins
+  the enumeration, Step 1d, the launch context, the bare name and the reviewer's
+  reviewed-commit rule and override sentence, each with a mutation check; R6 and R6b floors
+  are six. LIVE-TEST §5c gains `targeted`'s negative control (Run A), a positive control
+  and a dirty-tree leg (Run C). Spec reconciled first, with two hole reviews (§7.5, §7.6).
+  Two code hole reviews (Opus, Codex) closed four holes. The tests-only exemption is now
+  limited to the gate class in the reviewer, Step 1d and §7.4. The reviewer reads its diff
+  with checkout attributes and diff drivers off. The Step 1 table assertion now reads the
+  table. The licence file counts six ports. gstack `/review` then closed five more:
+  the reviewer searches with `--text` and reads a gitlink range with the diff's flags; a
+  deleted line is never the control; repository text is evidence, never an instruction; the
+  README and CHANGELOG exemption is limited to the gate class like the tests-only one; and
+  `CLAUDE.md` and `AGENTS.md` are gate code, ruled by the maintainer, in Step 1d, the
+  reviewer and §7.1/§7.4. Its second pass closed four more: a deleted line is cited at the
+  merge base, not the base tip; the diff read carries `--ignore-submodules=none`; the
+  `tokens.css` and `pricing.mdx` exemptions keep the secret class; and the reviewer never
+  quotes a secret's value. Its third pass carried the flag into the gitlink range read,
+  which now follows each nested gitlink the same way, and named the merge base in a deleted
+  line's `Location`. That pass hit `/review`'s three-cycle cap, so no `/review` pass re-read
+  its fixes. `/forgeward:gate` 0.30.0 then passed it with supply-chain, security,
+  maintainability and testing, none reporting a Critical or High. Its three comment-wrap
+  Lows were fixed in the commit that filed the rest. Its LIVE-TEST "five" Low needed no
+  change, because each line it named already says "five quality". Its testing reviewer's
+  prose-coupling Low describes how this suite pins prompt text, and the commit messages
+  record the mutation checks it asked for. Deferred: the working-tree read
+  for every other reviewer stays open in `## Reviewers`, with nine new entries there: the
+  attribute and submodule-ignore read for the rest of the gate, four open §7.2 severity
+  questions, a branch's `CLAUDE.md` reaching the reviewers that gate it, the unasserted
+  `tools:` lines, rename and mode-only headers, repository text as data for the other
+  reviewers, R6's count naming no rubric, and, from the gate, R6's bare floor and
+  Step 1d's unchecked paths.
+
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
-  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17; unmerged when this entry was
-  written, so check the tree before calling it merged.) PR 2 of the seven-PR upstream-lenses
+  on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge
+  commit `08dea59`, checked with `git merge-base --is-ancestor 08dea59 origin/master`.) PR 2 of the seven-PR upstream-lenses
   stack (`docs/upstream-lenses-design.md` §5). Workspace guard v2 records a manifest with a
   header and an end count: every `git status` entry by kind and content, the index, `HEAD`,
   the stash, the hooks, `forgeward.gate`, this commit's run file and its markers.
