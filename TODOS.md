@@ -1288,6 +1288,21 @@ themselves so that none of them requires the commit to be actionable.
   `test/dual-client-test.sh` that every literal path Step 1d names is tracked would turn
   that red. **Priority:** P3
 
+- **The marker writer stores `<fired-csv>` raw: unvalidated and unescaped.** (second gate
+  run of 0.33.0, testing reviewer, 2026-11-19; widened by reading the writer)
+  `forgeward-write-marker.sh` checks its other four arguments and writes `$fired` into the
+  marker's JSON as `"fired": "$fired"`, with no charset check and no escaping. So a
+  `targeted(money,secret)` the firing decision printed would be stored as given, and read as
+  the two entries `targeted(money` and `secret)` by any comma split. A `"` in the list makes
+  the marker invalid JSON (one re-gate). A crafted list could add keys after `fired`, and a
+  repeated key's last value wins (measured with `jq` 1.8.2 and Python's `json`), so it could
+  replace `diff_hash`. That is not a privilege boundary: the only caller is the gate model,
+  which can already write any file. Neither hook reads `fired` today
+  (`docs/upstream-lenses-design.md` §7.5). PR 4's red-team cross-check (§8.2) is the first
+  code that parses it: validate it there against the firing decision's fixed short names,
+  and add writer cases for a bare `targeted` (accepted) and `targeted(money,secret)`
+  (refused). **Priority:** P3
+
 ## Standalone posture (no gstack installed)
 
 Full analysis in `docs/axis-proposals.md` → "Later findings" §3. **Option B shipped in
@@ -1989,8 +2004,11 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
 
 ## Runtime axis (pentest / DAST)
 
-- **A runtime axis is buildable, is NOT `/prove`, and is not decided.** (design
-  conversation, 2026-09-03) Shape: **a fourth skill inside forgeward, not a separate
+- **A runtime axis is buildable and is NOT `/prove`, and it was built as
+  `/forgeward:pentest`.** (design conversation, 2026-09-03; built in 0.28.0 as #67, whose
+  entry is in `TODOS-DONE.md`. What follows is the design as filed. Archive pass 7 did not
+  re-read it against the shipped skill, so some of its open questions may be answered
+  there.) Shape: **a fourth skill inside forgeward, not a separate
   plugin and not a reviewer** — `disable-model-invocation: true`, never fired by the
   gate. That is `ci-gate`'s existing shape rather than a new one, and `ci-gate` is the
   precedent that settles the packaging question: it holds `Write` and `Edit`, writes
@@ -2687,6 +2705,21 @@ Full analysis and decision rules in `docs/axis-proposals.md`.
   cost understood. Recorded rather than decided.
   (observed 2026-08-03; PR bodies stripped and history measured 2026-08-16) **Priority:** P3
 
+- **`CLAUDE.md`'s two interpreter bullets predate two scripts, and A25 cannot see two
+  `python -c` shapes.** (archive pass 7, 2026-11-19) At `ec46449`,
+  `git grep -l python3 -- 'scripts/*.sh' 'ci/*.sh'` lists **eight** scripts, not six, and
+  six of them have a `python3` line that is not a whole-line comment, not four. #63 added
+  `ci/check-merged-prs-landed.sh`, which fits the CI posture: it dies with a named message
+  when `python3` is absent. #67 added `scripts/forgeward-pentest.sh`, which runs `python3`
+  inside the ZAP image, a posture the bullet does not name. Pass 7 scoped the `-I`
+  bullet's A25 claim to what A25 matches and left the posture bullet's counts alone: that
+  paragraph has been wrong three times, and a fourth correction belongs in its own change.
+  Open: (1) the two `--entrypoint python3 "$zap_image" -c` probes carry no `-I`. Those
+  containers mount nothing from the repository, so either add the flag or write the
+  exception into the rule's headline. (2) Widen A25 to see `"$_py_path" -c` and
+  `--entrypoint python3 … -c`, with a mutation check for each. (3) Replace the posture
+  bullet's counts with the method, as that file advises. **Priority:** P3
+
 ## Docs hygiene
 
 - **Nothing expires an entry, so the open half needs a periodic triage or it silently
@@ -2905,11 +2938,11 @@ already do this?". Everything older is in [`TODOS-DONE.md`](TODOS-DONE.md), incl
 the non-goals and reversed decisions; the rules those produced are in
 [`CLAUDE.md`](CLAUDE.md).
 
-Back to five as of archive pass 6 (2026-09-03), which found the section at **twelve** —
-five standing, plus five the pass wrote itself for six merged PRs that had left no entry,
-plus two the pass then moved out again. The section drifts above five between archive
-passes and is cut back at the next one; it is not trimmed entry-by-entry. Pass 5
-(2026-08-19) found nine and did the same.
+Back to five as of archive pass 7 (2026-11-19), which found the section at **thirteen**
+and four more merged PRs (#65 to #68) with no entry. None of the four had touched
+`TODOS.md`, so their entries went straight into the archive. Pass 6 (2026-09-03) found
+twelve and pass 5 (2026-08-19) nine. The section drifts above five between archive passes
+and is cut back at the next one; it is not trimmed entry-by-entry.
 
 **Pass 6's currency check found the worst gap yet: six merged PRs and no entry for any of
 them.** #55 through #60 — two releases (0.25.0, 0.26.0), the dual Claude/Codex packaging,
@@ -2935,8 +2968,8 @@ back deliberately so a four-figure prose diff would not bury a script change, an
 shipped on its own branch instead.
 
 - **`targeted` is ported: money, gate, auth and secret code get a reviewer of their own.**
-  (0.33.0, branch `feat/targeted-reviewer`, 2026-11-18; unmerged when this entry was
-  written, so check the tree before calling it merged.) PR 3 of the seven-PR
+  (0.33.0, branch `feat/targeted-reviewer`, 2026-11-18. Merged as #73 on 2026-11-19, merge
+  commit `ec46449`, checked with `git merge-base --is-ancestor ec46449 origin/master`.) PR 3 of the seven-PR
   upstream-lenses stack (`docs/upstream-lenses-design.md` §7). `agents/targeted-reviewer.md`
   carries gstack `0ead11c8`'s checklist verbatim under forgeward's own scope, severity and
   output sections. Step 1 fires it from a table row; Step 1d classifies the diff into money,
@@ -2973,7 +3006,10 @@ shipped on its own branch instead.
   questions, a branch's `CLAUDE.md` reaching the reviewers that gate it, the unasserted
   `tools:` lines, rename and mode-only headers, repository text as data for the other
   reviewers, R6's count naming no rubric, and, from the gate, R6's bare floor and
-  Step 1d's unchecked paths.
+  Step 1d's unchecked paths. A second gate run at `0c978fd`, after the filing commit,
+  passed the same four reviewers, and archive pass 7 filed its one new entry: the writer's
+  raw `<fired-csv>`. Its other new Low, a count of "all eleven reviewer rubrics" in
+  §5.6, needed no change: §5.6 records a PR 2 decision, made when there were eleven.
 
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
   on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge
@@ -3052,8 +3088,9 @@ shipped on its own branch instead.
   run file's first line as the hooks do (P43) and gives it the marker's mode (K41); K33b
   was rebuilt around a stand-in environment probe because the `cat` it hooked is gone.
 - **Every bash recipe in the audit skill is run by the suite or listed as a gap.** (Branch
-  `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. **Not merged when this
-  was written.** Check with `git merge-base --is-ancestor` before reading it as landed.)
+  `fix/audit-recipe-test-coverage`, 2026-10-19, no version bump. Merged as #70 on
+  2026-10-19, merge commit `57c7192`, checked with
+  `git merge-base --is-ancestor 57c7192 origin/master`.)
   It fixes the three non-blocking findings from the 0.30.0 gate:
   - **Testing (Medium):** the suite ran three of the audit's changed recipes. P8p now runs
     the history searches and the four `git grep` locators against fixtures. It asserts
@@ -3080,8 +3117,9 @@ shipped on its own branch instead.
     skill is not changed here.
 
 - **The three drifted rubrics are re-ported from gstack `dbf400ec`.** (0.30.0, branch
-  `chore/report-gstack-rubrics`, 2026-10-13. **Not merged when this was written.** Check
-  with `git merge-base --is-ancestor` before reading it as landed.) Re-pinned on 2026-10-19
+  `chore/report-gstack-rubrics`, 2026-10-13. Merged as #69 on 2026-10-19, merge commit
+  `aaeb00c`, checked with `git merge-base --is-ancestor aaeb00c origin/master`.)
+  Re-pinned on 2026-10-19
   to `47d639ab`, where all three source files are byte-identical to `dbf400ec`, so only
   `source-commit` moved. The drift script flagged
   `maintainability-reviewer`, `testing-reviewer` and `audit` on a gate run. After this
@@ -3123,506 +3161,3 @@ shipped on its own branch instead.
   and R6b to cover the audit, so `test/gate-test.sh` goes 246 → 248. Each new assertion
   was checked by mutation. No goal draws any of the filed entries yet. The re-port entry under `## Quality axis` gained its
   first data point: the recorded commit was unreachable, and only the hash found the base.
-- **The ported quality axis is verified by something other than the port — as far as
-  anything short of a person at a terminal can verify it.** (goal 1; branch
-  `test/quality-axis-verification`, 2026-09-04 — **not merged at the time of writing**;
-  settle that with
-  `git merge-base --is-ancestor "$(gh pr view N --json mergeCommit -q .mergeCommit.oid)" origin/master`
-  before reading this as landed.) Four entries close: the five reviewers' missing LIVE-TEST
-  section, the drift script's three unasserted edges, R6's duplicated provenance regexes,
-  and the three accepted limits from the review that gated 0.20.0. `test/gate-test.sh` goes
-  234 → 243 assertions. Four of the nine new ones (R15b, R16b, R19b, R19c) come from the
-  `/review` pass on this branch rather than from the goal, and the paragraph on that pass
-  below says which finding each closes.
-
-  **The LIVE-TEST section is written and deliberately unstamped.** §5c specifies a
-  purpose-built JS scratch repo, a Run A where all five reviewers must PASS, a Run B
-  positive control adding a lock-taking migration that `data-migration` must FAIL at High
-  with no marker written, and the five per-axis severity floors quoted out of the shipped
-  rubrics so a reader compares against the rubric rather than against a memory of it. It
-  ends `**NOT TESTED YET**`, because it has not been. Run B is what makes Run A mean
-  anything: **if Run B passes cleanly the section is void and says so**, rather than five
-  PASSes reading as evidence. The residual — nobody has run it, and CI structurally cannot
-  — is re-filed under `## Quality axis` and drawn by goal 27.
-
-  **Two of the three unasserted edges were not what the entry said they were, and a third
-  is unrepresentable.** Edge (b), an `agents/` holding zero ported rubrics, was already
-  covered by R14h at 0.20.0; R17 covers the genuinely distinct variant the entry did not
-  name — globs that match **nothing**, so the loop body never executes at all. Edge (c)'s
-  newline half cannot be tested on the `source-path` side: a provenance block is
-  line-oriented, so a newline *in the value* is unrepresentable, and the newline arrives
-  through the **name** instead, which is R18. R15 (a gstack root that exists but is a
-  regular file) and R16 (a `source-path` containing a space) are the two that landed as
-  written.
-
-  **R15, R16 and R17 are characterization assertions, not pre-fix controls, and their
-  comments say so.** All three are green against
-  `git show d9fa699:scripts/forgeward-rubric-drift.sh` — the branch's merge-base with
-  `master`, cited by hash because a bare `HEAD:` is self-referential the moment the fix
-  commits and then prints the FIXED script to anyone following the recipe; only R18, R19
-  and R16b were run against the
-  pre-fix script and observed to fail — R18 counting 2 where one entry exists, R19 still
-  printing `Searched:`, R16b reporting a byte-identical rubric as drifted. A green
-  assertion that never had an opinion about the bug is exactly what the pre-fix/wrong-fix
-  rule in `CLAUDE.md` exists to make visible, and most of the assertions here are not
-  controls at all.
-
-  **R6's stated fix is REJECTED, on evidence that did not exist when the entry was
-  written.** The entry asks for the provenance reader to be factored into something R6 and
-  the script both source. R14j landed at 0.20.0 and already closes the exposure the entry
-  names, and sourcing the script's reader into R6 would make R14j compare the script's
-  reader **with itself** — a control turned into a tautology, *removing* the coverage the
-  entry wanted added. What was genuinely duplicated is R6's and R14d's byte-identical
-  copies of each other; those are now one `_strict_provenance` helper, and the number of
-  independent readers in play is unchanged at two. The rejection is recorded in R6's own
-  comment, where the next person to read the entry will meet it.
-
-  **Two of the three accepted limits are closed; the third stays rejected, with its
-  trigger.** Limit 1's `grep -c` line-counting is gone — three integers increment at the
-  three append sites, and R18's newline-named skill directory is the fixture that makes it
-  verifiable at all (it skips *loudly* through `ok()` on a filesystem that refuses the
-  name; CI runs `gate-test.sh` only on `ubuntu-latest`). Limit 2's `Searched: %s` now
-  separates "tested" from "never tested" in as many words, pinned by R19 with a negative
-  arm on the old wording so a revert reddens. Limit 3 — a `.gitattributes` carrying
-  `* text=auto eol=lf` — stays rejected for scope: it changes the checkout of every tracked
-  file in the repo, which is a decision about the repo rather than about this script.
-  **Its trigger now survives here and nowhere else: revisit it as its own PR if a second
-  CRLF-shaped defect appears** — lift that sentence into `CLAUDE.md` rather than lose it if
-  this entry is ever archived.
-
-  **The `/review` pass on this branch found a live correctness bug in the shipped script,
-  and a coverage claim that was false.** Six findings were fixed here and two filed. (1)
-  `sha256_of` spelled the digest `sha256sum -- "$1" | cut -d' ' -f1`, and GNU coreutils
-  ESCAPES the whole output line when the filename holds a backslash or a newline — so the
-  digest came back as `\73cb…` where the file hashes to `73cb…`, the comparison could
-  never match, and every ported rubric read as drifted. It reaches through `gs_root`, a
-  path this script neither chooses nor validates, and `skills/gate/SKILL.md` relays the
-  result verbatim. Hashing through **stdin** removes the filename from the output line and
-  the class with it; R16b is the pre-fix control, and it exists because R16 tests a SPACE,
-  the one metacharacter `sha256sum` does not escape, and so read as covering a class it
-  never touched. (2) R15's comment claimed the plausible `[ -d ]` → `[ -e ]` loosening "is
-  what reddens on it" — measured, that mutation leaves the whole suite green, because
-  R15's root is a regular FILE and both operators fail identically on it. R15b is the
-  fixture that separates them (a real directory whose landmarks are regular files) and
-  reddens alone under the mutation. (3) The verbose candidate list joined on
-  `${gs_roots[*]}`, so a candidate path containing a space rendered as two entries in the
-  one output whose job is a precise account of what was tested; it prints one per line
-  now, pinned by R19c. (4) R19b, added earlier in this same review round, was itself
-  reddening for R19c's reason under that mutation — the exact independence failure its own
-  comment documents having already fixed once — and needed a third extractor arm. (5) Two
-  counts in `LIVE-TEST.md` said "four of the five" where the rubrics say three. (6) §5c's
-  `export PLUGIN_DIR` was dead where it sat and would clobber a correctly-set value for
-  anyone returning to §5b. **Filed, not fixed:** an unreadable-but-present upstream file is
-  reported as drifted rather than as unreadable (needs a fourth output class), and the
-  three NOTE accumulators render names raw so a newline forges a visible line (the counts
-  beside them stay correct — that is what R18 pins).
-
-  **What this does not buy.** The severity floors are quoted, not measured. The always-on
-  cost of `maintainability` + `testing` on a large diff is unmeasured. Whether five more
-  reviewers overlap enough to deduplicate in Step 3 is unmeasured. All three were why the
-  closed entry existed, and writing the procedure for measuring them is not measuring them.
-
-- **A merged PR that never reached `master` is caught by a scheduled check rather than by
-  a person noticing.** (goal 19; branch `ci/detect-orphaned-merges`, 2026-09-04 — **not
-  merged at the time of writing**, which is the exact claim this entry's own subject says
-  not to make. Settle it with
-  `git merge-base --is-ancestor "$(gh pr view N --json mergeCommit -q .mergeCommit.oid)" origin/master`
-  before reading this as landed.) `ci/check-merged-prs-landed.sh` and
-  `.github/workflows/orphaned-merges.yml` — weekly plus `workflow_dispatch` — with
-  `test/merged-prs-landed-test.sh` behind them and the suite added to `npm test`.
-
-  **What it keys on.** A merged PR whose `baseRefName` is not the default branch is the
-  entire population at risk, and the test is ancestry of `mergeCommit.oid`. `headRefOid`
-  is a **suppressor, never the primary**: a squash merge never leaves the head commit an
-  ancestor of anything, so keying on it reports most of the repo as orphaned.
-
-  Three different quantities live in that sentence and the entry this replaces ran them
-  together, so they are named separately here. Measured on `origin/master` at `d9fa699`,
-  60 merged PRs: **3 at risk** (#49, #51, #55 — a non-default base), **2 genuinely
-  orphaned** by the merge-commit test (#51, #55), and **45 that keying on `headRefOid`
-  would report**, which is the whole repo minus its merge-commit merges. The archived
-  entry quoted the middle and the last figure against `be6a01d` as 2 of 59 and 45 of 59;
-  both hold with the denominator moved by one merge. It warned that the figure moves with
-  `master`, and it does — quoting the ref beside the number is the only reason the two
-  measurements are reconcilable rather than contradictory. What it did not do is
-  distinguish the at-risk count from the orphaned count, and 3 and 2 read as a discrepancy
-  when they are answers to different questions.
-
-  **The entry named the wrong PR for the case that alerts forever.** It said "#52 is exactly
-  that second case, and it would be reported as a finding on every run until somebody
-  suppressed it". #52's base is `master`, so it is outside the at-risk population and can
-  never be reported at all. The case meant is **#51** — and #51 is already silent, because
-  it shares head commit `f118e8f` with #52 and the head-commit fallback the entry's own
-  first paragraph mandates suppresses it. The PR that genuinely alerts forever is **#55**,
-  re-landed by hand as #62 with different commits, which no ancestry test can connect. So
-  the entry was right that a suppression mechanism is needed and wrong about which case
-  needs it, and the fallback it specified is not sufficient on its own.
-
-  **The remedy is an acknowledgment that is validated rather than believed.**
-  `ci/relanded-prs.txt` maps an orphaned PR to the PR that re-landed it; the check resolves
-  that PR's own merge commit and requires it to be an ancestor before downgrading anything.
-  An acknowledgment naming work that never landed suppresses nothing and produces a
-  distinctly worded failure. A suppressed finding is still **printed**, as a note — the file
-  can make a finding non-fatal, never invisible. `55 62` was entered *before* #62 merged,
-  deliberately: until then the check fails saying the acknowledgment does not hold, which is
-  true, and it turns green by itself the moment #62 lands.
-
-  **No assertion in the new suite is a pre-fix control, and the suite header says so in as
-  many words.** The script is new, so `git show HEAD:ci/check-merged-prs-landed.sh` has
-  nothing to redden against; all thirty-one are wrong-fix controls. Two carry real
-  information and both work by mutation: M7 rewrites the primary test to `headRefOid` and
-  asserts the mutant goes **silent** about an orphaned merge commit rather than merely
-  failing differently, and M4's count line (`3 with a non-default base`) is the only
-  assertion that notices a dropped `baseRefName` filter. Two earlier drafts were vacuous and
-  were **deleted rather than repaired**: an absence-based filter control that stayed green
-  with the filter gone, because the PRs whose absence it checked all land and so pass
-  silently either way; and a malformed-acknowledgment fixture whose bad lines named no real
-  PR, so a lax parser produced byte-identical output. Both were found by running the
-  mutation battery, not by reading the assertions.
-
-  **The first thirteen all drove the script with both `--pr-json` and `--ack`, and the
-  workflow passes neither.** The review that gated this branch found it: production runs
-  `bash ci/check-merged-prs-landed.sh --default-branch "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"`
-  and neither of those two flags, so the
-  `gh pr list` call, the temp file, the `mktemp` guard and — the one that matters — the
-  resolution of the ack file **beside the script** were untested, which means the shipped
-  `ci/relanded-prs.txt` and its live `55 62` entry were read by no assertion at all. A suite
-  can be thorough about every shape except the one that ships. M14 runs the no-flag form
-  against a stubbed `gh`, from a working directory that is **not** the script's own, so the
-  plausible wrong default (`ACK_FILE="ci/relanded-prs.txt"`, cwd-relative) reddens; M14b
-  pins the four `--json` fields as the API contract they are. M15, M16, M17/b/c and M18
-  cover the mktemp guard, the `--flag=value` arms, the argv refusals and the fail-closed
-  `python3` requirement.
-
-  **M19 is the one whose comment had to be corrected by its own mutation.** It asserts that
-  an acknowledgment naming a PR absent from the list suppresses nothing, and it was written
-  claiming to pin `landed`'s `[ -n "$1" ]` guard. Deleting that guard leaves it **green**:
-  `git merge-base --is-ancestor "" master` exits 128 on git 2.34.1, so git refuses the empty
-  revision without help. The assertion pins the outcome and the comment now says so. Seven
-  of the eight new guards reddened their named assertion under mutation; this is the eighth,
-  and it is recorded rather than quietly re-worded, because an assertion whose comment
-  claims a guard it does not cover is exactly how a deleted guard reads as tested.
-
-  **The adversarial pass deleted the filter it was asked to defend.** The check keyed its
-  sweep on `baseRefName != <default>`, on the reasoning that a PR based on the default
-  branch lands there by construction. That is an assumption about history never being
-  rewritten, not a property: a force-push to the default branch drops merge commits, and
-  the filtered check would exclude exactly those PRs **by construction** — never tested,
-  never mentioned, invisible in the output. Measured 2026-09-04,
-  `gh api repos/androsland/forgeward-gate/branches/master/protection` returns 404 Branch
-  not protected, so on this repo that is an available accident rather than a hypothetical.
-  Testing every merged PR turned out to be free: at `origin/master` = `d9fa699`, 60 merged
-  PRs, and the merge-commit test finds the same two (#51, #55) whether it examines 3 or 60
-  — 57 extra `git merge-base --is-ancestor` calls on local objects. There was never a cost
-  to trade the coverage against, so the filter became a **counter**: the non-default-base
-  figure is still reported on the ok line, because it is the useful statistic, and it
-  decides nothing. M20 is the wrong-fix control that reddens if the filter comes back;
-  M20b pins that the counter did not become a restatement of the total.
-
-  **Three of the other findings were operator bugs, and one was a wording change that
-  costs a run.** A CRLF acknowledgment file silently voided every entry — the default IFS
-  does not split on `\r`, so `62\r` fails the all-digit test and the PR number never
-  reaches the lookup, producing not "the acknowledgment does not hold" but the generic
-  finding, worded as though no ack file existed, in front of the maintainer looking at the
-  ack file. This repo has no `.gitattributes` and the file is hand-edited, so a Windows
-  editor reaches it by ordinary means (M21). A repeated key is now fatal rather than
-  resolved, because the lookup takes the first match and appending a correction without
-  deleting the mistake keeps trusting the mistake — validation survives a machine bug and
-  not an operator one (M22). And CI now passes `--default-branch` rather than letting the
-  script strip the ref to its last path segment, which is wrong the day a default branch
-  contains a slash (M23). All three reddened their named assertion under mutation, as did
-  the filter removal, in both directions.
-
-  **Two holes were written down instead of guessed at.** `gh pr list --limit 200` is
-  guarded at the limit and **nowhere below it**: a `gh` that exits 0 having paginated only
-  part of the list yields a short, syntactically valid array and the script reports `ok: N
-  examined` on an undercount. Reproducing that needs a real mid-pagination API failure, so
-  it is stated as an open hole rather than fixed on a guess about behaviour nobody here has
-  observed. Separately, GitHub disables a `schedule` trigger after 60 days with no push
-  activity, quietly — no run, no failure, no notification — so "the check is green" and
-  "the check has stopped existing" look identical from outside, and identical for exactly
-  the repos where a stale-merge problem would sit longest. `workflow_dispatch` is the
-  recovery, not the detection; nothing in the workflow can detect it, which is why it is an
-  entry below rather than a claim here.
-
-  **The suite header named the wrong assertion for two revisions.** It said "M5 and M7 are
-  the two that carry real information, and both work by mutation"; M5 is a plain content
-  assertion with no mutation control anywhere near it, and the pair is M4 and M7 — which is
-  what this entry said all along, so the file and the doc describing it disagreed. Found by
-  the maintainability reviewer on this branch, not by the suite. A prose claim about which
-  assertions carry information is not itself an assertion, and nothing re-runs it.
-  **The three fail-closed paths the suite reached last were the three it never took.**
-  The gate's testing reviewer found that `gh is required`, `gh pr list failed` and
-  `--default-branch needs a name argument` were the only documented fail-closed paths in
-  the script without an assertion, while every sibling — the `mktemp` guard, the shallow
-  clone, the unresolvable ref, the absent `python3`, the two other value-taking flags —
-  had had one since the first commit. The asymmetry was not a decision: 27 of the 30
-  assertions then in the suite passed `--pr-json`, so the `gh` branch was structurally unreachable from the
-  suite, and the two flags that gate it are the two CI actually passes. M25 is the one
-  that matters — `gh` writes its diagnostic to stderr and exits non-zero while the
-  redirection still creates `$PR_JSON`, so a script that ignored the status would parse an
-  **empty** file and report `ok: 0 merged PR(s) examined`, a clean bill from a run that
-  listed nothing. All three reddened under mutation. The blind-spot list was numbered
-  1,2,3,4,5,7,6 in the same pass — item 7 was inserted above item 6 and nothing renumbered
-  — which matters only because two comments elsewhere in the file cite blind spots by
-  number. Both citations were re-checked against the corrected list; the shipped header
-  reads 1-7 in order.
-
-  **The second gate round found the sentence the first gate round had made false.** M14's
-  comment said the workflow runs `bash ci/check-merged-prs-landed.sh "origin/$DEFAULT_BRANCH"`
-  *and nothing else*. That was true when it was written and stopped being true inside the
-  same branch, because the `/review` pass that preceded the gate added `--default-branch` to
-  the workflow and updated neither the comment, the script's own usage synopsis on line 2,
-  nor this entry — three copies of one sentence, all stale, none of them anything a test
-  reads. The fix is the invocation rather than the sentence: M14 now runs the flag the
-  workflow passes, so the mirror is checked by the suite instead of by a reader. **It buys
-  no coverage** — the fixture's derived and passed names are both `master`, so M14 stays
-  green if the flag is ignored; M23 and M26 are the assertions with an opinion about it, and
-  M14's comment now says so. A gate that runs twice on one branch is not redundancy: the
-  first round's own fixes are what the second round read.
-
-  **The third gate round found the field the parser sanitizes and no fixture ever sent.**
-  `PARSE_PY` collapses whitespace in a PR title (`" ".join(str(...).split())`) because the
-  reader emits TSV and the loop reads it with `IFS=$'\t' read -r num base mergeoid headoid
-  title` — the title is the only field that is both **last** and **attacker-chosen**, so a
-  newline inside it ends the record early and the remainder is read as a new one. Every one
-  of the 30 fixtures used a plain one-word title, so removing the sanitization broke
-  nothing. M27 sends a title carrying a tab, a newline, and then a complete well-formed
-  record for a PR **#999** with all-zero merge and head OIDs; unsanitized, the loop reads a
-  seventh PR GitHub never reported and fails naming it. That is the shape worth pinning:
-  not a garbled diagnostic but a **fabricated finding** — actionable, and with nothing to
-  act on. Verified by mutation, and the failure message names the forged number rather than
-  only a status, so the assertion cannot pass for the wrong reason. **The severity is
-  bounded by who writes the input:** a title is chosen by whoever opens a PR against this
-  repo, and the script is a scheduled read-only diagnostic with `contents: read` and
-  `pull-requests: read`, so the ceiling is a wasted investigation, never a false clean bill
-  — the count line and the findings both come from the same forged record, so an injected
-  PR can only ADD noise, not hide a real orphan.
-
-- **PR #55's prompt is re-landed at 0.27.0, and its `TODOS.md` half was re-filed by hand
-  rather than replayed.** (goal 18, `prompts/reland-osv-scanner-arity`, 2026-09-04) The
-  `osv-scanner` fail-open was live in what installers run for eight days because the PR
-  that fixed it merged into a base branch that had already merged. `agents/supply-chain-reviewer.md`
-  goes **149 → 840 lines**; `live-test/LIVE-TEST.md` gains 33; the bump is `0.26.0 → 0.27.0`
-  across **four** manifests, not the three that existed when the orphan was written.
-
-  **Not a cherry-pick, and the reason is one line of divergence.** `master` had moved that
-  file by exactly 3 insertions and 2 deletions since the orphan's parent `9584a25` — `effort:
-  medium` into the frontmatter from the reviewer-model pin, and two `${CLAUDE_PLUGIN_ROOT}`
-  rewritten to `${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}` by the dual Claude/Codex package.
-  A three-way `git merge-file` with the orphan as *ours* produced 844 lines and **exactly one**
-  conflict, in the trivy command block, where the orphan's side carries `--ignorefile /dev/null`
-  and drops `--quiet`. Resolution: take the orphan's command, rewrite its leading root
-  expansion to the dual form. Both halves were wanted and neither side alone had both, which
-  is what a cherry-pick would have silently picked one of.
-
-  **The 774-line `TODOS.md` diff was deliberately NOT applied.** Archive pass 6 had moved
-  fourteen entries and lifted three rules into `CLAUDE.md` in between, so the diff's context
-  no longer exists and forcing it would have restored entries the pass had archived on
-  purpose. The twelve entries now at the top of `## Reviewers` are hand-written from it,
-  carrying only what is still open and pointing at `git log -1 19d4fa8` for the forensics.
-  **Twelve is a re-filing, not a discovery** — one P1 entry retired here and twelve replaced
-  it, so the live count moved by eleven without a single new finding, and a reader comparing
-  census numbers across this commit will otherwise read that as a bad week.
-
-  **The row is struck on the re-land and not on the merge**, which is a weaker strike than
-  goal 18's own exit text asks for; the `## Execution order` note under **Retired goals**
-  says so and names what would put it back. Nothing here asserts this reached `master` — the
-  one command that can is in step 6, and goal 19 exists so it is not a person remembering to
-  run it.
-
-  **The prompt is NOT byte-identical to the orphan — the review corrected two defects
-  the orphan shipped**, so a future reader diffing this against `19d4fa8` should expect
-  three hunks, not one. Both are the same class: prose that stopped matching the command
-  sitting beside it. (1) The trivy paragraph said "The invocation passes no `--timeout`"
-  directly above a template carrying `--timeout 90s`, and forty lines later explained
-  that the template "therefore carries" it — the sentence predated the flag and was never
-  re-read. It is now stated generally rather than about this invocation. (2) "Run it once
-  per manifest" named the wrong kind of file: the command's own slot reads
-  `'<ONE lockfile path>'` and the rule below it says a manifest exits `0` with no
-  `Results` key, "byte-for-byte the shape a skipped file produces". A model following the
-  literal instruction would scan clean without scanning, which is the exact silent
-  fail-open this whole prompt exists to close — reached through the prose rather than the
-  scanner. Now "once per **lockfile**", with the osv-scanner paragraph's quotation of the
-  phrase updated in step so the two do not drift apart again.
-
-  **The bump touched two files beyond the four manifests, and both were found by the
-  review rather than by a procedure.** `test/dual-client-test.sh:303` compares the four
-  manifest versions against a literal, so 0.27.0 turned the suite red and the fix was to
-  retype the constant; `CHANGELOG.md` held a single `## 0.26.0` heading and gains a
-  `## 0.27.0` section here. They fail in opposite directions — the literal goes red and
-  names the version, the changelog goes stale in silence, and only the first is
-  self-announcing. Both are release mechanics rather than this PR's subject, so the
-  standing gap they share is filed as one `## Housekeeping` entry and not fixed here.
-
-  **What it does not buy.** The prompt is 840 lines of procedure argued over 18 gate rounds
-  and asserted by **nothing**; that backlog is goals 25 and 26. And a gate PASS on this
-  branch is not evidence the prompt works — plugin subagents run from the plugin cache
-  snapshotted at session start, so every reviewer that graded this diff was reading the
-  *previous* prompt and treating the new one as text. That limit is now filed as its own
-  entry rather than left as a footnote on this one.
-
-- **The runtime pentest/DAST axis is filed, and the `/prove` shape that preceded it is
-  rejected in writing.** (PR #60, merged 2026-09-03) A **filing-only PR** — it leaves
-  nothing in the tree but the entry, which is why it gets a `## Completed` entry at all:
-  the two design resolutions below are the only durable thing it produced, and the next
-  pass would otherwise re-derive them from scratch.
-
-  **Who emits the nuclei templates.** Measured 2026-09-03: all 11 `agents/*-reviewer.md`
-  carry the byte-identical line `tools: Read, Grep, Glob, Bash`, and of the three skills
-  only `ci-gate` declares `Write`/`Edit`. **Declaring is not the same as being unable** —
-  every reviewer holds `Bash` — which is why the gate proves it left the tree alone by
-  snapshotting and diffing rather than by trusting frontmatter. So the reviewer *emits*
-  the template inside its finding, in the `exploit_scenario` slot the schema already has,
-  and the runtime skill materializes and fires it.
-
-  **Who boots the app.** Handing the boot to the user reads as the safer option and is the
-  less safe one: a user-booted dev server carries that user's real `.env`, and once ZAP is
-  pointed at it nothing can see or stop what the app does outbound. **The envelope is the
-  boot** — the user *declares* the boot command, port and health-check URL in
-  `.forgeward/config.yml` and the skill *executes* it scrubbed and confined. That also
-  closes the portability gap the earlier shape carried: Docker is the envelope on all
-  three platforms, and a network namespace is a Linux optimisation rather than the design.
-
-  **What it does not buy, written into the entry rather than left implied.** An emitted
-  template is unvalidated text inside a verdict, so a malformed one is a runtime failure
-  and the gate stays green on it; the boot block is user-authored, so the skill can verify
-  the process it started answers on the health-check URL and cannot verify that URL is the
-  app the user meant; and where no envelope can be built the skill refuses active scanning
-  and offers passive-only (ZAP `baseline`) against a user-supplied URL, saying plainly
-  that nothing is being confined.
-
-- **Forgeward ships as one repository emitting two plugins, and the second one had to
-  survive native Windows.** (PRs #56, #57 and #59; 2026-08-28 → 2026-08-30) Three PRs on
-  one theme, recorded together because #57 and #59 are both fixes to what #56 shipped.
-
-  **#56 — dual packaging.** One repository now emits a native Claude Code plugin and a
-  Codex plugin. Claude and Codex lifecycle hook definitions stay **separate** while gate
-  policy and the standalone pre-push hook are **shared**; the Codex `UserPromptSubmit`
-  adapter, PreToolUse response handling and plugin-root compatibility land with them, and
-  `ci/check-version-monotonic.sh` gains the fourth manifest so the version cannot drift
-  across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
-  and `.codex-plugin/plugin.json`. `test/dual-client-test.sh` is the new suite.
-  (`.agents/plugins/marketplace.json` carries no version field and is not one of the four.)
-
-  **#57 — a skill is not a hook, and the plugin-root contract differs.** Codex injects
-  `PLUGIN_ROOT` into plugin **hook processes**, not into an ordinary skill's shell
-  commands, so the gate, audit and ci-gate skills derive the installed root from their own
-  catalogued `SKILL.md` path and verify the plugin layout rather than stopping when the
-  hook-only variable is absent. The rule is in [`CLAUDE.md`](CLAUDE.md); this is its
-  provenance. Its gate left one non-blocking Medium open: the regression exercises root
-  derivation for all three skills and does not pin every sentence of their documentation
-  contract.
-
-  **#59 — native Windows.** `hooks/codex-hooks.json` gains `commandWindows` handlers backed
-  by a tracked `scripts/forgeward-gate-check.cmd` that resolves Git for Windows directly
-  rather than invoking bare WSL `bash`, and both hooks now probe for a **functional** JSON
-  parser in order — `jq`, then `python3`, then `python` — rather than assuming the second
-  name is the only fallback. `test/windows-hooks-test.sh` covers spaced plugin roots,
-  standard and custom/shared-bin Git layouts, guard decisions and fail-open behaviour.
-  Claude hook configuration is untouched, and no version bump: this repo permits a
-  behaviour fix without a release.
-
-  **What none of the three changed.** The enforcement boundary is still the standalone git
-  pre-push hook, not the lifecycle hooks — those buy fast feedback and are client-dependent
-  by construction.
-
-- **Reviewer model and effort became properties of the runtime launch.** (0.26.0, PR #58,
-  merged 2026-08-29) Every `agents/*-reviewer.md` is pinned to `model: sonnet` /
-  `effort: medium` in native plugin-agent frontmatter; every Codex Gate spawn is pinned to
-  `model: gpt-5.6-terra`, `reasoning_effort: medium` and `fork_turns: none`; and Audit's
-  independent verifiers make the same selections. `test/dual-client-test.sh` enumerates
-  both sets, which is what makes a new reviewer that joins only one of them fail rather
-  than inherit the parent session's model.
-
-  **The pin is about anchoring and cost, not capability.** A launch that inherits the
-  parent conversation inherits its suspicions too, so gate launch prompts carry only the
-  complete rubric, the absolute repository and plugin roots, the exact base and resolved
-  HEAD, the read-only instruction and the verdict format — never the parent transcript and
-  never a suspected finding. An unknown runtime keeps the existing fail-closed Gate
-  fallback; Audit keeps its labeled self-verification fallback. The rule is in
-  [`CLAUDE.md`](CLAUDE.md).
-
-- **Goal 8 leg 3: the `basename` exemption is now pinned under its three named forgeries
-  — and it is pinned as a LIMIT, not fixed.** (0.24.0, 2026-08-27) The goal asked that the
-  exemption "survive three named forgeries under test — a rename, a symlinked path, and a
-  path whose basename collides with an exempt one", *enumerated, because "cannot be forged"
-  is not something a test can show*. `test/gate-test.sh` P8m now runs all three.
-
-  **The two that need real binaries are the reason this waited for goal 10.** With a stub
-  on both sides of the dispatch, "the wrapper looked at the name" and "the wrapper
-  identified the binary" emit byte-identical output, so a stub-only version of this test
-  would have asserted nothing at all. What makes leg 1 mean something is that the binary
-  under the forged name is a **real syft**, which genuinely overloads `-o` — `syft -o json`
-  prints to stdout and writes no file — and it is refused `-o json` anyway. The refusal has
-  nowhere to come from except the name. Leg 2 is the same fact in the permissive direction:
-  a symlink named `grype` pointing at the **real trivy** inherits grype's exemption, so the
-  wrapper does not `readlink` the path it was handed.
-
-  **Leg 3 is the one that carries the containment claim.** It needs no forger and no
-  scanner: a project that ships its own `./tools/grype` collides with the exempt name by
-  accident. The script gets `-o sarif` through layer 1 — that IS the documented limit — and
-  layer 3 then reports the file it wrote, names the path, and turns its exit 0 into 3. The
-  header has claimed "layer 3 still reports the result" since PR #6; that sentence is now
-  an assertion rather than a promise.
-
-  **What this deliberately does not do.** It does not close the gap, and the entry above
-  says why in full: `forgeward-scan.sh` runs `"$tool" "$@"`, so anyone able to place the
-  forged executable already holds code execution, and a `--version` probe cannot help
-  against a binary that can print anything. **If someone ever does close it, those legs
-  must be rewritten to expect refusal, not deleted** — a deleted regression test for a
-  closed gap is how the gap comes back. Legs 1 and 2 of goal 8 (layer 1 reading flag
-  values, layer 4 dropping the TRACKED proxy) are untouched here: both change enforcement
-  rather than tests, and layer 4 still needs a defined behaviour when the var is absent.
-
-  **Suite count moved 231 → 234, and the first draft of this paragraph got the baseline
-  wrong — which is the part worth recording.** It claimed 231 was a *with-scanners*
-  number and 230 a *no-scanners* one, on the theory that a pre-existing leg emits an
-  extra assertion once gitleaks is on PATH; and it closed with "measured both ways on the
-  same PATH rather than inferred", which is the sentence that made it dangerous, because
-  it had been inferred. The gate's maintainability reviewer caught it. Measured, four
-  runs: **master scores 231 with the scanners and 231 without; HEAD scores 234 with and
-  234 without.** Every scanner-dependent leg substitutes a `SKIPPED` line one-for-one
-  instead of dropping an assertion, so the count is PATH-independent on both sides and
-  the delta is exactly the three new legs. 230 is a real number that belongs to a
-  different commit — `5e4b06b^` (`f82c21a`), measured, the commit before
-  *supply-chain-reviewer owns all five classes* added the 231st — and it was quoted in
-  the 0.21.0/0.22.0 PR **bodies**, never in a TODOS entry. **The lesson generalizes past
-  this number:** a claim that advertises its own verification method is the one to check
-  hardest, because "measured" was doing the work of evidence in a sentence that had none.
-
-- **Goal 10 unblocked itself: the five absent scanners were installable without root all
-  along, and every arity claim they were blocking held.** The goal had sat **BLOCKED**
-  behind "`trivy`, `phpcs`, `osv-scanner`, `grype` and `syft` are absent from this
-  machine. Prerequisite is a container or CI job that has them." The prerequisite was
-  real; the block was not. Four install to `~/.local/bin` straight from release
-  tarballs — trivy 0.74.0, osv-scanner 2.5.1, grype 0.117.0, syft 1.51.0 — and needed no
-  package manager and no password.
-
-  **The fifth is the one that justified the entry's wording.** `phpcs.phar` 4.0.4 runs
-  fine, but the host PHP 8.1 ships `libxml` and `tokenizer` without `xmlwriter` or
-  `SimpleXML`, and adding `php8.1-xml` is the only step in the pass that wants root. It
-  went through `php:8.1-cli` instead — which is exactly the "container" the entry named,
-  so the blocker was accurate for one tool in five and was being applied to all five.
-
-  **EVERY DOCUMENTED CLAIM HELD, AND THAT IS THE RESULT.** `trivy fs` takes one path and
-  says so loudly (exit 1). trivy's `-o` is a filename: `-f json -o json` wrote a 233-byte
-  file called `json`. phpcs takes many. osv-scanner takes many, and its bare
-  `--format json <path>` form still works in v2.5.1 despite the v2 CLI restructure.
-  grype and syft each take exactly one. The per-tool `-o` asymmetry that
-  `forgeward-scan.sh` encodes was proven end to end against the real binaries —
-  `grype -o json` allowed, `trivy -o json` refused, `trivy -f json` allowed,
-  `-o json=out.json` and `-o out.json` refused for both anchore tools. **No prompt and no
-  script needed correcting**, so the goal closed with one prose accuracy fix and no
-  behaviour change — and that fix (`agents/supply-chain-reviewer.md`, five lines saying
-  osv-scanner takes several paths where trivy takes one) went out as its own PR rather
-  than folded in here, because a reviewer prompt is executable behaviour whatever its
-  size. **That PR was #55, and the routing outlived the PR: it merged onto a base branch
-  that had already merged, so the fix sat on a ref `master` cannot reach until the 0.27.0
-  re-land below.** Splitting it out was still right — what it did not survive was the
-  stack it was split into.
-
-  **What it cost, which is the part worth reusing.** grype pulls a **~3.9GB** vulnerability
-  database on first run; the other four needed no download at all. That is a CI-cost fact,
-  and it is the reason grype is the one tool here not to put in a workflow casually.
-  (2026-08-27)

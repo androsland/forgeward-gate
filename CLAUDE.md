@@ -22,7 +22,11 @@ commit that was fixing it — a line number cannot survive its own fix.
   `awk` reader was extended instead, verified identical under gawk, mawk and busybox awk.
 - **Every `python3 -c` carries `-I`.** It drops the CWD from `sys.path` and implies
   `-E`/`-s`, so a `json.py` in the repo under review cannot be the module judging it.
-  All five shipped sites have it, and A25 fails on any new one that does not. This is
+  Every shipped site that runs the interpreter on the host has it. A25 fails on a new
+  `python3 -c`, `python -c` or `"$_JSON_PY" -c` without it, and cannot see two shapes:
+  `"$_py_path" -I -c` (the JSON-tool probe loops, which carry the flag) and
+  `--entrypoint python3 "$image" -c` (the two ZAP-image probes in `forgeward-pentest.sh`,
+  which do not; those containers mount nothing from the repository). This is
   not hardening: A26 demonstrates an `-I`-stripped hook **allowing** a publish it
   should deny, and the shadowing file arrives with the branch you cloned to review —
   Python imports a file, not an index, so no write access to the checkout is needed.
@@ -91,6 +95,24 @@ commit that was fixing it — a line number cannot survive its own fix.
   place, or restore the mode explicitly, and read `git diff` for `mode change` lines before
   committing. Applies to tracked *executables* — `rules/*.yml` and the docs are 644 by
   design and must stay that way.
+- **This repo carries no `.gitattributes` on purpose. Revisit `* text=auto eol=lf` as its
+  own PR the day a second CRLF-shaped defect appears, never inside another change.** It
+  changes the checkout of every tracked file, which is a decision about the repo rather
+  than about the script that surfaced it (the #64 entry in `TODOS-DONE.md`). Until then a
+  CRLF input is handled where it is read: `ci/check-merged-prs-landed.sh` strips `\r` from
+  the hand-edited `ci/relanded-prs.txt`, because `62\r` failed the all-digit test and
+  silently voided the acknowledgment (M21). **Unruled:** whether M21 is already that
+  second defect. It merged in #63 five minutes before #64 wrote the trigger, and neither
+  entry names the other.
+- **Hash a file through stdin, never by name.** GNU `sha256sum -- "$f"` escapes its whole
+  output line when the name holds a backslash or a newline, so `cut -d' ' -f1` returned
+  `\73cb…` for a file hashing to `73cb…`, and the drift script reported every ported
+  rubric as drifted under a gstack root it neither chooses nor validates. `sha256_of`
+  reads `< "$1"`, and R16b is the pre-fix control. **R16, a path holding a SPACE, read as
+  covering this class and never touched it**: a space is the one metacharacter the tool
+  does not escape, so a fixture for a filename class needs a byte the tool treats
+  specially. Every shipped digest site hashes stdin today; nothing asserts that a new one
+  will.
 
 - **The matcher trusts `strip_quoted`'s residue only when it is never shorter than the
   input.** The residue's word boundaries are not bash's, so the three-character refusal
@@ -335,6 +357,33 @@ commit that was fixing it — a line number cannot survive its own fix.
   directory over. **An advisory that asserts something false about upstream is worse than
   this script's default silence** — take the first candidate holding EVERY landmark, and
   keep the landmark-major scan only as the fallback for a genuinely partial machine.
+
+- **Every shipped hook definition carries a `commandWindows` route that starts the system
+  PowerShell by absolute path. Never bare `powershell.exe`, never a batch file run through
+  `PLUGIN_ROOT`, never bare `bash`.** Claude's `hooks/hooks.json` needs the route although
+  Claude never takes it: Codex can keep an approved hash for that file in its own trust
+  store after the manifest has moved to `hooks/codex-hooks.json` (#65), so deleting the
+  route reads as cleanup and is not. Codex wraps the command as one raw argument to
+  `COMSPEC /C`, and the direct-batch shape 0.27.0 shipped failed in `cmd.exe` on an
+  extended `\\?\` root before the adapter started (#66 reversed it). A bare
+  `powershell.exe` can be shadowed by the repository, and a bare `bash` may be WSL's
+  launcher, which is why the adapter resolves `bash.exe` from `git.exe`'s directory.
+  `test/dual-client-test.sh` pins the prefix on all four routes, and
+  `test/windows-hooks-test.sh` keeps the direct-batch command as its negative control.
+  **Cannot see:** whether a Codex-owned trust record is live, orphaned or re-created; only
+  the client owns that state.
+- **`/forgeward:pentest` owns the boot and the target, and a missing envelope removes
+  capability without ever widening the target.** Handing the boot to the user reads safer
+  and is less safe: a user-booted server carries that user's real `.env`, and once a
+  scanner is pointed at it nothing can see what the app does outbound. So
+  `forgeward-pentest.sh` refuses a non-local Docker endpoint, puts the app and both
+  scanners on one `--internal` network, measures that a public address is unreachable
+  before any app code starts, and builds the target URL itself. Active mode takes no URL,
+  and adding one is the change this forbids. Without the envelope the only fallback is a
+  confirmed, passive ZAP baseline of an exact URL, described as unconfined, and never
+  nuclei; nuclei runs only templates a finding emitted, never its downloaded catalog.
+  **Non-goals:** an internal network isolates routing and is not a sandbox for hostile
+  code; the skill writes no pass marker and is never a gate phase (`DECISIONS.md`, 0.28.0).
 
 ## Reviewer scope and severity
 
