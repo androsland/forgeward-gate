@@ -4212,11 +4212,12 @@ E37J="$(cd "$E37R" && git rev-parse --path-format=absolute --git-common-dir)/for
 # =============================================================================
 # R1..R7 — the ported quality rubrics' drift check.
 #
-# forgeward's ported reviewers (the five quality reviewers and `targeted`) are PORTS of gstack's Review Army specialist
-# checklists, not runtime reads of them, so the axis works on a machine with no gstack
-# at all. The cost of a port is drift: gstack can improve a checklist and nothing here
-# would know. `forgeward-rubric-drift.sh` is the cheap closing of that loop — a handful of
-# sha256 comparisons against files already on disk.
+# forgeward's ported reviewers (the five quality reviewers and `targeted`) are PORTS of
+# gstack's Review Army specialist checklists, not runtime reads of them, so the axis
+# works on a machine with no gstack at all. The cost of a port is drift: gstack can
+# improve a checklist and nothing here would know. `forgeward-rubric-drift.sh` is the
+# cheap closing of that loop — a handful of sha256 comparisons against files already
+# on disk.
 #
 # THE VACUITY TRAP is the mirror image of E2's. This script's failure mode is not
 # "reports drift that is not there", it is "prints nothing", and printing nothing is
@@ -4349,9 +4350,9 @@ esac
 # shipped tree (R14d is the same instrument for `skills/`). Everything above runs on a
 # synthetic fixture, so all six would pass unchanged if the real `agents/` directory
 # carried no provenance blocks at all and the drift check covered nothing. This counts
-# the real ported rubrics and requires at least six: the five quality reviewers and `targeted` — and it requires
-# BOTH fields, because the script skips any reviewer missing either one and a
-# half-recorded port is silently unchecked rather than loudly broken.
+# the real ported rubrics and requires at least six: the five quality reviewers and
+# `targeted`. It requires BOTH fields, because the script skips any reviewer missing
+# either one and a half-recorded port is silently unchecked rather than loudly broken.
 #
 # THE COPY OF THE SCRIPT'S REGEXES STAYS, AND TODOS.md ASKED FOR IT TO GO. The entry
 # (0.17.0) filed the duplication as accepted-with-exposure and named the proper fix as

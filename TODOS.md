@@ -1269,7 +1269,24 @@ themselves so that none of them requires the commit to be actionable.
   in the same change that gave one to a reviewer that is not a port would leave the count
   at six, and that rubric would silently stop being drift-checked. That takes two unrelated
   edits, which is why it is P3. Asserting the six files by name, beside the floor, would
-  close it. **Priority:** P3
+  close it. The gate's testing reviewer reported the same on 2026-11-19. **Priority:** P3
+
+- **R6 and R6b's floor is a bare `6`, written four times.** (gate maintainability reviewer
+  of 0.33.0, 2026-11-19; Medium, debt) `test/gate-test.sh` checks `-ge 6` in R6 and in R6b,
+  and prints `expected >= 6` in both failure messages. The comment ties the number to the
+  five quality reviewers and `targeted`, so every new port edits four places in step.
+  PR 4 (0.34.0) adds `red-team` and raises the floor to seven: name it once there, as one
+  variable carrying that comment, and use it in both assertions and both messages.
+  **Priority:** P3
+
+- **Step 1d names forgeward's own gate-code paths, and nothing checks they still exist.**
+  (gate maintainability reviewer of 0.33.0, 2026-11-19; Low) Each list is introduced as
+  "In forgeward's own repository that is…", so the paths are a worked instance of the
+  general rule, not the rule. All eight literal paths it names were tracked on 2026-11-19
+  (`git ls-files --error-unmatch`). After a rename, Step 1d would name a file that is gone
+  and read as coverage of a path nothing fires on. An assertion in
+  `test/dual-client-test.sh` that every literal path Step 1d names is tracked would turn
+  that red. **Priority:** P3
 
 ## Standalone posture (no gstack installed)
 
@@ -2945,12 +2962,18 @@ shipped on its own branch instead.
   quotes a secret's value. Its third pass carried the flag into the gitlink range read,
   which now follows each nested gitlink the same way, and named the merge base in a deleted
   line's `Location`. That pass hit `/review`'s three-cycle cap, so no `/review` pass re-read
-  its fixes. Deferred: the working-tree read for every other reviewer stays
-  open in `## Reviewers`, with seven new entries there: the attribute and submodule-ignore
-  read for the rest of the gate, four open §7.2 severity questions, a branch's `CLAUDE.md`
-  reaching the reviewers that gate it, the unasserted `tools:` lines, rename and mode-only
-  headers, repository text as data for the other reviewers, and R6's count naming no
-  rubric.
+  its fixes. `/forgeward:gate` 0.30.0 then passed it with supply-chain, security,
+  maintainability and testing, none reporting a Critical or High. Its three comment-wrap
+  Lows were fixed in the commit that filed the rest. Its LIVE-TEST "five" Low needed no
+  change, because each line it named already says "five quality". Its testing reviewer's
+  prose-coupling Low describes how this suite pins prompt text, and the commit messages
+  record the mutation checks it asked for. Deferred: the working-tree read
+  for every other reviewer stays open in `## Reviewers`, with nine new entries there: the
+  attribute and submodule-ignore read for the rest of the gate, four open §7.2 severity
+  questions, a branch's `CLAUDE.md` reaching the reviewers that gate it, the unasserted
+  `tools:` lines, rename and mode-only headers, repository text as data for the other
+  reviewers, R6's count naming no rubric, and, from the gate, R6's bare floor and
+  Step 1d's unchecked paths.
 
 - **Step 2 checks the workspace on every exit, and the guard records what a push depends
   on.** (0.32.0, branch `fix/step2-integrity`, 2026-11-17. Merged as #72 on 2026-11-18, merge

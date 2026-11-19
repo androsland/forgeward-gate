@@ -6,15 +6,15 @@
 # and always exits 0.
 #
 # WHY THIS EXISTS. forgeward's quality reviewers (maintainability, testing,
-# performance, api-contract, data-migration) and `targeted` are ports of gstack's Review Army
-# specialist checklists, and `skills/audit/` is a port of gstack's `/cso` audit
-# phases — all taken under MIT with the source commit and a sha256 recorded in the
-# ported file. A port removes the runtime dependency — forgeward reviews quality and
-# runs a deep audit on a machine with no gstack at all — but it buys that with drift:
-# gstack can improve a checklist and nothing would tell us. This closes that loop the
-# cheap way. It is a handful of sha256 comparisons against files that are already on
-# disk, so it costs nothing to run inside a gate that is already invoking the
-# environment probe.
+# performance, api-contract, data-migration) and `targeted` are ports of gstack's
+# Review Army specialist checklists, and `skills/audit/` is a port of gstack's `/cso`
+# audit phases — all taken under MIT with the source commit and a sha256 recorded in
+# the ported file. A port removes the runtime dependency — forgeward reviews quality
+# and runs a deep audit on a machine with no gstack at all — but it buys that with
+# drift: gstack can improve a checklist and nothing would tell us. This closes that
+# loop the cheap way. It is a handful of sha256 comparisons against files that are
+# already on disk, so it costs nothing to run inside a gate that is already invoking
+# the environment probe.
 #
 # WHAT IT SCANS: `agents/*-reviewer.md` and `skills/*/SKILL.md`. Neither glob is a
 # claim that everything under it is a port — a file with no `source-path`/`source-sha256`
